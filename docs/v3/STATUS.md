@@ -413,3 +413,37 @@ remaining_unknowns:
   - "scope_grant/revocation tables exist but policy integration is PR-03/PR-04"
 next_gate: "PR-03 verified scope grants + repository registry (G2)"
 ```
+
+## v3.1-alpha — verified scope grants + repository registry (PR-03, G2)
+
+```yaml
+phase_id: v31-verified-scope-grants
+tickets: [PR-03]
+status: implemented_and_tested
+baseline: codex/sis-authority-transfer-qualification (PR-01/PR-02 commits)
+changed_files:
+  - src/sis/v3/contracts.py           # RepositoryIdentityV1 + ScopeGrantV1 records + validation
+  - src/sis/v3/repository_registry.py # NEW: trusted registry — signed identities, alias rejection, signed JSONL load/dump
+  - src/sis/v3/scope_grants.py        # NEW: ScopeGrantAuthority — issue/verify/permits, distinct-registry evidence rule
+  - src/sis/v3/authority_db.py        # commit_scope_grant (in-tx verify + nonce consume + receipt bindings), scope_grants(), receipts_for_grant(), commit_revocation()/revocations(), grant integrity in verify()
+  - src/sis/v3/catalog.py             # set_scope + sidecar retired; scope_of projects committed grants on the current revision
+  - src/sis/v3/secure_guidance.py     # registry-resolved requester identity; per-request grant re-verification; namespace_authorizer removed
+  - tests/v3/authority_testkit.py     # registry/grant authenticated factories
+  - tests/v3/test_scope_grants.py     # NEW: 26 adversarial + lifecycle tests
+  - tests/v3/test_roadmap_modules.py  # CatalogTests rewritten onto grant projection
+observed_outcomes:
+  - "Full suite: 610 passed, 2 skipped"
+  - "repository-local default serves with no grant; unresolved/empty repository_id abstains"
+  - "cross-repo grant serves target repo only; family grant covers family members, does not leak across families"
+  - "forged signature, untrusted signer, unbound authority, missing verifier, nonce replay: all rejected"
+  - "post-commit tamper of grant_json -> abstain + verify() reports mismatch; grant row deletion -> abstain, not corruption"
+  - "expired grants abstain per-request via injected now; expired grants cannot be issued"
+  - "grant binds exact revision digest: re-qualification invalidates old grants; repo-local unaffected"
+  - "registry rejects duplicate registry_id/tree/commit aliases and wrong-key identities; load fails closed on tampered lines"
+  - "transfer evidence must resolve to >=2 distinct registry identities including source (and target for cross-repo)"
+remaining_unknowns:
+  - "registry store is in-memory/JSONL here; production custody (HSM/KMS + quorum) is a deployment concern"
+  - "grant revocations() write path exists; cascade_suspend for revoked grant digests is PR-04"
+  - "receipts_for_grant replays stored receipt JSON; custody of evaluator receipt originals remains external"
+next_gate: "PR-04: artifact channel + revocations wiring; then independently evaluated paired study"
+```

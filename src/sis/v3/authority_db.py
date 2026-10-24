@@ -40,9 +40,11 @@ from pathlib import Path
 
 from .contracts import (
     ContractError,
+    OutcomeReceiptV1,
     ProcedureRecordV1,
     PromotionDecisionV1,
     PromotionDecisionV2,
+    ScopeGrantV1,
     canonical_digest,
     loads_json,
 )
@@ -89,13 +91,25 @@ CREATE TABLE IF NOT EXISTS receipt_binding (
 );
 CREATE TABLE IF NOT EXISTS scope_grant (
     grant_id TEXT PRIMARY KEY,
+    grant_digest TEXT NOT NULL UNIQUE,
     grant_json TEXT NOT NULL,
-    procedure_revision_digest TEXT NOT NULL,
-    source_ref TEXT,
-    target_ref TEXT,
-    signer_key_id TEXT,
+    procedure_revision_digest TEXT NOT NULL
+        REFERENCES procedure_revision(record_digest),
+    source_registry_id TEXT NOT NULL,
+    source_family_id TEXT NOT NULL,
+    target_registry_id TEXT,
+    target_family_id TEXT,
+    signer_key_id TEXT NOT NULL,
     expires_at TEXT,
     committed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS grant_receipt_binding (
+    grant_id TEXT NOT NULL REFERENCES scope_grant(grant_id),
+    receipt_digest TEXT NOT NULL,
+    task_id TEXT,
+    evaluated_repo_digest TEXT,
+    receipt_json TEXT NOT NULL,
+    PRIMARY KEY (grant_id, receipt_digest)
 );
 CREATE TABLE IF NOT EXISTS revocation (
     digest TEXT NOT NULL,
@@ -530,6 +544,175 @@ class AuthorityDB:
                 (source, reason, payload, _utcnow()),
             )
 
+    # ------------------------------------------------------------------ #
+    # scope grants and revocations (authority service only)
+    # ------------------------------------------------------------------ #
+    def commit_scope_grant(
+        self, *, grant: ScopeGrantV1, receipts=(), authority, verifier=None,
+    ) -> None:
+        """Atomically commit a signed scope grant.
+
+        One ``BEGIN IMMEDIATE`` transaction re-verifies the grant (via the
+        mandatory ``verifier`` callable — normally
+        ``ScopeGrantAuthority.verify``), binds the granted procedure
+        revision, consumes the grant nonce (replay is an atomic conflict),
+        and inserts the grant plus its evidence receipt bindings.
+        """
+        self._require_authority(authority)
+        if not isinstance(grant, ScopeGrantV1):
+            raise AuthorityError("grant must be a ScopeGrantV1")
+        if verifier is None:
+            raise AuthorityError("grant_verifier_required")
+        with self._lock:
+            con = self._conn()
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                problems = verifier(grant)
+                if problems:
+                    raise AuthorityConflict(
+                        "grant_rejected: " + ",".join(problems[:5]))
+                if con.execute(
+                    "SELECT 1 FROM procedure_revision WHERE record_digest=?",
+                    (grant.procedure_revision_digest,),
+                ).fetchone() is None:
+                    raise AuthorityConflict("grant_revision_missing")
+                if con.execute(
+                    "SELECT 1 FROM scope_grant"
+                    " WHERE grant_id=? OR grant_digest=?",
+                    (grant.grant_id, grant.digest),
+                ).fetchone() is not None:
+                    raise AuthorityConflict("grant_already_committed")
+                bound = set()
+                for receipt in receipts:
+                    if receipt.digest not in set(grant.evidence_receipt_refs):
+                        raise AuthorityConflict("receipt_not_bound_by_grant")
+                    bound.add(receipt.digest)
+                missing = set(grant.evidence_receipt_refs) - bound
+                if missing:
+                    raise AuthorityConflict(
+                        "grant_evidence_incomplete: "
+                        + ",".join(sorted(d[:12] for d in missing)))
+                con.execute(
+                    "INSERT INTO nonce_consumption"
+                    " (signer, nonce, digest, consumed_at) VALUES (?, ?, ?, ?)",
+                    (grant.signer_key_id, grant.grant_nonce, grant.digest,
+                     _utcnow()),
+                )
+                con.execute(
+                    "INSERT INTO scope_grant"
+                    " (grant_id, grant_digest, grant_json,"
+                    "  procedure_revision_digest, source_registry_id,"
+                    "  source_family_id, target_registry_id, target_family_id,"
+                    "  signer_key_id, expires_at, committed_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (grant.grant_id, grant.digest,
+                     grant.canonical_bytes().decode("utf-8"),
+                     grant.procedure_revision_digest, grant.source_registry_id,
+                     grant.source_family_id, grant.target_registry_id,
+                     grant.target_family_id, grant.signer_key_id,
+                     grant.expires_at, _utcnow()),
+                )
+                for receipt in receipts:
+                    con.execute(
+                        "INSERT INTO grant_receipt_binding"
+                        " (grant_id, receipt_digest, task_id,"
+                        "  evaluated_repo_digest, receipt_json)"
+                        " VALUES (?, ?, ?, ?, ?)",
+                        (grant.grant_id, receipt.digest, receipt.task_id,
+                         receipt.evaluated_repo_digest,
+                         receipt.canonical_bytes().decode("utf-8")),
+                    )
+                self._audit(con, "scope_grant_committed", {
+                    "grant_id": grant.grant_id,
+                    "grant_digest": grant.digest,
+                    "procedure_revision_digest": grant.procedure_revision_digest,
+                })
+                con.execute("COMMIT")
+            except AuthorityError:
+                _safe_rollback(con)
+                raise
+            except sqlite3.IntegrityError as exc:
+                _safe_rollback(con)
+                if "nonce_consumption" in str(exc):
+                    raise AuthorityConflict("grant_nonce_replayed") from exc
+                raise AuthorityConflict(f"grant_conflict: {exc}") from exc
+            except Exception:
+                _safe_rollback(con)
+                raise
+
+    def scope_grants(
+        self, procedure_revision_digest: str | None = None
+    ) -> list[ScopeGrantV1]:
+        """Committed grants, optionally filtered to one procedure revision."""
+        if procedure_revision_digest is not None:
+            rows = self._conn().execute(
+                "SELECT grant_json FROM scope_grant"
+                " WHERE procedure_revision_digest=? ORDER BY grant_id",
+                (procedure_revision_digest,),
+            ).fetchall()
+        else:
+            rows = self._conn().execute(
+                "SELECT grant_json FROM scope_grant ORDER BY grant_id"
+            ).fetchall()
+        return [ScopeGrantV1.from_dict(loads_json(r[0])) for r in rows]
+
+    def receipts_for_grant(self, grant_id: str) -> list[OutcomeReceiptV1]:
+        """Evidence receipts bound to a committed grant (serve-time recheck)."""
+        rows = self._conn().execute(
+            "SELECT receipt_json FROM grant_receipt_binding WHERE grant_id=?"
+            " ORDER BY receipt_digest",
+            (grant_id,),
+        ).fetchall()
+        return [OutcomeReceiptV1.from_dict(loads_json(r[0])) for r in rows]
+
+    def commit_revocation(
+        self, *, digest: str, kind: str, reason: str,
+        actor_identity: str, authority,
+    ) -> None:
+        """Commit a revocation entry (grant, receipt or record digest)."""
+        self._require_authority(authority)
+        _check_digest(digest, "digest")
+        with self._lock:
+            con = self._conn()
+            con.execute("BEGIN IMMEDIATE")
+            try:
+                con.execute(
+                    "INSERT INTO revocation"
+                    " (digest, kind, reason, actor_identity, committed_at)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (digest, kind, reason, actor_identity, _utcnow()),
+                )
+                self._audit(con, "revocation_committed", {
+                    "digest": digest, "kind": kind, "reason": reason,
+                    "actor_identity": actor_identity,
+                })
+                con.execute("COMMIT")
+            except AuthorityError:
+                _safe_rollback(con)
+                raise
+            except sqlite3.IntegrityError as exc:
+                _safe_rollback(con)
+                raise AuthorityConflict("revocation_already_committed") from exc
+            except Exception:
+                _safe_rollback(con)
+                raise
+
+    def revocations(self, kind: str | None = None) -> list[dict]:
+        if kind is not None:
+            rows = self._conn().execute(
+                "SELECT digest, kind, reason, actor_identity, committed_at"
+                " FROM revocation WHERE kind=? ORDER BY digest",
+                (kind,),
+            ).fetchall()
+        else:
+            rows = self._conn().execute(
+                "SELECT digest, kind, reason, actor_identity, committed_at"
+                " FROM revocation ORDER BY digest"
+            ).fetchall()
+        return [{"digest": d, "kind": k, "reason": r,
+                 "actor_identity": a, "committed_at": c}
+                for d, k, r, a, c in rows]
+
     def quarantined(self) -> list[dict]:
         rows = self._conn().execute(
             "SELECT source, reason, record_json, quarantined_at"
@@ -718,6 +901,22 @@ class AuthorityDB:
             existing = {d for _, _, d, _, _ in rows}
             for d in decided_digests - existing:
                 problems.append(f"decision_without_revision:{d[:16]}")
+
+            grant_revision_digests = set()
+            for grant_id, grant_digest, body, rev_digest in con.execute(
+                "SELECT grant_id, grant_digest, grant_json,"
+                " procedure_revision_digest FROM scope_grant"
+            ).fetchall():
+                try:
+                    grant = ScopeGrantV1.from_dict(loads_json(body))
+                except ContractError:
+                    problems.append(f"undecodable_scope_grant:{grant_id}")
+                    continue
+                if grant.digest != grant_digest:
+                    problems.append(f"scope_grant_digest_mismatch:{grant_id}")
+                grant_revision_digests.add(rev_digest)
+            for d in grant_revision_digests - existing:
+                problems.append(f"grant_revision_missing:{d[:16]}")
         except sqlite3.Error as exc:
             problems.append(f"sqlite_error:{exc}")
             prev_digest = None

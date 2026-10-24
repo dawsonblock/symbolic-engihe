@@ -16,6 +16,8 @@ from sis.v3 import signatures
 from sis.v3.authority_db import AuthorityDB
 from sis.v3.contracts import OutcomeReceiptV1, ProcedureRecordV1, canonical_json
 from sis.v3.promotion import PromotionController, operator_token_digest
+from sis.v3.repository_registry import RepositoryRegistry
+from sis.v3.scope_grants import ScopeGrantAuthority
 
 TEST_TOKEN = "test-operator-token-for-authority-0001"
 _RECEIPT_DOMAIN = b"sis-v3:outcome_receipt:1\0"
@@ -180,3 +182,103 @@ def authority_catalog(
 ) -> AuthorityDB:
     """authority_stack's read model only, for retrieval/guidance tests."""
     return authority_stack(root, *records, token=token)[0]
+
+
+# --------------------------------------------------------------------- #
+# PR-03: trusted repository registry + signed scope grants
+# --------------------------------------------------------------------- #
+
+GRANT_SIGNER_KEY_ID = "scope-grant-signer-1"
+
+
+def make_registry(*, seed: bytes | None = None) -> tuple[RepositoryRegistry, bytes]:
+    """A trusted registry backed by a fresh test-custody signing key."""
+    if seed is None:
+        seed = signatures.generate_keypair()[0]
+    public = signatures.public_key(seed)
+    return RepositoryRegistry(registry_public_hex=public.hex()), seed
+
+
+def register_repo(
+    registry: RepositoryRegistry,
+    registry_seed: bytes,
+    *,
+    registry_id: str,
+    family_id: str = "fam-a",
+    base_tree_digest: str | None = None,
+    base_commit: str | None = None,
+    trust_domain_id: str = "test-domain",
+) -> "object":
+    """Issue a signed RepositoryIdentityV1 through registry custody."""
+    tree = base_tree_digest or hashlib.sha256(
+        ("tree:" + registry_id).encode()).hexdigest()
+    attestation = hashlib.sha256(("attest:" + registry_id).encode()).hexdigest()
+    return registry.issue(
+        registry_seed,
+        registry_id=registry_id,
+        family_id=family_id,
+        base_tree_digest=tree,
+        base_commit=base_commit,
+        trust_domain_id=trust_domain_id,
+        attestation_digest=attestation,
+        signer_key_id="registry-key-1",
+    )
+
+
+def make_grant_authority(
+    registry: RepositoryRegistry,
+    *,
+    seed: bytes | None = None,
+    key_id: str = GRANT_SIGNER_KEY_ID,
+    **kwargs,
+) -> tuple[ScopeGrantAuthority, bytes, str]:
+    """A grant authority trusting a fresh test-custody signing key."""
+    if seed is None:
+        seed = signatures.generate_keypair()[0]
+    public = signatures.public_key(seed)
+    authority = ScopeGrantAuthority(
+        registry, trusted_signers={key_id: public.hex()}, **kwargs)
+    return authority, seed, key_id
+
+
+def issue_and_commit_grant(
+    db: AuthorityDB,
+    controller: PromotionController,
+    grant_authority: ScopeGrantAuthority,
+    *,
+    record: ProcedureRecordV1,
+    source_registry_id: str,
+    target_registry_id: str | None = None,
+    target_family_id: str | None = None,
+    seed: bytes,
+    key_id: str = GRANT_SIGNER_KEY_ID,
+    evidence_receipts=(),
+    expires_at: str | None = None,
+    grant_nonce: str | None = None,
+    actor_role: str = "operator",
+):
+    """Issue a real signed grant and commit it through the bound controller."""
+    nonce = grant_nonce or "nonce-" + hashlib.sha256(
+        (record.digest + (target_registry_id or target_family_id or "local")).encode()
+    ).hexdigest()[:20]
+    grant = grant_authority.issue(
+        actor_role=actor_role,
+        seed=seed,
+        record=record,
+        source_registry_id=source_registry_id,
+        target_registry_id=target_registry_id,
+        target_family_id=target_family_id,
+        evaluator_protocol_digest="e" * 64,
+        evidence_receipts=evidence_receipts,
+        expires_at=expires_at,
+        grant_nonce=nonce,
+        signer_key_id=key_id,
+    )
+    db.commit_scope_grant(
+        grant=grant,
+        receipts=evidence_receipts,
+        authority=controller,
+        verifier=lambda g: grant_authority.verify(
+            g, receipts=evidence_receipts, record=record),
+    )
+    return grant

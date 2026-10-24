@@ -210,57 +210,113 @@ class CounterexampleIndexTests(unittest.TestCase):
 
 
 class CatalogTests(unittest.TestCase):
+    """Scope is a read-only projection of committed signed ScopeGrantV1s."""
+
     def setUp(self):
+        from tests.v3.authority_testkit import (
+            evaluator_keypair, make_grant_authority, make_registry,
+            register_repo,
+        )
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.db = AuthorityDB(self.root / "authority.db")
         self.addCleanup(self.db.close)
-        self.catalog = Catalog(self.db, self.root / "scopes.json")
+        self.catalog = Catalog(self.db)
+        self.registry, self.registry_seed = make_registry()
+        self.grants, self.grant_seed, self.grant_key_id = (
+            make_grant_authority(self.registry))
+        self.eval_seed, pub, self.eval_key_id = evaluator_keypair()
+        self.trees = {}
+        for repo, family in (("repo-a", "fam-a"), ("repo-b", "fam-b"),
+                             ("repo-c", "fam-a")):
+            tree = hashlib.sha256(("tree:" + repo).encode()).hexdigest()
+            self.trees[repo] = tree
+            register_repo(self.registry, self.registry_seed,
+                          registry_id=repo, family_id=family,
+                          base_tree_digest=tree)
 
     def _qualified(self, *records):
         """Drive records to qualified through real signed decisions."""
         from tests.v3.authority_testkit import (
-            drive, evaluator_keypair, seed as seed_record, signed_receipt,
+            drive, seed as seed_record, signed_receipt,
         )
-        seed_bytes, pub, key_id = evaluator_keypair()
-        controller = PromotionController(
+        self.controller = PromotionController(
             self.db, operator_token_digest=operator_token_digest(TOKEN),
-            trusted_evaluator_keys={key_id: pub.hex()})
-        receipt = signed_receipt(seed_bytes, key_id)
-        controller._resolve_receipt = {receipt.digest: receipt}.__getitem__
+            trusted_evaluator_keys={self.eval_key_id:
+                                    signatures.public_key(self.eval_seed).hex()})
+        receipt = signed_receipt(self.eval_seed, self.eval_key_id)
+        self.controller._resolve_receipt = {receipt.digest: receipt}.__getitem__
         for rec in records:
             seed_record(self.db, rec)
-            drive(self.db, controller, rec.procedure_id, rec.status,
-                  token=TOKEN, seed=seed_bytes, key_id=key_id,
+            drive(self.db, self.controller, rec.procedure_id, rec.status,
+                  token=TOKEN, seed=self.eval_seed, key_id=self.eval_key_id,
                   receipts=[receipt])
-        return controller
+        return self.controller
+
+    def _transfer_receipts(self, *repos):
+        """Signed receipts whose evaluated trees resolve to registry repos."""
+        from tests.v3.authority_testkit import signed_receipt
+        return [
+            signed_receipt(self.eval_seed, self.eval_key_id,
+                           task_id=f"transfer-{repo}",
+                           repo_digest=self.trees[repo])
+            for repo in repos
+        ]
+
+    def _grant(self, record, *, source="repo-a", target_repo=None,
+               target_family=None, actor_role="operator", **kwargs):
+        from tests.v3.authority_testkit import issue_and_commit_grant
+        return issue_and_commit_grant(
+            self.db, self.controller, self.grants,
+            record=record, source_registry_id=source,
+            target_registry_id=target_repo, target_family_id=target_family,
+            seed=self.grant_seed, key_id=self.grant_key_id,
+            actor_role=actor_role, **kwargs)
 
     def test_scope_roundtrip_and_filtering(self):
         self._qualified(_proc(pid="p1"), _proc(pid="p2"))
-        self.catalog.set_scope("p1", "family", actor_role="operator")
-        self.catalog.set_scope("p2", "cross_repository", actor_role="operator")
+        receipts = self._transfer_receipts("repo-a", "repo-b")
+        self._grant(self.db.get("p1"), target_family="fam-a",
+                    evidence_receipts=receipts)
+        self._grant(self.db.get("p2"), target_repo="repo-b",
+                    evidence_receipts=receipts)
         self.assertEqual(self.catalog.scope_of("p1"), "family")
         self.assertEqual(self.catalog.scope_of("p2"), "cross_repository")
         self.assertEqual(
             {r.procedure_id for r in self.catalog.procedures(scope="family")},
             {"p1"})
-        fresh = Catalog(self.db, self.root / "scopes.json")
+        # Projection is durable across catalog instances (grants live in the db).
+        fresh = Catalog(self.db)
         self.assertEqual(fresh.scope_of("p1"), "family")
 
-    def test_scope_requires_operator_and_valid_scope(self):
+    def test_scope_is_grant_projection_not_role_metadata(self):
+        """The retired role-string write path no longer exists."""
         self._qualified(_proc(pid="p1"))
+        self.assertFalse(hasattr(self.catalog, "set_scope"))
+        # Default scope with no committed grant is repository.
+        self.assertEqual(self.catalog.scope_of("p1"), "repository")
+        # Grant issuance itself is role-gated.
+        from sis.v3.authority_db import AuthorityConflict
+        receipts = self._transfer_receipts("repo-a", "repo-b")
         with self.assertRaises(AuthorizationDenied):
-            self.catalog.set_scope("p1", "family", actor_role="agent")
-        with self.assertRaises(ContractError):
-            self.catalog.set_scope("p1", "universe", actor_role="operator")
-        with self.assertRaises(Exception):
-            self.catalog.set_scope("missing", "family", actor_role="operator")
-
-    def test_corrupt_scope_metadata_fails_closed(self):
-        (self.root / "scopes.json").write_text("not-json")
-        with self.assertRaises(CatalogError):
-            Catalog(self.db, self.root / "scopes.json")
+            self._grant(self.db.get("p1"), target_family="fam-a",
+                        evidence_receipts=receipts, actor_role="agent")
+        # A grant for a procedure revision that was never committed cannot land.
+        from sis.v3.scope_grants import ScopeGrantV1, unsigned_grant, sign_grant
+        forged = sign_grant(self.grant_seed, unsigned_grant(
+            grant_id="g-forged", procedure_revision_digest="f" * 64,
+            source_registry_id="repo-a", source_family_id="fam-a",
+            target_family_id="fam-a",
+            evaluator_protocol_digest="e" * 64,
+            evidence_receipt_refs=tuple(r.digest for r in receipts),
+            expires_at=None, grant_nonce="n-forged",
+            signer_key_id=self.grant_key_id))
+        with self.assertRaises(AuthorityConflict):
+            self.db.commit_scope_grant(
+                grant=forged, receipts=receipts, authority=self.controller,
+                verifier=lambda g: self.grants.verify(
+                    g, receipts=receipts, record=None))
 
     def test_cascade_suspend_drives_signed_suspension_decisions(self):
         """Cascade suspension only acts on decision-backed qualified records."""
@@ -282,7 +338,9 @@ class CatalogTests(unittest.TestCase):
 
     def test_scoped_qualified_head_differs_from_global(self):
         self._qualified(_proc(pid="p1"))
-        self.catalog.set_scope("p1", "family", actor_role="operator")
+        receipts = self._transfer_receipts("repo-a", "repo-b")
+        self._grant(self.db.get("p1"), target_family="fam-a",
+                    evidence_receipts=receipts)
         self.assertNotEqual(
             self.catalog.qualified_head("family"),
             self.catalog.qualified_head("cross_repository"))

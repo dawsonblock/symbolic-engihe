@@ -452,6 +452,56 @@ class PromotionDecisionV2(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class RepositoryIdentityV1(V1Record):
+    """Registry-issued repository identity (v3.1-alpha, PR-03).
+
+    The canonical source of repository identity and lineage. Issued and
+    signed by a trusted ``RepositoryRegistry`` whose keys and store live
+    outside agent custody — request text, role strings, and sidecar flags
+    are never identity evidence.
+    """
+
+    registry_id: str
+    family_id: str
+    base_tree_digest: str
+    base_commit: str | None
+    trust_domain_id: str
+    attestation_digest: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "repository_identity"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScopeGrantV1(V1Record):
+    """Signed scope grant binding one procedure revision to a transfer target.
+
+    ``target_registry_id`` (cross-repository) and ``target_family_id``
+    (family-wide) are mutually exclusive; exactly one must be set. The grant
+    binds the *specific* qualified revision digest — a new revision needs a
+    new grant. ``grant_nonce`` is consumed atomically at commit, so a grant
+    can never be replayed.
+    """
+
+    grant_id: str
+    procedure_revision_digest: str
+    source_registry_id: str
+    source_family_id: str
+    target_registry_id: str | None
+    target_family_id: str | None
+    allowed_use: str
+    evaluator_protocol_digest: str
+    evidence_receipt_refs: tuple[str, ...]
+    expires_at: str | None
+    grant_nonce: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "scope_grant"
+
+
+@dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
     repo_snapshot_digest: str
@@ -619,6 +669,31 @@ def _validate_record(record: V1Record) -> None:
             _digest(d[name], name, optional=True)
         _text(d["evaluator_signature"], "evaluator_signature", maximum=512)
         _text(d["operator_authorization"], "operator_authorization", maximum=512)
+    elif isinstance(record, RepositoryIdentityV1):
+        for name in ("registry_id", "family_id", "trust_domain_id", "signer_key_id"):
+            _identifier(d[name], name)
+        _digest(d["base_tree_digest"], "base_tree_digest")
+        _revision(d["base_commit"], "base_commit", optional=True)
+        _digest(d["attestation_digest"], "attestation_digest")
+        _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, ScopeGrantV1):
+        _identifier(d["grant_id"], "grant_id")
+        for name in ("procedure_revision_digest", "evaluator_protocol_digest"):
+            _digest(d[name], name)
+        for name in ("source_registry_id", "source_family_id"):
+            _identifier(d[name], name)
+        _identifier(d["target_registry_id"], "target_registry_id") if d["target_registry_id"] is not None else None
+        _identifier(d["target_family_id"], "target_family_id") if d["target_family_id"] is not None else None
+        _require((d["target_registry_id"] is None) != (d["target_family_id"] is None),
+                 "exactly one of target_registry_id or target_family_id must be set")
+        _enum(d["allowed_use"], {"guidance"}, "allowed_use")
+        for ref in _sequence(d["evidence_receipt_refs"], "evidence_receipt_refs", minimum=1, maximum=32):
+            _digest(ref, "evidence_receipt_refs[]")
+        if d["expires_at"] is not None:
+            _timestamp(d["expires_at"], "expires_at")
+        _identifier(d["grant_nonce"], "grant_nonce")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
     elif isinstance(record, GuidanceRequestV1):
         _identifier(d["task_id"], "task_id")
         _digest(d["repo_snapshot_digest"], "repo_snapshot_digest")

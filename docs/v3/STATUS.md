@@ -568,3 +568,23 @@ remaining_unknowns:
   - "structural induction remains single-operator-AST-only; multi-node and cross-language transforms unsupported by design"
 next_gate: "observe-learn-verify-reuse wiring; M5 independent candidate optimization"
 ```
+
+## v3.1-alpha — loop composition + repo-disjoint evaluation (PR-08, M6 harness)
+
+```yaml
+phase_id: v31-loop-and-evaluation
+tickets: [PR-08, M6-harness]
+status: implemented_and_tested
+changed_files:
+  - src/sis/v3/learning/pipeline.py    # NEW: observe-* orchestration
+  - src/sis/v3/evaluation.py           # NEW: disjointness + paired summary
+  - tests/v3/test_learning_loop.py     # NEW: 9 tests
+  - docs/v3/G4_GATE_REPORT.md          # NEW
+observed_outcomes:
+  - "Full suite: 659 passed, 2 skipped"
+  - "single audited entry point composes capture→induction→candidate→intake; all outputs land as candidate rev-1, promotion stays external"
+  - "assert_repository_disjoint fails any eval task whose repo digest supplied learning evidence; paired_summary extracts the preregistered D-vs-A contrast"
+remaining_unknowns:
+  - "the decisive repository-disjoint live study has NOT been run — harness is qualified, efficacy is not"
+next_gate: "run the preregistered paired study; M7 operational hardening"
+```

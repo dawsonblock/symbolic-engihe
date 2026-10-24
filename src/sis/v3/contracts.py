@@ -37,6 +37,7 @@ _REASONS = {
     "unverified_task_intent", "precondition_failed", "no_reproducible_failure",
     "conflicting_evidence", "source_mismatch", "prior_negative_transfer",
     "insufficient_support", "no_qualified_procedure", "catalog_unavailable",
+    "expired", "revoked", "stale_evidence", "unsupported_context",
 }
 _PRECONDITION_KINDS = {
     "language_is", "toolchain_is", "dependency_digest_is", "file_present",
@@ -426,6 +427,31 @@ class PromotionDecisionV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class PromotionDecisionV2(V1Record):
+    """V2 promotion decision: the complete post-state (new record digest and
+    qualified head) is inside the signed body, so signatures cover the exact
+    committed outcome rather than a precomputed prefix."""
+
+    decision_id: str
+    candidate_digest: str
+    new_record_digest: str
+    evaluation_protocol_digest: str
+    receipt_refs: tuple[str, ...]
+    actor_identity: str
+    approved: bool
+    policy_version: str
+    prior_status: str
+    new_status: str
+    old_qualified_head: str | None
+    new_qualified_head: str | None
+    rollback_ref: str | None
+    evaluator_signature: str
+    operator_authorization: str
+
+    RECORD_TYPE: ClassVar[str] = "promotion_decision_v2"
+
+
+@dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
     repo_snapshot_digest: str
@@ -568,6 +594,20 @@ def _validate_record(record: V1Record) -> None:
     elif isinstance(record, PromotionDecisionV1):
         _identifier(d["decision_id"], "decision_id")
         for name in ("candidate_digest", "evaluation_protocol_digest"):
+            _digest(d[name], name)
+        for ref in _sequence(d["receipt_refs"], "receipt_refs", minimum=1):
+            _digest(ref, "receipt_refs[]")
+        _identifier(d["actor_identity"], "actor_identity")
+        _require(type(d["approved"]) is bool, "approved must be Boolean")
+        for name in ("policy_version", "prior_status", "new_status"):
+            _text(d[name], name, maximum=128)
+        for name in ("old_qualified_head", "new_qualified_head", "rollback_ref"):
+            _digest(d[name], name, optional=True)
+        _text(d["evaluator_signature"], "evaluator_signature", maximum=512)
+        _text(d["operator_authorization"], "operator_authorization", maximum=512)
+    elif isinstance(record, PromotionDecisionV2):
+        _identifier(d["decision_id"], "decision_id")
+        for name in ("candidate_digest", "new_record_digest", "evaluation_protocol_digest"):
             _digest(d[name], name)
         for ref in _sequence(d["receipt_refs"], "receipt_refs", minimum=1):
             _digest(ref, "receipt_refs[]")

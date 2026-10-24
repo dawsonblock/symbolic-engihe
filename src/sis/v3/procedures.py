@@ -62,10 +62,17 @@ class ProcedureStore:
         self._lock = threading.Lock()
         self._load()
 
-    def add(self, record: ProcedureRecordV1 | Mapping) -> str:
-        """Append a revision; idempotent on identical content."""
+    def add(self, record: ProcedureRecordV1 | Mapping, *, allow_qualified: bool = False) -> str:
+        """Append a revision; idempotent on identical content.
+
+        ``status == "qualified"`` requires ``allow_qualified`` — only the
+        promotion controller and explicit test fixtures may seed qualified
+        state; a bare add must never mint qualified records.
+        """
         if not isinstance(record, ProcedureRecordV1):
             record = ProcedureRecordV1.from_dict(record)
+        if record.status == "qualified" and not allow_qualified:
+            raise ProcedureConflict("qualified_write_requires_decision")
         with self._lock:
             key = (record.procedure_id, record.revision)
             existing = self._digests.get(key)

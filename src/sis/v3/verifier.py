@@ -399,3 +399,70 @@ def verify_receipt_signature(receipt: OutcomeReceiptV1 | Mapping, public_key_hex
     unsigned = record.to_dict()
     unsigned.pop("signature")
     return signatures.verify(signature, _SIGNATURE_DOMAIN + canonical_json(unsigned), public)
+
+
+@dataclass(frozen=True)
+class ExpectedProtocol:
+    """Precommitted evaluation protocol a receipt must bind to (SIS-311).
+
+    Any field set to a value must match the receipt exactly; fields left as
+    ``None`` are unconstrained. This is how promotion binds evidence to the
+    task identity, criterion version, suite commitment, repository, and
+    evaluator identity it precommitted to — never inferred from the receipt.
+    """
+
+    task_id: str | None = None
+    criterion_version: str | None = None
+    test_suite_commitment: str | None = None
+    evaluated_repo_digest: str | None = None
+    evaluator_identity: str | None = None
+
+
+def verify_and_resolve_receipt(
+    digest: str,
+    resolver,
+    *,
+    trusted_keys: Mapping[str, str],
+    revoked_keys: frozenset[str] | set[str] = frozenset(),
+    protocol: ExpectedProtocol | None = None,
+) -> OutcomeReceiptV1:
+    """Load a receipt through an untrusted resolver and verify its authority.
+
+    The resolver is transport only — this function re-derives the canonical
+    digest, re-verifies the Ed25519 signature under the receipt domain, and
+    binds the receipt to the precommitted evaluation protocol. Every failure
+    raises ``EvaluationRejected`` with a stable reason code; nothing the
+    resolver returns is ever trusted on its own.
+    """
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise EvaluationRejected("receipt_digest_invalid", repr(digest)[:80])
+    try:
+        raw = resolver(digest)
+    except EvaluationRejected:
+        raise
+    except (RuntimeError, ContractError, OSError) as exc:
+        raise EvaluationRejected("receipt_unresolvable", digest) from exc
+    try:
+        receipt = raw if isinstance(raw, OutcomeReceiptV1) else OutcomeReceiptV1.from_dict(raw)
+    except (ContractError, TypeError, KeyError) as exc:
+        raise EvaluationRejected("receipt_malformed", digest) from exc
+    if receipt.digest != digest:
+        raise EvaluationRejected("receipt_digest_mismatch", digest)
+    if receipt.signer_key_id in revoked_keys:
+        raise EvaluationRejected("signer_revoked", receipt.signer_key_id)
+    public_hex = trusted_keys.get(receipt.signer_key_id)
+    if public_hex is None:
+        raise EvaluationRejected("untrusted_signer", receipt.signer_key_id)
+    if not verify_receipt_signature(receipt, public_hex):
+        raise EvaluationRejected("receipt_signature_invalid", digest)
+    if protocol is not None:
+        for field in (
+            "task_id", "criterion_version", "test_suite_commitment",
+            "evaluated_repo_digest", "evaluator_identity",
+        ):
+            expected = getattr(protocol, field)
+            if expected is not None and getattr(receipt, field) != expected:
+                raise EvaluationRejected(
+                    "protocol_binding_mismatch", f"{field}: expected {expected}"
+                )
+    return receipt

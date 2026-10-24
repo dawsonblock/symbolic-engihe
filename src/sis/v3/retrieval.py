@@ -12,9 +12,25 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from .contracts import ContractError, GuidanceRequestV1, ProcedureRecordV1
 from .procedures import ProcedureStore
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.fromisoformat(
+        value[:-1] + "+00:00" if value.endswith("Z") else value)
+
+
+def _expired(record: ProcedureRecordV1, now: datetime) -> bool:
+    """Fail closed: malformed or expired timestamps both count as expired."""
+    if record.expires_at is None:
+        return False
+    try:
+        return now > _parse_ts(record.expires_at)
+    except (ValueError, TypeError):
+        return True
 
 
 @dataclass(frozen=True)
@@ -105,12 +121,24 @@ def retrieve(
     symbols_extra=(),
     limit: int = 3,
     ablations: AblationFlags = AblationFlags(),
+    revoked: frozenset[str] | set[str] = frozenset(),
+    now: str | None = None,
 ) -> RetrievalResult:
-    """Apply hard gates then rank surviving qualified procedures."""
+    """Apply hard gates then rank surviving qualified procedures.
+
+    ``revoked`` is a policy-managed denylist of procedure record digests —
+    it invalidates cached recommendations immediately even while a record's
+    stored status remains ``qualified``. ``now`` injects trusted UTC time for
+    deterministic testing; expired or malformed ``expires_at`` abstains.
+    """
     if type(limit) is not int or not 1 <= limit <= 3:
         raise ContractError("retrieval limit must be in [1,3]")
     if not isinstance(ablations, AblationFlags):
         raise ContractError("ablations must be an AblationFlags value")
+    try:
+        current = _parse_ts(now) if now else datetime.now(timezone.utc)
+    except (ValueError, TypeError) as exc:
+        raise ContractError("now must be an ISO-8601 timestamp") from exc
     context = RetrievalContext.from_request(
         request, files_present=files_present, symbols_extra=symbols_extra
     )
@@ -121,6 +149,20 @@ def retrieve(
     if ablations.include_unqualified:
         pool = list(store.all_latest())
     for record in pool:
+        if record.digest in revoked:
+            rejections.append(Rejection(
+                procedure_id=record.procedure_id,
+                reason_code="revoked",
+                detail="the record digest is on the revocation list",
+            ))
+            continue
+        if _expired(record, current):
+            rejections.append(Rejection(
+                procedure_id=record.procedure_id,
+                reason_code="expired",
+                detail="expires_at has passed or is invalid",
+            ))
+            continue
         contraindicated = [
             cond for cond in record.contraindications
             if _contradiction_matches(cond, context)

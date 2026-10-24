@@ -24,12 +24,18 @@ from .contracts import (
     OutcomeReceiptV1,
     ProcedureRecordV1,
     PromotionDecisionV1,
+    PromotionDecisionV2,
     canonical_digest,
     canonical_json,
     loads_json,
 )
 from .policy import require_permission
-from .procedures import ProcedureStore, ProcedureStoreError
+from .procedures import ProcedureStore
+from .verifier import (
+    EvaluationRejected,
+    ExpectedProtocol,
+    verify_and_resolve_receipt,
+)
 
 _SIGNATURE_DOMAIN = b"sis-v3:promotion_decision:1\0"
 _TRANSITIONS: dict[str, frozenset[str]] = {
@@ -62,6 +68,9 @@ class PromotionController:
         trusted_evaluator_keys: Mapping[str, str],
         receipt_resolver: Callable[[str], OutcomeReceiptV1] | None = None,
         min_pass_receipts: int = 1,
+        min_distinct_repos: int = 1,
+        expected_protocol: ExpectedProtocol | None = None,
+        revoked_evaluator_keys: frozenset[str] | set[str] = frozenset(),
         policy_version: str = "promotion-policy-v1",
         trusted_operator_keys: Mapping[str, str] | None = None,
     ) -> None:
@@ -72,6 +81,10 @@ class PromotionController:
             raise ContractError("operator_token_digest must be a SHA-256 hex digest")
         if type(min_pass_receipts) is not int or min_pass_receipts < 1:
             raise ContractError("min_pass_receipts must be positive")
+        if type(min_distinct_repos) is not int or min_distinct_repos < 1:
+            raise ContractError("min_distinct_repos must be positive")
+        if expected_protocol is not None and not isinstance(expected_protocol, ExpectedProtocol):
+            raise ContractError("expected_protocol must be an ExpectedProtocol")
         self.store = store
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -81,9 +94,13 @@ class PromotionController:
         self._trusted = dict(trusted_evaluator_keys)
         self._resolve_receipt = receipt_resolver
         self._min_receipts = min_pass_receipts
+        self._min_repos = min_distinct_repos
+        self._protocol = expected_protocol
+        self._revoked_eval_keys = set(revoked_evaluator_keys)
         self.policy_version = policy_version
         self._prior: str | None = None
-        self._decisions: list[PromotionDecisionV1] = []
+        self._decisions: list[PromotionDecisionV1 | PromotionDecisionV2] = []
+        self._projected: dict[str, str] = {}  # record_digest -> decided status
         self._lock = threading.Lock()
         self._load()
 
@@ -99,8 +116,15 @@ class PromotionController:
         evaluator_signer: Callable[[bytes], tuple[str, str]] | None = None,
         operator_signer: Callable[[bytes], tuple[str, str]] | None = None,
         rollback_ref: str | None = None,
-    ) -> PromotionDecisionV1:
-        """Move a procedure along a legal edge under full authority."""
+        expected_old_head: str | None = None,
+    ) -> PromotionDecisionV2:
+        """Move a procedure along a legal edge under full authority.
+
+        The complete post-state — new record digest and expected qualified
+        head — is computed *before* either signature, so both signatures bind
+        the exact committed outcome. ``expected_old_head`` is an
+        optimistic-concurrency guard against stale views.
+        """
         require_permission(actor_role, "promotion:approve")
         with self._lock:
             record = self.store.get(procedure_id)
@@ -109,7 +133,9 @@ class PromotionController:
                     "illegal_transition", f"{record.status} -> {new_status}"
                 )
             verified_receipts = self._verify_receipts(receipt_digests)
-            if new_status == "qualified" and record.status == "evaluated":
+            if new_status == "qualified":
+                # Qualification and requalification (suspended -> qualified)
+                # both run the full evidence check — no transition exception.
                 self._require_qualification_evidence(verified_receipts)
             if new_status == "evaluated" and not verified_receipts:
                 raise PromotionRejected(
@@ -117,10 +143,20 @@ class PromotionController:
                 )
 
             old_head = self.store.qualified_head_digest()
+            if expected_old_head is not None and expected_old_head != old_head:
+                raise PromotionRejected(
+                    "stale_qualified_head",
+                    f"expected {expected_old_head}, actual {old_head}",
+                )
+            next_revision = replace(
+                record, revision=record.revision + 1, status=new_status
+            )
+            expected_new_head = self._simulate_head(record, next_revision)
             unsigned = {
                 "schema_version": 1,
                 "decision_id": "dec-" + secrets.token_hex(12),
                 "candidate_digest": record.digest,
+                "new_record_digest": next_revision.digest,
                 "evaluation_protocol_digest": canonical_digest(
                     "evaluation_protocol", 1,
                     {"policy_version": self.policy_version,
@@ -133,17 +169,16 @@ class PromotionController:
                 "prior_status": record.status,
                 "new_status": new_status,
                 "old_qualified_head": old_head,
+                "new_qualified_head": expected_new_head,
                 "rollback_ref": rollback_ref,
             }
+            body = _SIGNATURE_DOMAIN + canonical_json(unsigned)
             if new_status in {"qualified", "evaluated"}:
                 if evaluator_signer is None:
                     raise PromotionRejected("evaluator_signature_required")
-                key_id, sig_hex = evaluator_signer(
-                    _SIGNATURE_DOMAIN + canonical_json(unsigned)
-                )
+                key_id, sig_hex = evaluator_signer(body)
                 if key_id not in self._trusted or not signatures.verify(
-                    bytes.fromhex(sig_hex),
-                    _SIGNATURE_DOMAIN + canonical_json(unsigned),
+                    bytes.fromhex(sig_hex), body,
                     bytes.fromhex(self._trusted[key_id]),
                 ):
                     raise PromotionRejected("evaluator_signature_invalid")
@@ -153,14 +188,15 @@ class PromotionController:
             unsigned["operator_authorization"] = self._authorize_operator(
                 unsigned, operator_signer, operator_token
             )
-            unsigned["new_qualified_head"] = None  # filled after record update
 
-            next_revision = replace(
-                record, revision=record.revision + 1, status=new_status
-            )
-            self.store.add(next_revision)
-            unsigned["new_qualified_head"] = self.store.qualified_head_digest()
-            decision = PromotionDecisionV1.from_dict(unsigned)
+            self.store.add(next_revision, allow_qualified=True)
+            actual_head = self.store.qualified_head_digest()
+            if actual_head != expected_new_head:
+                raise PromotionRejected(
+                    "qualified_head_divergence",
+                    f"declared {expected_new_head}, actual {actual_head}",
+                )
+            decision = PromotionDecisionV2.from_dict(unsigned)
             line = canonical_json({
                 "decision": decision.to_dict(),
                 "decision_digest": decision.digest,
@@ -172,6 +208,8 @@ class PromotionController:
                 os.fsync(handle.fileno())
             self._prior = hashlib.sha256(line).hexdigest()
             self._decisions.append(decision)
+            self._projected.pop(decision.candidate_digest, None)
+            self._projected[decision.new_record_digest] = decision.new_status
             return decision
 
     def qualified_head(self) -> str:
@@ -180,9 +218,16 @@ class PromotionController:
     def decisions(self) -> list[PromotionDecisionV1]:
         return list(self._decisions)
 
+    def projected_statuses(self) -> dict[str, str]:
+        """The decision-backed status map — the catalog's authority view."""
+        return dict(self._projected)
+
     def verify(self) -> dict:
-        """Replay the decision log and check the hash chain."""
+        """Replay the log: chain, signatures, transitions, head continuity."""
         problems: list[str] = []
+        qualified: set[str] = set()
+        statuses: dict[str, str] = {}
+        legacy = 0
         prior: str | None = None
         count = 0
         if self._log.exists():
@@ -192,7 +237,7 @@ class PromotionController:
                     line = raw.rstrip(b"\n")
                     try:
                         entry = loads_json(line)
-                        decision = PromotionDecisionV1.from_dict(entry["decision"])
+                        decision = self._decode_decision(entry["decision"])
                         if decision.digest != entry["decision_digest"]:
                             problems.append(f"decision_digest_mismatch_at_{position}")
                     except (ContractError, KeyError, TypeError):
@@ -200,8 +245,82 @@ class PromotionController:
                         continue
                     if entry.get("prior_decision_digest") != prior:
                         problems.append(f"chain_conflict_at_{position}")
+                    if isinstance(decision, PromotionDecisionV1):
+                        legacy += 1  # legacy entries: chain/digest verified only
+                    else:
+                        problems.extend(
+                            p + f"_at_{position}" for p in self._verify_v2(
+                                decision, statuses, qualified))
                     prior = hashlib.sha256(line).hexdigest()
-        return {"ok": not problems, "entries": count, "head": prior, "problems": problems}
+        problems.extend(self._projection_drift(qualified, statuses))
+        return {"ok": not problems, "entries": count, "legacy_v1": legacy,
+                "head": prior, "problems": problems}
+
+    @staticmethod
+    def _decode_decision(body):
+        if isinstance(body, Mapping) and "new_record_digest" in body:
+            return PromotionDecisionV2.from_dict(body)
+        return PromotionDecisionV1.from_dict(body)
+
+    def _verify_v2(self, decision, statuses, qualified) -> list[str]:
+        """Check one V2 decision against replayed state and signatures."""
+        problems: list[str] = []
+        base = decision.to_dict()
+        base.pop("evaluator_signature")
+        base.pop("operator_authorization")
+        body = _SIGNATURE_DOMAIN + canonical_json(base)
+        if decision.evaluator_signature != "not-required":
+            try:
+                key_id, sig_hex = decision.evaluator_signature.split(":", 1)
+                if key_id not in self._trusted or not signatures.verify(
+                    bytes.fromhex(sig_hex), body, bytes.fromhex(self._trusted[key_id])
+                ):
+                    problems.append("evaluator_signature_invalid")
+            except (ValueError, TypeError):
+                problems.append("evaluator_signature_malformed")
+        auth = decision.operator_authorization
+        if auth.startswith("ed25519:"):
+            try:
+                _, key_id, sig_hex = auth.split(":", 2)
+                signed = _SIGNATURE_DOMAIN + canonical_json(
+                    {**base, "evaluator_signature": decision.evaluator_signature})
+                if key_id not in self._operator_keys or not signatures.verify(
+                    bytes.fromhex(sig_hex), signed, bytes.fromhex(self._operator_keys[key_id])
+                ):
+                    problems.append("operator_signature_invalid")
+            except (ValueError, TypeError):
+                problems.append("operator_authorization_malformed")
+        elif auth != f"operator_token_sha256:{self._token_digest}":
+            problems.append("operator_authorization_mismatch")
+        if decision.prior_status not in _TRANSITIONS or \
+                decision.new_status not in _TRANSITIONS[decision.prior_status]:
+            problems.append("illegal_transition")
+        if statuses.get(decision.candidate_digest, decision.prior_status) != decision.prior_status:
+            problems.append("nonmonotonic_status")
+        expected_old = canonical_digest(
+            "qualified_catalog", 1, {"head": sorted(qualified)})
+        if decision.old_qualified_head not in {expected_old, None}:
+            problems.append("old_head_mismatch")
+        if decision.prior_status == "qualified":
+            qualified.discard(decision.candidate_digest)
+        if decision.new_status == "qualified":
+            qualified.add(decision.new_record_digest)
+        expected_new = canonical_digest(
+            "qualified_catalog", 1, {"head": sorted(qualified)})
+        if decision.new_qualified_head is not None and \
+                decision.new_qualified_head != expected_new:
+            problems.append("new_head_mismatch")
+        statuses[decision.new_record_digest] = decision.new_status
+        statuses.pop(decision.candidate_digest, None)
+        return problems
+
+    def _projection_drift(self, qualified, statuses) -> list[str]:
+        """Report store/catalog state the ledger cannot account for."""
+        problems: list[str] = []
+        projected_q = {r.digest for r in self.store.by_status("qualified")}
+        if projected_q != qualified:
+            problems.append("qualified_projection_drift")
+        return problems
 
     def _authorize_operator(
         self,
@@ -225,50 +344,91 @@ class PromotionController:
         raise PromotionRejected("operator_authorization_failed")
 
     def _verify_receipts(self, digests: tuple[str, ...]) -> list[OutcomeReceiptV1]:
+        """Resolve then verify every referenced receipt; resolver is transport."""
         receipts = []
         for digest in dict.fromkeys(digests):
             if self._resolve_receipt is None:
                 raise PromotionRejected("no_receipt_resolver_configured")
             try:
-                receipt = self._resolve_receipt(digest)
-            except (ProcedureStoreError, RuntimeError, ContractError) as exc:
-                raise PromotionRejected("receipt_unresolvable", digest) from exc
-            receipts.append(receipt)
+                receipts.append(verify_and_resolve_receipt(
+                    digest,
+                    self._resolve_receipt,
+                    trusted_keys=self._trusted,
+                    revoked_keys=self._revoked_eval_keys,
+                    protocol=self._protocol,
+                ))
+            except EvaluationRejected as exc:
+                raise PromotionRejected(exc.reason, str(exc)) from exc
         return receipts
 
-    def _require_qualification_evidence(self, receipts: list[OutcomeReceiptV1]) -> None:
-        passes = {
-            (r.task_id, r.evaluated_repo_digest) for r in receipts if r.outcome == "pass"
+    def _simulate_head(
+        self, record: ProcedureRecordV1, next_revision: ProcedureRecordV1
+    ) -> str:
+        """Project the qualified head as if ``next_revision`` were applied."""
+        digests = {
+            r.digest for r in self.store.by_status("qualified")
+            if r.procedure_id != record.procedure_id
         }
-        if len(passes) < self._min_receipts:
+        if next_revision.status == "qualified":
+            digests.add(next_revision.digest)
+        return canonical_digest("qualified_catalog", 1, {"head": sorted(digests)})
+
+    def _require_qualification_evidence(self, receipts: list[OutcomeReceiptV1]) -> None:
+        """Count independent evidence units — never raw outcome strings.
+
+        Cloned receipts collapse to the same (task, repo) unit and cannot
+        inflate the count; distinct repositories are counted separately.
+        """
+        pass_receipts = [r for r in receipts if r.outcome == "pass"]
+        units = {(r.task_id, r.evaluated_repo_digest) for r in pass_receipts}
+        repos = {r.evaluated_repo_digest for r in pass_receipts}
+        if len(units) < self._min_receipts or len(repos) < self._min_repos:
             raise PromotionRejected(
                 "insufficient_evidence",
-                f"need {self._min_receipts} distinct pass receipt(s), have {len(passes)}",
+                f"need {self._min_receipts} distinct pass task(s) across "
+                f"{self._min_repos} repositories, have {len(units)}/{len(repos)}",
             )
 
     def _load(self) -> None:
         if not self._log.exists():
             return
-        with open(self._log, "rb") as handle:
-            for position, raw in enumerate(handle):
-                line = raw.rstrip(b"\n")
-                try:
-                    entry = loads_json(line)
-                    decision = PromotionDecisionV1.from_dict(entry["decision"])
-                except (ContractError, KeyError, TypeError) as exc:
-                    raise PromotionRejected(
-                        "decision_log_corrupt", f"line {position}"
-                    ) from exc
-                if decision.digest != entry["decision_digest"]:
-                    raise PromotionRejected(
-                        "decision_log_corrupt", f"digest at line {position}"
-                    )
-                if entry["prior_decision_digest"] != self._prior:
-                    raise PromotionRejected(
-                        "decision_log_corrupt", f"chain at line {position}"
-                    )
-                self._decisions.append(decision)
-                self._prior = hashlib.sha256(line).hexdigest()
+        raw = self._log.read_bytes()
+        lines = raw.splitlines()
+        # Crash-tail repair: an undecodable trailing line is a torn write —
+        # truncate to the last complete entry; mid-file damage fails closed.
+        while lines:
+            try:
+                loads_json(lines[-1].rstrip(b"\n"))
+                break
+            except ContractError:
+                lines.pop()
+        if len(lines) < len(raw.splitlines()):
+            with open(self._log, "wb") as handle:
+                handle.write(b"".join(line.rstrip(b"\n") + b"\n" for line in lines))
+                handle.flush()
+                os.fsync(handle.fileno())
+        for position, line in enumerate(lines):
+            line = line.rstrip(b"\n")
+            try:
+                entry = loads_json(line)
+                decision = self._decode_decision(entry["decision"])
+            except (ContractError, KeyError, TypeError) as exc:
+                raise PromotionRejected(
+                    "decision_log_corrupt", f"line {position}"
+                ) from exc
+            if decision.digest != entry["decision_digest"]:
+                raise PromotionRejected(
+                    "decision_log_corrupt", f"digest at line {position}"
+                )
+            if entry["prior_decision_digest"] != self._prior:
+                raise PromotionRejected(
+                    "decision_log_corrupt", f"chain at line {position}"
+                )
+            self._decisions.append(decision)
+            if isinstance(decision, PromotionDecisionV2):
+                self._projected.pop(decision.candidate_digest, None)
+                self._projected[decision.new_record_digest] = decision.new_status
+            self._prior = hashlib.sha256(line).hexdigest()
 
 
 def operator_token_digest(token: str) -> str:

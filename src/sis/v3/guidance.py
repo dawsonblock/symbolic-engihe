@@ -15,7 +15,7 @@ _POLICY_DESCRIPTOR = {
     "mode": "hard_gated_retrieval",
     "reasons": ["unverified_task_intent", "no_qualified_procedure",
                 "precondition_failed", "prior_negative_transfer",
-                "insufficient_support"],
+                "insufficient_support", "expired", "revoked"],
 }
 _POLICY_DIGEST = canonical_digest("guidance_policy", 1, _POLICY_DESCRIPTOR)
 
@@ -26,6 +26,8 @@ def sis_recommend(
     *,
     files_present=(),
     symbols_extra=(),
+    revoked=frozenset(),
+    now: str | None = None,
 ) -> GuidanceV1:
     """Return a strict, bounded recommendation or abstention; never mutates state."""
     if not isinstance(request, GuidanceRequestV1):
@@ -50,6 +52,7 @@ def sis_recommend(
     result = retrieve(
         request, catalog,
         files_present=files_present, symbols_extra=symbols_extra, limit=3,
+        revoked=revoked, now=now,
     )
     if not result.candidates:
         dominant = result.rejections[0].reason_code if result.rejections else "insufficient_support"

@@ -75,7 +75,8 @@ class ProcedureStoreTests(unittest.TestCase):
 
     def test_persistence_and_verify(self):
         self.store.add(_record())
-        self.store.add(replace(_record(), revision=2, status="qualified"))
+        self.store.add(replace(_record(), revision=2, status="qualified"),
+                       allow_qualified=True)
         reloaded = ProcedureStore(self.store.root)
         self.assertEqual(reloaded.get("proc-a").status, "qualified")
         self.assertTrue(reloaded.verify()["ok"])

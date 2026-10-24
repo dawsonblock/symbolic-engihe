@@ -338,3 +338,38 @@ remaining_unknowns:
   - "SQLite close() exists everywhere; WAL databases still leave -wal/-shm files by design until final checkpoint"
 next_gate: "Wire envelope issuance into verifier path; enforce cross-repo evidence count in promotion; pre-register held-out suite"
 ```
+
+## SIS-311/312/313 — receipt authority, transactional ledger, fail-closed retrieval
+
+```yaml
+phase_id: v31-integrity-closure-1
+tickets: [SIS-311, SIS-312, SIS-313]
+status: implemented_and_tested
+changed_files:
+  - src/sis/v3/verifier.py      # verify_and_resolve_receipt + ExpectedProtocol protocol binding
+  - src/sis/v3/promotion.py     # PromotionDecisionV2 (post-state inside signed body), stale-head
+                              # optimistic concurrency, crash-tail recovery, full V2 replay verify,
+                              # projected_statuses, qualified_projection_drift
+  - src/sis/v3/procedures.py    # add() rejects status=qualified without allow_qualified
+  - src/sis/v3/contracts.py     # PromotionDecisionV2 record; expired/revoked/stale_evidence/
+                              # unsupported_context reason codes
+  - src/sis/v3/retrieval.py     # expires_at enforcement (malformed -> expired), revoked digest
+                              # denylist, now injection
+  - src/sis/v3/guidance.py      # revoked/now pass-through, policy reasons updated
+  - tests/v3/test_promotion.py  # +8 receipt-authority + 6 ledger/projection tests
+  - tests/v3/test_retrieval.py  # +5 expiry/revocation tests
+tests_added: 14
+observed_outcomes:
+  - "Full suite: 546 tests, 0 failures, 2 skips under -W error"
+  - "signed-FAIL->tampered-PASS -> receipt_digest_mismatch, head unchanged; substituted receipt, forged signature, untrusted/revoked signer, protocol mismatch, malformed/unresolvable receipts all rejected with stable reason codes"
+  - "suspended->qualified requalification requires fresh verified receipts + evaluator signature"
+  - "direct store.add(status=qualified) rejected; only allow_qualified fixtures/controller mint qualified state"
+  - "V2 decisions sign the complete post-state (new_record_digest + new_qualified_head) BEFORE either signature; verify() replays chain + evaluator/operator signatures + transition legality + head continuity; torn trailing writes truncated on restart"
+  - "expected_old_head optimistic-concurrency guard rejects stale views"
+  - "expired/malformed-expiry/revoked-digest procedures abstain with stable reason codes; malformed expires_at rejected at contract parse"
+remaining_unknowns:
+  - "V1 decisions verify for chain/digest only (pre-state not inside their signed body) — flagged legacy_v1 in verify()"
+  - "Qualified-catalog materialized projection exists (projected_statuses) but retrieval still reads record.status directly — full projection-only retrieval is the next hardening step"
+  - "min_pass_receipts/min_distinct_repos are policy knobs; recommended pilot defaults (>=3 tasks, >=2 repos) are documented, not yet enforced as defaults"
+next_gate: "SIS-314 release attestation; then v3.2 governed artifact channel + typed AST repair procedures"
+```

@@ -210,8 +210,8 @@ class CatalogTests(unittest.TestCase):
         self.catalog = Catalog(self.store, self.root / "scopes.json")
 
     def test_scope_roundtrip_and_filtering(self):
-        self.store.add(_proc(pid="p1"))
-        self.store.add(_proc(pid="p2"))
+        self.store.add(_proc(pid="p1"), allow_qualified=True)
+        self.store.add(_proc(pid="p2"), allow_qualified=True)
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.catalog.set_scope("p2", "cross_repository", actor_role="operator")
         self.assertEqual(self.catalog.scope_of("p1"), "family")
@@ -223,7 +223,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(fresh.scope_of("p1"), "family")
 
     def test_scope_requires_operator_and_valid_scope(self):
-        self.store.add(_proc(pid="p1"))
+        self.store.add(_proc(pid="p1"), allow_qualified=True)
         with self.assertRaises(AuthorizationDenied):
             self.catalog.set_scope("p1", "family", actor_role="agent")
         with self.assertRaises(ContractError):
@@ -239,8 +239,9 @@ class CatalogTests(unittest.TestCase):
     def test_cascade_suspend_invalidates_dependents(self):
         from dataclasses import replace
         receipt = "b" * 64
-        self.store.add(replace(_proc(pid="p1"), evidence_refs=(receipt,)))
-        self.store.add(_proc(pid="p2"))
+        self.store.add(replace(_proc(pid="p1"), evidence_refs=(receipt,)),
+                       allow_qualified=True)
+        self.store.add(_proc(pid="p2"), allow_qualified=True)
         controller = PromotionController(
             self.store, self.root / "decisions",
             operator_token_digest=operator_token_digest(TOKEN),
@@ -258,7 +259,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(self.store.get("p2").status, "qualified")
 
     def test_scoped_qualified_head_differs_from_global(self):
-        self.store.add(_proc(pid="p1"))
+        self.store.add(_proc(pid="p1"), allow_qualified=True)
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.assertNotEqual(
             self.catalog.qualified_head("family"),

@@ -40,8 +40,60 @@ def _proc(pid="p1", status="qualified", pre=({"kind": "language_is", "value": "p
 def _store(*records, root=None):
     store = ProcedureStore(root or Path(tempfile.mkdtemp()))
     for rec in records:
-        store.add(rec)
+        # Test fixtures seed qualified state explicitly; production callers
+        # must go through a signed promotion decision instead.
+        store.add(rec, allow_qualified=True)
     return store
+
+
+class ExpiryRevocationTests(unittest.TestCase):
+    """SIS-313: expired/revoked/stale procedures fail closed."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.request = _request()
+
+    def test_expired_record_abstains(self):
+        record = replace(_proc(), expires_at="2020-01-01T00:00:00Z")
+        store = _store(record)
+        result = retrieve(self.request, store)
+        self.assertEqual(result.candidates, ())
+        self.assertEqual(result.rejections[0].reason_code, "expired")
+
+    def test_malformed_expiry_rejected_at_contract(self):
+        # Malformed timestamps can't even be minted — fail closed at parse.
+        with self.assertRaises(ContractError):
+            replace(_proc(), expires_at="not-a-date")
+
+    def test_future_expiry_still_serves(self):
+        record = replace(_proc(), expires_at="2999-01-01T00:00:00Z")
+        store = _store(record)
+        self.assertEqual(len(retrieve(self.request, store).candidates), 1)
+
+    def test_revoked_digest_abstains_immediately(self):
+        record = _proc()
+        store = _store(record)
+        self.assertEqual(len(retrieve(self.request, store).candidates), 1)
+        result = retrieve(self.request, store, revoked={record.digest})
+        self.assertEqual(result.candidates, ())
+        self.assertEqual(result.rejections[0].reason_code, "revoked")
+
+    def test_now_injection_controls_expiry(self):
+        record = replace(_proc(), expires_at="2030-01-01T00:00:00Z")
+        store = _store(record)
+        future = retrieve(self.request, store, now="2031-01-01T00:00:00Z")
+        self.assertEqual(future.rejections[0].reason_code, "expired")
+        self.assertEqual(len(retrieve(self.request, store, now="2029-01-01T00:00:00Z").candidates), 1)
+
+    def test_guidance_passes_revocation_through(self):
+        record = _proc()
+        store = _store(record)
+        served = sis_recommend(self.request, store)
+        self.assertEqual(served.decision, "recommend")
+        denied = sis_recommend(self.request, store, revoked={record.digest})
+        self.assertEqual(denied.decision, "abstain")
+        self.assertEqual(denied.reason_code, "revoked")
 
 
 class GateTests(unittest.TestCase):

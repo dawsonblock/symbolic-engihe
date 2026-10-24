@@ -93,7 +93,7 @@ class InductionDemo(unittest.TestCase):
             "def scale(a, b):\n    return a * b\n")
         self.assertEqual(hyp.transformation_kind, "operator_substitution")
         self.assertEqual(sorted(hyp.metavariables),
-                         ["expr:lhs", "expr:rhs"])
+                         ["expr:l0", "expr:l1"])
         self.assertEqual(hyp.source_pattern["op"], "Sub")
         self.assertEqual(hyp.target_pattern["op"], "Mult")
         self.assertIn(self.receipt.digest, hyp.evidence_refs)
@@ -136,6 +136,41 @@ class InductionDemo(unittest.TestCase):
         source = "def neg(x):\n    return -x\n"
         self.assertIsNone(apply_hypothesis(source, hyp))
         self.assertEqual(find_matches(source, hyp), ())
+
+    def test_nested_left_diff_mines_and_transfers(self):
+        """l-w-h -> l*w*h: the outer Sub is shared context; the inner
+        Sub->Mult is the typed transformation."""
+        hyp = self._mine(
+            "def volume(l, w, h):\n    return l - w - h\n",
+            "def volume(l, w, h):\n    return l * w * h\n")
+        self.assertEqual(hyp.transformation_kind, "operator_substitution")
+        self.assertEqual(sorted(hyp.metavariables),
+                         ["expr:l0", "expr:l1", "expr:l2"])
+        out = apply_hypothesis(
+            "def f(x, y, z):\n    return x - y - z\n", hyp)
+        self.assertIsNotNone(out)
+        # Spine-consistent map: every Sub in the chain becomes Mult.
+        self.assertIn("x * y * z", out)
+
+    def test_nested_right_diff_mines_and_transfers(self):
+        hyp = self._mine(
+            "def f(a, b, c):\n    return a - (b - c)\n",
+            "def f(a, b, c):\n    return a - (b * c)\n")
+        # Shared sibling `a` generalized to a context metavar.
+        self.assertIn("expr:c0", hyp.metavariables)
+        out = apply_hypothesis(
+            "def g(p, q, r):\n    return p - (q - r)\n", hyp)
+        self.assertIsNotNone(out)
+        import ast
+        expected = ast.dump(ast.parse(
+            "def g(p, q, r):\n    return p - (q * r)\n"))
+        self.assertEqual(ast.dump(ast.parse(out)), expected)
+
+    def test_nested_both_sides_differ_still_refused(self):
+        with self.assertRaisesRegex(InductionError, "compounded_difference"):
+            self._mine(
+                "def f(a, b, c):\n    return a - b - c\n",
+                "def f(a, b, c):\n    return a * b * c + a\n")
 
     def test_operand_reorder_is_typed(self):
         hyp = self._mine(
@@ -194,6 +229,58 @@ class InductionDemo(unittest.TestCase):
         self.auth.store.add(record)
         self.assertEqual(
             self.auth.store.get(record.procedure_id).status, "candidate")
+
+
+class HypothesisStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.auth = FixtureAuthority(self.root / "auth")
+        self.receipt = self.auth.issue_receipt()
+
+    def _mine(self):
+        from sis.v3.repair_induction import mine_repairs
+        return mine_repairs(
+            actor_role="learner",
+            before_source="def f(a, b):\n    return a - b\n",
+            after_source="def f(a, b):\n    return a * b\n",
+            receipt=self.receipt,
+            failure_signature="sig",
+            semantic_contract_digest=_CONTRACT,
+            test_recipe=("registered_task",),
+        )
+
+    def test_append_get_and_reload(self):
+        from sis.v3.repair_induction import HypothesisStore
+        store = HypothesisStore(self.root / "hyps")
+        hyp = self._mine()
+        digest = store.add(hyp)
+        self.assertEqual(store.add(hyp), digest)  # idempotent
+        reopened = HypothesisStore(self.root / "hyps")
+        self.assertEqual(reopened.get(hyp.hypothesis_id).digest, digest)
+        self.assertEqual(reopened.get_by_digest(digest).hypothesis_id,
+                         hyp.hypothesis_id)
+        self.assertEqual(reopened.verify(), [])
+
+    def test_conflicting_id_fails_closed(self):
+        from dataclasses import replace
+        from sis.v3.repair_induction import HypothesisStore, InductionError
+        store = HypothesisStore(self.root / "hyps")
+        hyp = self._mine()
+        store.add(hyp)
+        tampered = replace(hyp, miner_identity="forged-miner")
+        with self.assertRaisesRegex(InductionError, "hypothesis_conflict"):
+            store.add(tampered)
+
+    def test_corrupt_tail_detected_on_load(self):
+        from sis.v3.repair_induction import HypothesisStore, InductionError
+        store = HypothesisStore(self.root / "hyps")
+        store.add(self._mine())
+        with open(self.root / "hyps" / "hypotheses.jsonl", "ab") as fh:
+            fh.write(b'{"garbage": true}\n')
+        with self.assertRaisesRegex(InductionError, "hypothesis_log_corrupt"):
+            HypothesisStore(self.root / "hyps")
 
 
 def _proc_from_hypothesis(hyp):

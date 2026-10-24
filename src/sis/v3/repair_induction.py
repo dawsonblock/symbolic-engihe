@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from .contracts import (
     ContractError,
@@ -28,6 +30,7 @@ from .contracts import (
     canonical_json,
 )
 from .policy import require_permission
+from .procedures import _bounded_entry
 
 _MAX_SOURCE_BYTES = 1 << 20
 _MAX_METAVARS = 32
@@ -91,41 +94,100 @@ def _first_expr(tree: ast.AST) -> ast.expr | None:
     return None
 
 
+def _metavar(metavars: dict[int, str], node: ast.AST, name: str) -> None:
+    """Register ``node`` as a metavariable hole under ``name``."""
+    metavars[id(node)] = name
+
+
+def _bind_pair(metavars: dict[int, str], a: ast.AST, b: ast.AST,
+               name: str) -> None:
+    """Both sides of a diff share one metavariable name."""
+    metavars[id(a)] = name
+    metavars[id(b)] = name
+
+
+def _context_name(metavars: dict[int, str]) -> str:
+    n = sum(1 for v in metavars.values() if v.startswith("expr:c"))
+    return f"expr:c{n}"
+
+
+def _shape(node: ast.AST) -> tuple:
+    """Structure with operator and leaf identity erased."""
+    if isinstance(node, ast.BinOp):
+        return ("BinOp", _shape(node.left), _shape(node.right))
+    return ("leaf",)
+
+
+def _leaves(node: ast.AST) -> list[ast.AST]:
+    if isinstance(node, ast.BinOp):
+        return _leaves(node.left) + _leaves(node.right)
+    return [node]
+
+
+def _ops(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.BinOp):
+        return [type(node.op).__name__] + _ops(node.left) + _ops(node.right)
+    return []
+
+
 def _diff_operators(
     before: ast.AST, after: ast.AST, metavars: dict[int, str]
 ) -> str:
     """Classify the minimal difference between aligned expression trees.
 
     Returns a transformation kind and registers operand metavariables.
+    Handles spine-aligned diffs (same leaf structure, consistent per-
+    position operator map, e.g. ``l-w-h -> l*w*h``), operand reorders,
+    and single-sided nested diffs (shared siblings become ``expr:c*``
+    context holes so patterns transfer to differently-named code).
     """
-    if isinstance(before, ast.BinOp) and isinstance(after, ast.BinOp):
-        if ast.dump(before.left) == ast.dump(after.left) and \
-                ast.dump(before.right) == ast.dump(after.right):
-            if type(before.op) is not type(after.op):
-                metavars[id(before.left)] = f"expr:lhs"
-                metavars[id(after.left)] = f"expr:lhs"
-                metavars[id(before.right)] = f"expr:rhs"
-                metavars[id(after.right)] = f"expr:rhs"
-                return "operator_substitution"
-            raise InductionError(
-                "no_typed_difference",
-                "before/after expressions are identical; nothing was repaired",
-            )
-        if ast.dump(before.left) == ast.dump(after.right) and \
-                ast.dump(before.right) == ast.dump(after.left) and \
-                type(before.op) is type(after.op):
-            metavars[id(before.left)] = "expr:lhs"
-            metavars[id(after.right)] = "expr:lhs"
-            metavars[id(before.right)] = "expr:rhs"
-            metavars[id(after.left)] = "expr:rhs"
-            return "operand_reorder"
+    if not (isinstance(before, ast.BinOp) and isinstance(after, ast.BinOp)):
         raise InductionError(
-            "compounded_difference",
-            "operands and operator both changed; no typed hypothesis",
+            "unsupported_difference",
+            "differing subtrees are not aligned binary operations",
+        )
+    # Spine-aligned: identical shape and identical leaves; check whether
+    # every op position maps consistently (same from->to pair).
+    if _shape(before) == _shape(after):
+        bleaves, aleaves = _leaves(before), _leaves(after)
+        if all(ast.dump(a) == ast.dump(b)
+               for a, b in zip(bleaves, aleaves)):
+            mapping: dict[str, str] = {}
+            consistent = True
+            for bo, ao in zip(_ops(before), _ops(after)):
+                prior = mapping.setdefault(bo, ao)
+                if prior != ao:
+                    consistent = False  # fall through to nested checks
+                    break
+            if consistent and mapping and any(
+                    k != v for k, v in mapping.items()):
+                for i, (bl, al) in enumerate(zip(bleaves, aleaves)):
+                    _bind_pair(metavars, bl, al, f"expr:l{i}")
+                return "operator_substitution"
+    left_same = ast.dump(before.left) == ast.dump(after.left)
+    right_same = ast.dump(before.right) == ast.dump(after.right)
+    if left_same and right_same:
+        raise InductionError("no_typed_difference",
+                             "before/after expressions are identical")
+    if ast.dump(before.left) == ast.dump(after.right) and \
+            ast.dump(before.right) == ast.dump(after.left) and \
+            type(before.op) is type(after.op):
+        _bind_pair(metavars, before.left, after.right, "expr:lhs")
+        _bind_pair(metavars, before.right, after.left, "expr:rhs")
+        return "operand_reorder"
+    if type(before.op) is type(after.op) and (left_same != right_same):
+        # Single-sided nested diff: shared sibling is a context hole.
+        shared = before.left if left_same else before.right
+        shared_after = after.left if left_same else after.right
+        _bind_pair(metavars, shared, shared_after, _context_name(metavars))
+        return _diff_operators(
+            before.right if left_same else before.left,
+            after.right if left_same else after.left,
+            metavars,
         )
     raise InductionError(
-        "unsupported_difference",
-        "differing subtrees are not aligned binary operations",
+        "compounded_difference",
+        "operands and operator both changed; no typed hypothesis",
     )
 
 
@@ -281,6 +343,102 @@ def mine_repairs(
         family_id=family_id,
         miner_identity=miner_identity,
     )
+
+
+class HypothesisStore:
+    """Append-only, digest-chained log for ``RepairHypothesisV1`` records.
+
+    Same integrity discipline as the procedure catalog: every entry is a
+    bounded JSON line ``{record, record_digest, prior_record_digest}``;
+    verification replays the chain and detects corruption, duplicate
+    hypothesis IDs, and forged digests. Append is idempotent on
+    identical content; a conflicting duplicate ID fails closed.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        self._dir = Path(root)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._log = self._dir / "hypotheses.jsonl"
+        self._records: dict[str, RepairHypothesisV1] = {}
+        self._by_digest: dict[str, RepairHypothesisV1] = {}
+        self._prior: str | None = None
+        self._load()
+
+    def add(self, record: RepairHypothesisV1) -> str:
+        if not isinstance(record, RepairHypothesisV1):
+            record = RepairHypothesisV1.from_dict(record)
+        existing = self._records.get(record.hypothesis_id)
+        if existing is not None:
+            if existing.digest == record.digest:
+                return record.digest
+            raise InductionError(
+                "hypothesis_conflict",
+                "a different hypothesis already holds this ID",
+            )
+        entry = {
+            "record": record.to_dict(),
+            "record_digest": record.digest,
+            "prior_record_digest": self._prior,
+        }
+        # Enforce the same bounded-entry shape as the procedure catalog.
+        _bounded_entry(canonical_json(entry))
+        line = canonical_json(entry) + b"\n"
+        with open(self._log, "ab") as handle:
+            handle.write(line)
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._records[record.hypothesis_id] = record
+        self._by_digest[record.digest] = record
+        self._prior = hashlib.sha256(line.rstrip(b"\n")).hexdigest()
+        return record.digest
+
+    def get(self, hypothesis_id: str) -> RepairHypothesisV1 | None:
+        return self._records.get(hypothesis_id)
+
+    def get_by_digest(self, digest: str) -> RepairHypothesisV1 | None:
+        return self._by_digest.get(digest)
+
+    def verify(self) -> list[str]:
+        """Replay the log; returns a list of integrity problems (empty = OK)."""
+        problems: list[str] = []
+        prior: str | None = None
+        seen: set[str] = set()
+        try:
+            lines = self._log.read_bytes().splitlines()
+        except FileNotFoundError:
+            return problems
+        for position, raw in enumerate(lines):
+            try:
+                entry = _bounded_entry(raw)
+                record = RepairHypothesisV1.from_dict(entry["record"])
+            except (ContractError, ValueError):
+                problems.append(f"corrupt_line_at_{position}")
+                break
+            if record.digest != entry["record_digest"]:
+                problems.append(f"digest_mismatch_at_{position}")
+                break
+            if entry["prior_record_digest"] != prior:
+                problems.append(f"chain_break_at_{position}")
+                break
+            if record.hypothesis_id in seen:
+                problems.append(f"duplicate_hypothesis_at_{position}")
+                break
+            seen.add(record.hypothesis_id)
+            prior = hashlib.sha256(raw).hexdigest()
+        return problems
+
+    def _load(self) -> None:
+        problems = self.verify()
+        if problems:
+            raise InductionError("hypothesis_log_corrupt", ";".join(problems))
+        if not self._log.exists():
+            return
+        for raw in self._log.read_bytes().splitlines():
+            entry = _bounded_entry(raw)
+            record = RepairHypothesisV1.from_dict(entry["record"])
+            self._records[record.hypothesis_id] = record
+            self._by_digest[record.digest] = record
+            self._prior = hashlib.sha256(raw).hexdigest()
 
 
 @dataclass(frozen=True)

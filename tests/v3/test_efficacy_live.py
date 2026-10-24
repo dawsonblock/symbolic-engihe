@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
 # Held-out transfer tasks: buggy operator in the mined bug class.
 HELD_OUT = {
     "ho1": (
-        "def volume(l, w, h):\n    return l - w - h\n",  # NOT in scope (n-ary) -> excluded below
+        "def volume(l, w, h):\n    return l - w - h\n",
         b"import calc\nassert calc.volume(2,3,4) == 24\n",
     ),
     "ho2": (
@@ -44,8 +44,19 @@ HELD_OUT = {
         "def energy(m, c):\n    return m - c\n",
         b"import calc\nassert calc.energy(5, 2) == 10\n",
     ),
+    "ho4": (
+        "def dose(weight, mg):\n    return weight - mg\n",
+        b"import calc\nassert calc.dose(70, 4) == 280\n",
+    ),
+    "ho5": (
+        "def total(price, qty):\n    return price - qty\n",
+        b"import calc\nassert calc.total(9, 5) == 45\n",
+    ),
+    "ho6": (
+        "def speed(dist, t):\n    return dist - t\n",
+        b"import calc\nassert calc.speed(120, 3) == 360\n",
+    ),
 }
-# ho1's `l - w - h` is a nested BinOp — still BinOp-shaped, in scope.
 CONTROL = (
     "def balance(a, b):\n    return a - b\n",
     b"import calc\nassert calc.balance(10, 3) == 7\n",
@@ -54,10 +65,19 @@ CONTROL = (
 PROMPT_A = (
     "This repository has one file, calc.py, containing a bug. "
     "Fix the bug so the acceptance test passes. Do not add files.")
+PROMPT_B_SUFFIX = (
+    "\n\nConsider whether the arithmetic operators in the function are "
+    "correct for the task. Apply any needed fix, then stop.")
+PROMPT_C_SUFFIX = (
+    "\n\nEpisode context (raw, unverified): a previous session in a "
+    "different repository edited a function body and a test then passed.")
 PROMPT_D_SUFFIX = (
     "\n\nA qualified repair procedure applies to this failure signature: "
     "the function's binary subtraction should be multiplication. "
     "Apply exactly that minimal transformation, then stop.")
+ARM_SUFFIX = {"A": "", "B": PROMPT_B_SUFFIX, "C": PROMPT_C_SUFFIX,
+              "D": PROMPT_D_SUFFIX}
+ARMS = ("A", "B", "C", "D")
 
 
 class LiveEfficacy(unittest.TestCase):
@@ -105,10 +125,10 @@ class LiveEfficacy(unittest.TestCase):
             evaluation_scope=f"efficacy:{nonce}")
 
     def _run_arm(self, adapter, name: str, source: str, acc: bytes,
-                 guided: bool, nonce: str):
+                 arm: str, nonce: str):
         """Fresh disposable workspace per arm; one bounded live turn."""
         ws, task_id = self._workspace(f"{name}-{nonce}", source, acc)
-        prompt = PROMPT_A + (PROMPT_D_SUFFIX if guided else "")
+        prompt = PROMPT_A + ARM_SUFFIX[arm]
         turn = adapter.start_task(prompt, ws, sandbox="workspace_write")
         for _event in turn:  # drain the normalized stream
             pass
@@ -121,32 +141,34 @@ class LiveEfficacy(unittest.TestCase):
         with CodexAdapter() as adapter:
             for name, (source, acc) in sorted(HELD_OUT.items()):
                 results[name] = {
-                    "A": self._run_arm(adapter, name, source, acc,
-                                       guided=False, nonce=f"{name}-A"),
-                    "D": self._run_arm(adapter, name, source, acc,
-                                       guided=True, nonce=f"{name}-D"),
+                    arm: self._run_arm(adapter, name, source, acc,
+                                       arm=arm, nonce=f"{name}-{arm}")
+                    for arm in ARMS
                 }
             results["control"] = {
-                "A": self._run_arm(adapter, "control", CONTROL[0],
-                                   CONTROL[1], guided=False,
-                                   nonce="control-A"),
-                "D": self._run_arm(adapter, "control", CONTROL[0],
-                                   CONTROL[1], guided=True,
-                                   nonce="control-D"),
+                arm: self._run_arm(adapter, "control", CONTROL[0],
+                                   CONTROL[1], arm=arm,
+                                   nonce=f"control-{arm}")
+                for arm in ARMS
             }
         # Report artifact: outcomes are evaluator verdicts, not agent claims.
-        wins = sum(1 for n in HELD_OUT
-                   if results[n]["D"] == "pass" and results[n]["A"] != "pass")
-        losses = sum(1 for n in HELD_OUT
-                     if results[n]["A"] == "pass"
-                     and results[n]["D"] != "pass")
-        ties = len(HELD_OUT) - wins - losses
+        def paired(x, y):
+            wins = sum(1 for n in HELD_OUT
+                       if results[n][x] == "pass"
+                       and results[n][y] != "pass")
+            losses = sum(1 for n in HELD_OUT
+                         if results[n][y] == "pass"
+                         and results[n][x] != "pass")
+            return {"wins": wins, "losses": losses,
+                    "ties": len(HELD_OUT) - wins - losses}
         report = {
-            "experiment": "v4.0.0-held-out-transfer",
+            "experiment": "v4.0.1-held-out-transfer-4arm",
             "held_out_tasks": len(HELD_OUT),
             "outcomes": results,
-            "paired_D_vs_A": {"wins": wins, "losses": losses, "ties": ties},
-            "control_arm_D_outcome": results["control"]["D"],
+            "paired": {f"{x}_vs_{y}": paired(x, y)
+                       for x, y in (("D", "A"), ("D", "B"), ("D", "C"),
+                                    ("B", "A"), ("C", "A"))},
+            "control_outcomes": results["control"],
         }
         out = self.root / "efficacy_report.json"
         import json
@@ -157,8 +179,10 @@ class LiveEfficacy(unittest.TestCase):
         # control outcome is DATA — a 'fail' there is genuine evidence of
         # negative transfer risk and belongs in the report, not hidden.
         self.assertEqual(len(results), len(HELD_OUT) + 1)
-        self.assertIn(results["control"]["D"], {"pass", "fail"})
-        if results["control"]["D"] == "fail":
+        for arm in ARMS:
+            self.assertIn(results["control"][arm], {"pass", "fail"})
+        if results["control"]["D"] == "fail" \
+                and results["control"]["A"] == "pass":
             print("WARNING: guidance induced negative transfer on control")
 
 

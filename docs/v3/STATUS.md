@@ -588,3 +588,17 @@ remaining_unknowns:
   - "the decisive repository-disjoint live study has NOT been run — harness is qualified, efficacy is not"
 next_gate: "run the preregistered paired study; M7 operational hardening"
 ```
+
+## v3.1-alpha — M7 operational hardening
+
+```yaml
+phase_id: v31-operational-hardening
+tickets: [M7]
+status: documented
+changed_files:
+  - docs/v3/OPERATIONS.md  # NEW: key custody, DB backup, revocation drill, execution boundary, release procedure
+observed_outcomes:
+  - "deployment trust boundaries documented; all enforcement-side behaviors (fail-closed verify, per-request revocation, hard budgets) already implemented and tested"
+remaining_unknowns:
+  - "efficacy gate remains OPEN until the preregistered repo-disjoint study runs"
+```

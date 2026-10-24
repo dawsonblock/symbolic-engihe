@@ -477,6 +477,44 @@ class ScopeGrantV1(V1Record):
     RECORD_TYPE: ClassVar[str] = "scope_grant_v1"
 
 
+_TRANSFORMATION_KINDS = frozenset(
+    {"operator_substitution", "operand_reorder", "generic_strategy"})
+
+
+@dataclass(frozen=True, kw_only=True)
+class RepairHypothesisV1(V1Record):
+    """Typed, versioned source-transformation hypothesis (v3.4.0).
+
+    ``source_pattern``/``target_pattern`` are canonical JSON AST templates:
+    ``{"node": "<AstType>", "op": "<OperatorType>", "fields": {...}}`` with
+    ``{"meta": "<type>:<name>"}`` holes for typed metavariables.
+    ``transformation_kind == "generic_strategy"`` marks low-confidence
+    textual strategies — never claimed as semantic transformations.
+    ``semantic_contract_digest`` binds the independently runnable contract
+    (the evaluator's suite commitment) that must pass before a
+    patch-transforming hypothesis may serve.
+    """
+
+    hypothesis_id: str
+    language: str
+    transformation_kind: str
+    source_pattern: Mapping[str, Any]
+    target_pattern: Mapping[str, Any]
+    metavariables: tuple[str, ...]
+    failure_signature: str
+    preconditions: tuple[Mapping[str, Any], ...]
+    contraindications: tuple[Mapping[str, Any], ...]
+    required_dependencies: tuple[str, ...]
+    semantic_contract_digest: str | None
+    test_recipe: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    repository_identity: str | None
+    family_id: str | None
+    miner_identity: str
+
+    RECORD_TYPE: ClassVar[str] = "repair_hypothesis_v1"
+
+
 @dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
@@ -657,6 +695,39 @@ def _validate_record(record: V1Record) -> None:
         _identifier(d["actor_identity"], "actor_identity")
         _text(d["evaluator_signature"], "evaluator_signature", maximum=512)
         _text(d["operator_authorization"], "operator_authorization", maximum=512)
+    elif isinstance(record, RepairHypothesisV1):
+        _identifier(d["hypothesis_id"], "hypothesis_id")
+        _text(d["language"], "language", maximum=64)
+        _enum(d["transformation_kind"], _TRANSFORMATION_KINDS,
+              "transformation_kind")
+        for name in ("source_pattern", "target_pattern"):
+            _require(isinstance(d[name], Mapping)
+                     and len(canonical_json(d[name])) <= 16384,
+                     f"{name} must be a bounded JSON template")
+        for mv in _sequence(d["metavariables"], "metavariables", maximum=32):
+            _require(isinstance(mv, str)
+                     and bool(re.fullmatch(r"[a-z]+:[A-Za-z0-9_]{1,64}", mv)),
+                     "metavariables must be typed '<type>:<name>'")
+        _text(d["failure_signature"], "failure_signature", maximum=512)
+        for name in ("preconditions", "contraindications"):
+            for condition in _sequence(d[name], name):
+                _precondition(condition, name + "[]")
+        for dep in _sequence(d["required_dependencies"], "required_dependencies", maximum=32):
+            _text(dep, "required_dependencies[]", maximum=256)
+        _digest(d["semantic_contract_digest"], "semantic_contract_digest",
+                optional=True)
+        for item in _sequence(d["test_recipe"], "test_recipe", maximum=16):
+            _text(item, "test_recipe[]", maximum=512)
+        for ref in _sequence(d["evidence_refs"], "evidence_refs", maximum=64):
+            _digest(ref, "evidence_refs[]")
+        _identifier(d["repository_identity"], "repository_identity") \
+            if d["repository_identity"] is not None else None
+        _identifier(d["family_id"], "family_id") \
+            if d["family_id"] is not None else None
+        _identifier(d["miner_identity"], "miner_identity")
+        _require(d["transformation_kind"] == "generic_strategy"
+                 or d["semantic_contract_digest"] is not None,
+                 "typed transformations require a semantic contract digest")
     elif isinstance(record, GuidanceRequestV1):
         _identifier(d["task_id"], "task_id")
         _digest(d["repo_snapshot_digest"], "repo_snapshot_digest")

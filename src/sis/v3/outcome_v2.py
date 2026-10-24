@@ -37,7 +37,12 @@ def _utcnow() -> str:
 
 
 def _parse(ts: str) -> datetime:
-    return datetime.fromisoformat(ts[:-1] + "+00:00" if ts.endswith("Z") else ts)
+    parsed = datetime.fromisoformat(
+        ts[:-1] + "+00:00" if ts.endswith("Z") else ts)
+    # Naive timestamps are treated as UTC so comparisons never mix awareness.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 @dataclass(frozen=True)
@@ -130,7 +135,10 @@ def verify_envelope(
         return False
     if env.signer_key_id in revoked_keys:
         return False
-    now = _parse(at_time) if at_time else datetime.now(timezone.utc)
+    try:
+        now = _parse(at_time) if at_time else datetime.now(timezone.utc)
+    except (ValueError, TypeError) as exc:
+        raise ContractError("at_time must be an ISO-8601 timestamp") from exc
     try:
         issued = _parse(env.issued_at)
         if key.valid_from and issued < _parse(key.valid_from):
@@ -139,7 +147,7 @@ def verify_envelope(
             return False
         if env.expires_at and now > _parse(env.expires_at):
             return False
-    except ValueError:
+    except (ValueError, TypeError):
         return False
     if seen_nonces is not None and env.nonce in seen_nonces:
         return False

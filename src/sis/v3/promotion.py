@@ -252,7 +252,8 @@ class PromotionController:
                             p + f"_at_{position}" for p in self._verify_v2(
                                 decision, statuses, qualified))
                     prior = hashlib.sha256(line).hexdigest()
-        problems.extend(self._projection_drift(qualified, statuses))
+        if not problems:
+            problems.extend(self._projection_drift(qualified, statuses))
         return {"ok": not problems, "entries": count, "legacy_v1": legacy,
                 "head": prior, "problems": problems}
 
@@ -269,7 +270,10 @@ class PromotionController:
         base.pop("evaluator_signature")
         base.pop("operator_authorization")
         body = _SIGNATURE_DOMAIN + canonical_json(base)
-        if decision.evaluator_signature != "not-required":
+        if decision.new_status in {"qualified", "evaluated"} and \
+                decision.evaluator_signature == "not-required":
+            problems.append("evaluator_signature_required")
+        elif decision.evaluator_signature != "not-required":
             try:
                 key_id, sig_hex = decision.evaluator_signature.split(":", 1)
                 if key_id not in self._trusted or not signatures.verify(
@@ -377,7 +381,11 @@ class PromotionController:
         """Count independent evidence units — never raw outcome strings.
 
         Cloned receipts collapse to the same (task, repo) unit and cannot
-        inflate the count; distinct repositories are counted separately.
+        inflate the count. ``min_distinct_repos`` counts distinct evaluated
+        *tree* digests — a proxy for repository disjointness, not proof of
+        it: two different submissions to the same repository still digest
+        differently. Genuine repository disjointness must be established
+        through evaluator task-registration lineage, outside this gate.
         """
         pass_receipts = [r for r in receipts if r.outcome == "pass"]
         units = {(r.task_id, r.evaluated_repo_digest) for r in pass_receipts}
@@ -396,12 +404,16 @@ class PromotionController:
         lines = raw.splitlines()
         # Crash-tail repair: an undecodable trailing line is a torn write —
         # truncate to the last complete entry; mid-file damage fails closed.
+        # If EVERY line is undecodable that is corruption, not a torn write —
+        # never truncate the whole ledger away.
         while lines:
             try:
                 loads_json(lines[-1].rstrip(b"\n"))
                 break
             except ContractError:
                 lines.pop()
+        if not lines:
+            raise PromotionRejected("decision_log_corrupt", "no valid entries")
         if len(lines) < len(raw.splitlines()):
             with open(self._log, "wb") as handle:
                 handle.write(b"".join(line.rstrip(b"\n") + b"\n" for line in lines))

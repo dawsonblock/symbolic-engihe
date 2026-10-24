@@ -139,6 +139,14 @@ class EnvelopeV2Tests(unittest.TestCase):
         env = issue_envelope(**self.kw)
         self.assertFalse(verify_envelope(env, windowed))
 
+    def test_bad_at_time_raises_contract_not_crash(self):
+        env = issue_envelope(**self.kw)
+        with self.assertRaises(ContractError):
+            verify_envelope(env, self.registry, at_time="not-a-date")
+        # Naive timestamps normalize to UTC rather than TypeError-crashing.
+        self.assertTrue(verify_envelope(
+            env, self.registry, at_time="2030-01-01T00:00:00"))
+
     def test_registry_conflict_rejected(self):
         other_seed, other_pub = signatures.generate_keypair()
         reg = TrustedKeyRegistry({"k": TrustedKey(public_key=other_pub.hex())})

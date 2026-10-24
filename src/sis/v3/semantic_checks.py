@@ -66,10 +66,18 @@ def operator_changes(source: str, patched: str) -> list[OperatorChange]:
 
 
 def metamorphic_violations(changes: list[OperatorChange]) -> list[str]:
-    """Flag swaps that break the source's declared metamorphic class."""
+    """Flag changes that break the source's metamorphic class.
+
+    Only same-class swaps (commutative→commutative, noncommutative→
+    noncommutative) are presumptively safe. Any class crossing — including
+    an unclassifiable OTHER op or the structural-difference marker — cannot
+    be proven semantics-preserving and is reported.
+    """
     problems: list[str] = []
     for change in changes:
-        if {change.old_class, change.new_class} == {OpClass.COMMUTATIVE, OpClass.NONCOMMUTATIVE}:
+        if change.lineno == 0 and change.old_class == change.new_class == OpClass.OTHER:
+            problems.append("structural change beyond an operator swap")
+        elif change.old_class != change.new_class:
             problems.append(
                 f"line {change.lineno}: {change.old_class.value} -> "
                 f"{change.new_class.value} operator swap alters symmetry"

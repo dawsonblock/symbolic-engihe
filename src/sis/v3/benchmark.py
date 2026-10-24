@@ -199,7 +199,9 @@ class BenchmarkHarness:
         solved = {arm: sum(1 for t in results if t.arms[arm].outcome == "pass") for arm in arms}
         solve_rates = {
             arm: {"solved": solved[arm], "n": len(results),
-                  "wilson_ci95": [f"{x:.10f}" for x in wilson_ci(solved[arm], len(results))]}
+                  "wilson_ci95": (
+                      [f"{x:.10f}" for x in wilson_ci(solved[arm], len(results))]
+                      if results else None)}
             for arm in arms
         }
         pairs = {}

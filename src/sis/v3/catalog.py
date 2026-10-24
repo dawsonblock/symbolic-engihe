@@ -35,6 +35,7 @@ class Catalog:
     def __init__(self, store: ProcedureStore, meta_path: str | Path) -> None:
         self.store = store
         self._meta_path = Path(meta_path)
+        self._meta_path.parent.mkdir(parents=True, exist_ok=True)
         self._scopes: dict[str, str] = {}
         self._lock = threading.Lock()
         self._load()

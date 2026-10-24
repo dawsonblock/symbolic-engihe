@@ -19,8 +19,11 @@ from .procedures import ProcedureStore
 
 
 def _parse_ts(value: str) -> datetime:
-    return datetime.fromisoformat(
+    parsed = datetime.fromisoformat(
         value[:-1] + "+00:00" if value.endswith("Z") else value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _expired(record: ProcedureRecordV1, now: datetime) -> bool:

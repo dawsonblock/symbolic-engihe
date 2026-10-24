@@ -531,6 +531,42 @@ class LedgerProjectionTests(unittest.TestCase):
                 operator_token_digest=operator_token_digest(TOKEN),
                 trusted_evaluator_keys={self.key_id: self.public.hex()})
 
+    def test_fully_corrupt_log_is_not_truncated_away(self):
+        log = self.root / "decisions" / "decisions.jsonl"
+        log.write_bytes(b"garbage-not-json\nalso-broken\n")
+        with self.assertRaisesRegex(PromotionRejected, "decision_log_corrupt"):
+            PromotionController(
+                self.store, self.root / "decisions",
+                operator_token_digest=operator_token_digest(TOKEN),
+                trusted_evaluator_keys={self.key_id: self.public.hex()})
+        # Corrupt bytes preserved — no silent data loss.
+        self.assertTrue(log.read_bytes().startswith(b"garbage"))
+
+    def test_forged_qualified_without_evaluator_signature_detected(self):
+        self.store.add(_proc(status="draft"))
+        self.controller.transition(
+            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_token=TOKEN)
+        forged = dict(self.controller.decisions()[0].to_dict())
+        forged.update({"new_status": "qualified",
+                       "evaluator_signature": "not-required"})
+        from sis.v3.contracts import PromotionDecisionV2
+        from sis.v3.contracts import canonical_json
+        forged_dec = PromotionDecisionV2.from_dict(forged)
+        entry = {"decision": forged_dec.to_dict(),
+                 "decision_digest": forged_dec.digest,
+                 "prior_decision_digest": self.controller._prior}
+        with open(self.root / "decisions" / "decisions.jsonl", "ab") as handle:
+            handle.write(canonical_json(entry) + b"\n")
+        fresh = PromotionController(
+            self.store, self.root / "decisions",
+            operator_token_digest=operator_token_digest(TOKEN),
+            trusted_evaluator_keys={self.key_id: self.public.hex()})
+        report = fresh.verify()
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("evaluator_signature_required" in p
+                            for p in report["problems"]))
+
 
 if __name__ == "__main__":
     unittest.main()

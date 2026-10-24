@@ -1,14 +1,14 @@
 # SIS v3 implementation status
 
-Current classification: **M0 contracts/policy plus the SIS3-003 workspace
-executor, SIS3-005 episode store, and SIS3-006 signed-receipt verifier are
-implemented and locally tested; the exact source-artifact gate remains blocked
-because the named ZIP is not available in this workspace. The SIS3-004 Codex
-adapter slice is implemented and locally tested, while live SDK integration
-remains unverified.** Work uses the pinned v2.4.0 Git baseline recorded below.
-A genuine live-agent episode, OS-validated isolation, evaluator process
-separation (the verifier currently shares the host process with its callers in
-tests), procedure qualification, and efficacy evaluation are not established.
+Current classification: **M0 contracts/policy plus SIS3-003 executor,
+SIS3-005 episode store, SIS3-006 signed receipts, SIS3-004 CLI adapter (real
+backend contact, quota-limited), SIS3-007–012 (procedure store + miner,
+source-preserving patcher, hard-gated retrieval, recommend/abstain guidance,
+signed promotion controller + rollback, external anchor chain, four-arm
+benchmark harness) are implemented and locally tested.** A *passing* live
+Codex episode is blocked by account quota (reset ~8:36 PM on run date);
+OS-validated isolation, evaluator process separation, and any efficacy claim
+remain unestablished. No v3.0.0-alpha label is claimed.
 
 ## SIS3-001 and SIS3-002 report
 
@@ -195,4 +195,65 @@ remaining_unknowns:
   - "Verifier shares the caller's OS process in tests; separate evaluator service/process custody is specified but not deployed"
   - "No promotion controller, qualified catalog, or benchmark harness; no efficacy claim"
 next_gate: "Run one authenticated Codex task in a disposable workspace through this pipeline, then gate M1 on real adapter capture + independent receipt"
+```
+
+## SIS3-004 (CLI) + SIS3-007–012 report
+
+```yaml
+phase_id: SIS3-004-cli+007-012
+status: tested (live contact achieved; passing live episode blocked by quota)
+source_files_changed:
+  - src/sis/v3/adapters/codex_cli.py
+  - src/sis/v3/procedures.py
+  - src/sis/v3/patcher.py
+  - src/sis/v3/retrieval.py
+  - src/sis/v3/guidance.py
+  - src/sis/v3/promotion.py
+  - src/sis/v3/rollback.py
+  - src/sis/v3/audit.py
+  - src/sis/v3/benchmark.py
+  - src/sis/v3/verifier.py  # persists full receipts; load_receipt accessor
+  - src/sis/v3/schemas/*.json  # 9 golden canonical examples
+  - scripts/v3/run_codex_episode.py
+  - examples/v3/fixtures/buggy_calc/*
+  - docs/v3/episodes/live-001/*
+  - tests/v3/test_codex_cli_adapter.py
+  - tests/v3/test_procedures.py
+  - tests/v3/test_patcher.py
+  - tests/v3/test_retrieval.py
+  - tests/v3/test_promotion.py
+  - tests/v3/test_audit.py
+  - tests/v3/test_benchmark.py
+  - tests/v3/test_schemas.py
+tests_added: 60
+commands_run:
+  - "PYTHONPATH=src python3 -m unittest discover -s tests -q"
+  - "PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests -q"
+  - "PYTHONPATH=src python3 scripts/v3/run_codex_episode.py --work-root /tmp/sis-live-ws --evidence-root /tmp/sis-live-evidence"
+  - "codex exec --json --ephemeral -s workspace-write -C /tmp/codex-dbg (direct capability probe)"
+observed_outcomes:
+  - "Full suite: 479 tests, 0 failures, 2 skips; no ResourceWarnings under -W error"
+  - "LIVE CODEX CONTACT: codex-cli 0.156.1 (ChatGPT auth) reached the backend inside a disposable fixture workspace; turn failed with account usage-limit error; episode.jsonl (5 chained events), anchor, journal, and public key preserved in docs/v3/episodes/live-001/"
+  - "Evaluator correctly signed outcome=fail on the still-buggy tree; offline public-key signature verification passed at run time"
+  - "A passing live episode remains blocked: ChatGPT Codex quota exhausted, resets ~8:36 PM; codex-mini-latest not supported on this account"
+  - "ProcedureStore: digest-keyed append-only catalog, revision conflicts, chain/tamper detection, persistence across reopen"
+  - "Miner: deterministic candidates from verified episodes only; learner role required; pass→candidate, fail→counterexample-bearing candidate"
+  - "Patcher: unique-span byte replacement preserves CRLF/Unicode/comments; nonunique/missing/identity/path-escape rejected; proposals are artifacts, not writes"
+  - "Retrieval: every precondition kind gated; contraindication→prior_negative_transfer; only qualified records surface; deterministic ranking"
+  - "Guidance: recommend path returns procedures+evidence+matched gates; abstains on unverified intent, empty catalog, or all-gates-failed incl. the remaining_balance fixture (prior_negative_transfer)"
+  - "Promotion: full lifecycle draft→…→qualified; illegal edges, wrong token, agent role, missing receipts, missing/invalid evaluator signature all rejected; decision log hash-chained, restart-safe, tamper-detecting; checkpoint/restore suspends post-checkpoint qualifications"
+  - "Audit: AnchorChain records verified heads; reports grew_after_anchor vs corrupt vs missing"
+  - "Benchmark: paired A/B/C/D arms in fresh workspaces, identical-tree receipt reuse, independent scoring, paired wins/losses/ties report"
+environment_and_dependency_versions:
+  - "macOS 26.x; Python 3.12.0; codex-cli 0.156.1; ChatGPT plan (no API key)"
+security_tests:
+  - "CLI adapter emits bounded summaries only (no command/output text); scrubbed env; wall-clock process-group kill; cancel; danger-full-access not offered"
+  - "Promotion decisions require operator role+token AND evaluator Ed25519 signature for evidence-bearing transitions"
+  - "Replayed operator token alone cannot qualify: evaluator signature is independently verified"
+remaining_unknowns:
+  - "No PASSING live Codex episode — quota-limited; the M1 gate item 'one actual coding task completes end-to-end' is demonstrated for failure capture, not task success"
+  - "Promotion operator token is a shared-secret digest gate (research build), not per-principal auth"
+  - "Benchmark token/tool budgets are declared caps enforced by the agent runtime; the harness enforces wall-clock only"
+  - "Miner is deterministic and records observed evidence; no LLM candidate generation yet"
+next_gate: "When quota resets, run scripts/v3/run_codex_episode.py for a passing live episode; then pilot qualification + the four-arm benchmark on scripted tasks before any efficacy language"
 ```

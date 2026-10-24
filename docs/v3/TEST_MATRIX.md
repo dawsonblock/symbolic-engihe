@@ -26,7 +26,14 @@ regenerated during development.
 | Workspace execution (SIS3-003) | Not present in baseline | Bounded runs, rlimit enforcement, capped output, kill switch, env scrub, symlink/disk audits, optional macOS seatbelt network/write denial; receipts honest about `unverified_local` |
 | Episode store (SIS3-005) | Not present in baseline | Chained append, idempotent retry, conflict/missing-artifact rejection, crash-tail repair, tamper detection, head anchoring |
 | Signed outcomes (SIS3-006) | Not present in baseline | Evaluator-custodied Ed25519 receipts verify offline; tamper/wrong-key/replay/duplicate rejected; roles denied; journal fails closed on corruption |
-| End-to-end episode | Not present in baseline | Scripted-agent vertical through executor→store→verifier→replay; NOT a live Codex run |
+| End-to-end episode | Not present in baseline | Scripted-agent vertical through executor→store→verifier→replay; live Codex CLI contact captured (quota-limited turn.failed, correct fail receipt) — see docs/v3/episodes/live-001 |
+| Procedure catalog (SIS3-007) | Not present in baseline | Digest-keyed append-only store; deterministic miner over verified episodes; learner role gate |
+| Patch proposals (SIS3-008) | Not present in baseline | Unique-span byte replacement; CRLF/Unicode preserved; nonunique/missing/escape rejected; proposals are artifacts |
+| Retrieval (SIS3-009) | Not present in baseline | All precondition kinds gated; contraindications→prior_negative_transfer; qualified-only; deterministic ranking |
+| Guidance (SIS3-010) | Abstain-only | Recommend path with procedures+evidence+matched gates; remaining_balance fixture abstains prior_negative_transfer |
+| Promotion (SIS3-011) | Not present in baseline | Full lifecycle; operator token + evaluator signature for evidence transitions; chained decision log; checkpoint/restore |
+| Anchors (audit) | head export only | AnchorChain in separate-custody dir; grew/corrupt/missing divergence detection |
+| Benchmark (SIS3-012) | Not present in baseline | Paired A/B/C/D harness, fresh workspaces, independent scoring, wins/losses/ties |
 
 ## Runtime matrix
 

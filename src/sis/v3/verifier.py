@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import tempfile
 from collections.abc import Mapping
@@ -276,6 +277,16 @@ class OutcomeVerifier:
     def issued_receipts(self) -> list[str]:
         return [entry["receipt_digest"] for entry in self._journal]
 
+    def load_receipt(self, receipt_digest: str) -> OutcomeReceiptV1:
+        """Reload a persisted signed receipt by its canonical digest."""
+        if not isinstance(receipt_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", receipt_digest):
+            raise ContractError("receipt reference must be a lowercase SHA-256 digest")
+        path = self.registry_dir / "receipts" / f"{receipt_digest}.json"
+        try:
+            return OutcomeReceiptV1.from_json(path.read_bytes())
+        except OSError as exc:
+            raise JournalIntegrityError("receipt_missing") from exc
+
     def _record(self, receipt: OutcomeReceiptV1, nonce: str, execution_digest: str) -> None:
         entry = {
             "receipt_digest": receipt.digest,
@@ -292,6 +303,20 @@ class OutcomeVerifier:
             handle.write(canonical_json(entry) + b"\n")
             handle.flush()
             os.fsync(handle.fileno())
+        receipts_dir = self.registry_dir / "receipts"
+        receipts_dir.mkdir(exist_ok=True)
+        receipt_path = receipts_dir / f"{receipt.digest}.json"
+        if not receipt_path.exists():
+            fd, tmp = tempfile.mkstemp(dir=receipts_dir, prefix=".tmp-")
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(receipt.canonical_bytes())
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp, receipt_path)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
         self._nonces.add(nonce)
         self._evaluated.add(
             (receipt.task_id, receipt.evaluated_repo_digest, receipt.criterion_version)

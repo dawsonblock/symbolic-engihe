@@ -26,12 +26,15 @@ def sis_recommend(
     files_present=(),
     symbols_extra=(),
     revoked=frozenset(),
+    request_repo=None,
     now: str | None = None,
 ) -> GuidanceV1:
     """Return a strict, bounded recommendation or abstention; never mutates state.
 
     ``snapshot`` is the ``EligibilitySnapshot`` produced by the promotion
     authority — the single decision-backed view of qualified state.
+    ``request_repo`` is the evaluator-attested repository identity of the
+    requester, enforced against signed scope bindings.
     """
     if not isinstance(request, GuidanceRequestV1):
         request = GuidanceRequestV1.from_dict(request)
@@ -71,7 +74,7 @@ def sis_recommend(
     result = retrieve(
         request, snapshot,
         files_present=files_present, symbols_extra=symbols_extra, limit=3,
-        revoked=revoked, now=now,
+        revoked=revoked, request_repo=request_repo, now=now,
     )
     if not result.candidates:
         dominant = result.rejections[0].reason_code if result.rejections else "insufficient_support"

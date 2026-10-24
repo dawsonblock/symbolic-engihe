@@ -225,5 +225,75 @@ class GuidanceTests(unittest.TestCase):
         self.assertFalse(g.procedure_ids)
 
 
+class ScopeGateTests(unittest.TestCase):
+    """v3.2.0: signed scope bindings enforced at read time."""
+
+    def _bound_snapshot(self, repo_id="repo-1", family_id=None,
+                        scope=None, extra_receipts=()):
+        from tests.v3.support import FixtureAuthority
+        auth = FixtureAuthority()
+        receipt = auth.issue_receipt(repo_id=repo_id, family_id=family_id)
+        auth.qualify(replace(_proc(), status="candidate"),
+                     receipts=(receipt,))
+        if scope:
+            auth.controller.grant_scope(
+                "p1", scope, actor_role="operator", actor_identity="op",
+                operator_token=auth.token,
+                evidence_receipt_digests=tuple(
+                    [receipt.digest] + [r.digest for r in extra_receipts]),
+                evaluator_signer=auth._eval_signer,
+                family_id=family_id)
+        return auth.controller.eligibility_snapshot()
+
+    def test_wrong_repo_rejected_same_repo_served(self):
+        snap = self._bound_snapshot(repo_id="repo-1")
+        ok = retrieve(_request(), snap,
+                      request_repo={"repository_id": "repo-1",
+                                    "family_id": None})
+        self.assertEqual(len(ok.candidates), 1)
+        wrong = retrieve(_request(), snap,
+                         request_repo={"repository_id": "repo-2",
+                                       "family_id": None})
+        self.assertEqual(len(wrong.candidates), 0)
+        self.assertEqual(wrong.rejections[0].reason_code,
+                         "unsupported_context")
+
+    def test_unattested_request_rejected_when_bound(self):
+        snap = self._bound_snapshot(repo_id="repo-1")
+        result = retrieve(_request(), snap, request_repo=None)
+        self.assertEqual(len(result.candidates), 0)
+
+    def test_cross_repository_scope_serves_any_repo(self):
+        from tests.v3.support import FixtureAuthority
+        auth = FixtureAuthority()
+        r1 = auth.issue_receipt(repo_id="repo-1")
+        r2 = auth.issue_receipt(repo_id="repo-2")
+        auth.qualify(replace(_proc(), status="candidate"), receipts=(r1,))
+        auth.controller.grant_scope(
+            "p1", "cross_repository", actor_role="operator",
+            actor_identity="op", operator_token=auth.token,
+            evidence_receipt_digests=(r1.digest, r2.digest),
+            evaluator_signer=auth._eval_signer)
+        snap = auth.controller.eligibility_snapshot()
+        result = retrieve(_request(), snap,
+                          request_repo={"repository_id": "repo-9",
+                                        "family_id": None})
+        self.assertEqual(len(result.candidates), 1)
+
+    def test_family_scope_requires_matching_family(self):
+        snap = self._bound_snapshot(repo_id="repo-1", family_id="fam-1",
+                                    scope="family")
+        wrong_family = retrieve(
+            _request(), snap,
+            request_repo={"repository_id": "repo-7",
+                          "family_id": "fam-2"})
+        self.assertEqual(len(wrong_family.candidates), 0)
+        same_family = retrieve(
+            _request(), snap,
+            request_repo={"repository_id": "repo-7",
+                          "family_id": "fam-1"})
+        self.assertEqual(len(same_family.candidates), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

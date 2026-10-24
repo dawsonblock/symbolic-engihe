@@ -115,6 +115,8 @@ class RegisteredTask:
     files: Mapping[str, bytes]
     base_commit: str | None
     suite_commitment: str
+    repository_id: str | None = None
+    family_id: str | None = None
 
 
 class OutcomeVerifier:
@@ -153,8 +155,16 @@ class OutcomeVerifier:
         argv: tuple[str, ...] | list[str],
         files: Mapping[str, bytes] | None = None,
         base_commit: str | None = None,
+        repository_id: str | None = None,
+        family_id: str | None = None,
     ) -> RegisteredTask:
-        """Record evaluator-private acceptance material for a task identity."""
+        """Record evaluator-private acceptance material for a task identity.
+
+        ``repository_id``/``family_id`` bind this task to a stable repo
+        identity (distinct from any single tree digest); they are part of
+        the suite commitment so a re-registration under a different
+        identity is a conflict, not a silent rebind.
+        """
         require_permission(actor_role, "outcome:evaluate")
         command = CommandSpec(argv=tuple(argv))
         material = dict(files or {})
@@ -170,6 +180,8 @@ class OutcomeVerifier:
             "argv": list(command.argv),
             "files": {name: hashlib.sha256(data).hexdigest() for name, data in sorted(material.items())},
             "base_commit": base_commit,
+            "repository_id": repository_id,
+            "family_id": family_id,
         })
         task = RegisteredTask(
             task_id=task_id,
@@ -178,6 +190,8 @@ class OutcomeVerifier:
             files=material,
             base_commit=base_commit,
             suite_commitment=commitment,
+            repository_id=repository_id,
+            family_id=family_id,
         )
         existing = self._tasks.get(task_id)
         if existing is not None:
@@ -301,6 +315,26 @@ class OutcomeVerifier:
         except OSError as exc:
             raise JournalIntegrityError("receipt_missing") from exc
 
+    def resolve_repo_identity(self, tree_digest: str) -> dict | None:
+        """Stable repo identity attested for an evaluated tree, or None.
+
+        Resolved from signed receipt journal entries plus task
+        registrations; conflicting bindings resolve to None (fail closed).
+        """
+        found: set[tuple[str | None, str | None]] = set()
+        for entry in self._journal:
+            if entry.get("evaluated_repo_digest") != tree_digest:
+                continue
+            task = self._tasks.get(entry["task_id"])
+            if task is not None:
+                found.add((task.repository_id, task.family_id))
+        if len(found) != 1:
+            return None
+        repo_id, family_id = next(iter(found))
+        if repo_id is None:
+            return None
+        return {"repository_id": repo_id, "family_id": family_id}
+
     def _record(self, receipt: OutcomeReceiptV1, nonce: str,
                 execution_digest: str, scope: str | None = None) -> None:
         entry = {
@@ -357,6 +391,8 @@ class OutcomeVerifier:
                     files={name: bytes.fromhex(data) for name, data in item["files"].items()},
                     base_commit=item["base_commit"],
                     suite_commitment=item["suite_commitment"],
+                    repository_id=item.get("repository_id"),
+                    family_id=item.get("family_id"),
                 )
                 self._tasks[task.task_id] = task
         if self._journal_path.exists():
@@ -385,6 +421,8 @@ class OutcomeVerifier:
                     "files": {name: data.hex() for name, data in sorted(task.files.items())},
                     "base_commit": task.base_commit,
                     "suite_commitment": task.suite_commitment,
+                    "repository_id": task.repository_id,
+                    "family_id": task.family_id,
                 }
                 for task in sorted(self._tasks.values(), key=lambda t: t.task_id)
             ],

@@ -46,6 +46,7 @@ class GuidanceGateway:
         kill_switch_path: str | Path | None = None,
         log_dir: str | Path | None = None,
         revoked_provider=None,
+        repo_resolver=None,
     ) -> None:
         if phase not in PHASES:
             raise ContractError("unknown guidance phase")
@@ -53,6 +54,7 @@ class GuidanceGateway:
             raise ContractError("snapshot_provider must be callable")
         self._snapshot_provider = snapshot_provider
         self._revoked_provider = revoked_provider
+        self._repo_resolver = repo_resolver
         self.phase = phase
         self._kill_path = Path(kill_switch_path) if kill_switch_path else None
         self._log_dir = Path(log_dir) if log_dir else None
@@ -83,11 +85,14 @@ class GuidanceGateway:
 
         revoked = frozenset(
             self._revoked_provider() if self._revoked_provider else ())
+        request_repo = (
+            self._repo_resolver(request.repo_snapshot_digest)
+            if self._repo_resolver else None)
         # Always run the full pipeline for the internal record.
         full = sis_recommend(
             request, self._snapshot_provider(),
             files_present=files_present, symbols_extra=symbols_extra,
-            revoked=revoked,
+            revoked=revoked, request_repo=request_repo,
         )
         with self._lock:
             self._log({

@@ -124,6 +124,7 @@ def retrieve(
     limit: int = 3,
     ablations: AblationFlags = AblationFlags(),
     revoked: frozenset[str] | set[str] = frozenset(),
+    request_repo: Mapping | None = None,
     now: str | None = None,
 ) -> RetrievalResult:
     """Apply hard gates then rank surviving qualified procedures.
@@ -132,7 +133,11 @@ def retrieve(
     authority view. Raw ``ProcedureRecordV1.status`` is never consulted, so
     uncommitted or tampered catalog writes cannot be served. ``revoked`` is
     a policy-managed denylist of record digests; ``now`` injects trusted
-    UTC time for deterministic testing.
+    UTC time for deterministic testing. ``request_repo`` is the
+    evaluator-attested identity of the requesting repository
+    (``{"repository_id", "family_id"}``); signed scope bindings are
+    enforced against it — a bound record is rejected for a request whose
+    identity is unattested or different.
     """
     from .promotion import EligibilitySnapshot
 
@@ -179,6 +184,28 @@ def retrieve(
                 detail="expires_at has passed or is invalid",
             ))
             continue
+        binding = snapshot.scope_bindings.get(record.procedure_id)
+        if binding is not None:
+            scope = binding["scope"]
+            repo_ids = binding["repo_ids"]
+            rid = (request_repo or {}).get("repository_id")
+            fid = (request_repo or {}).get("family_id")
+            if scope == "repository" and repo_ids and rid not in repo_ids:
+                rejections.append(Rejection(
+                    procedure_id=record.procedure_id,
+                    reason_code="unsupported_context",
+                    detail="scope is bound to different repository identities",
+                ))
+                continue
+            if scope == "family" and (
+                    binding["family_id"] is None
+                    or fid != binding["family_id"]):
+                rejections.append(Rejection(
+                    procedure_id=record.procedure_id,
+                    reason_code="unsupported_context",
+                    detail="scope is bound to a different repository family",
+                ))
+                continue
         contraindicated = [
             cond for cond in record.contraindications
             if _contradiction_matches(cond, context)

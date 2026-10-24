@@ -21,7 +21,8 @@ from sis.v3.outcome_v2 import (
 )
 from sis.v3.policy import AuthorizationDenied
 from sis.v3.procedures import ProcedureStore
-from sis.v3.promotion import PromotionController, operator_token_digest
+from sis.v3.promotion import (
+    PromotionController, PromotionRejected, operator_token_digest)
 from sis.v3.retrieval import AblationFlags, retrieve
 from sis.v3.semantic_checks import (
     OpClass, metamorphic_violations, op_class, operator_changes,
@@ -215,34 +216,74 @@ class CatalogTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.auth = _authority()
         self.store = self.auth.store
-        self.catalog = Catalog(self.store, self.root / "scopes.json")
+        self.catalog = Catalog(self.store, self.auth.controller.eligibility_snapshot)
+
+    def _grant(self, pid, scope, receipts=(), family_id=None):
+        return self.auth.controller.grant_scope(
+            pid, scope, actor_role="operator", actor_identity="op-1",
+            operator_token=self.auth.token,
+            evidence_receipt_digests=tuple(r.digest for r in receipts),
+            evaluator_signer=self.auth._eval_signer,
+            family_id=family_id)
 
     def test_scope_roundtrip_and_filtering(self):
         self.auth.qualify(_proc(pid="p1", status="candidate"))
         self.auth.qualify(_proc(pid="p2", status="candidate"))
-        self.catalog.set_scope("p1", "family", actor_role="operator")
-        self.catalog.set_scope("p2", "cross_repository", actor_role="operator")
+        r1 = self.auth.issue_receipt(repo_id="repo-1", family_id="fam-1")
+        r2 = self.auth.issue_receipt(repo_id="repo-2")
+        self._grant("p1", "family", receipts=(r1,), family_id="fam-1")
+        self._grant("p2", "cross_repository", receipts=(r1, r2))
         self.assertEqual(self.catalog.scope_of("p1"), "family")
         self.assertEqual(self.catalog.scope_of("p2"), "cross_repository")
         self.assertEqual(
             {r.procedure_id for r in self.catalog.procedures(scope="family")},
             {"p1"})
-        fresh = Catalog(self.store, self.root / "scopes.json")
+        fresh = Catalog(self.store, self.auth.controller.eligibility_snapshot)
         self.assertEqual(fresh.scope_of("p1"), "family")
+
+    def test_cross_repo_needs_distinct_repo_identities(self):
+        # Two receipts on the SAME repository identity is not transfer.
+        self.auth.qualify(_proc(pid="p1", status="candidate"))
+        r1 = self.auth.issue_receipt(repo_id="repo-1")
+        r2 = self.auth.issue_receipt(repo_id="repo-1")
+        with self.assertRaisesRegex(PromotionRejected,
+                                    "insufficient_transfer_evidence"):
+            self._grant("p1", "cross_repository", receipts=(r1, r2))
+        r3 = self.auth.issue_receipt(repo_id="repo-2")
+        self._grant("p1", "cross_repository", receipts=(r1, r3))
+        self.assertEqual(self.catalog.scope_of("p1"), "cross_repository")
 
     def test_scope_requires_operator_and_valid_scope(self):
         self.auth.qualify(_proc(pid="p1", status="candidate"))
+        r1 = self.auth.issue_receipt(repo_id="repo-1", family_id="fam-1")
         with self.assertRaises(AuthorizationDenied):
-            self.catalog.set_scope("p1", "family", actor_role="agent")
+            self.auth.controller.grant_scope(
+                "p1", "family", actor_role="agent", actor_identity="x",
+                operator_token=self.auth.token,
+                evaluator_signer=self.auth._eval_signer,
+                evidence_receipt_digests=(r1.digest,), family_id="fam-1")
         with self.assertRaises(ContractError):
-            self.catalog.set_scope("p1", "universe", actor_role="operator")
+            self._grant("p1", "universe", receipts=(r1,))
         with self.assertRaises(Exception):
-            self.catalog.set_scope("missing", "family", actor_role="operator")
+            self._grant("missing", "family", receipts=(r1,),
+                        family_id="fam-1")
+        # Unqualified procedures cannot be granted scope.
+        self.auth.store.add(_proc(pid="p3", status="candidate"))
+        with self.assertRaisesRegex(PromotionRejected,
+                                    "scope_requires_qualified"):
+            self._grant("p3", "repository", receipts=(r1,))
 
     def test_corrupt_scope_metadata_fails_closed(self):
-        (self.root / "scopes.json").write_text("not-json")
-        with self.assertRaises(CatalogError):
-            Catalog(self.store, self.root / "scopes.json")
+        from sis.v3.promotion import (
+    PromotionController, PromotionRejected, operator_token_digest)
+        scopes_log = self.auth.root / "decisions" / "scopes.jsonl"
+        scopes_log.write_bytes(b"not-json\n")
+        with self.assertRaisesRegex(PromotionRejected, "scope_log_corrupt"):
+            PromotionController(
+                self.store, self.auth.root / "decisions",
+                operator_token_digest=operator_token_digest(self.auth.token),
+                trusted_evaluator_keys={
+                    self.auth.eval_key_id: self.auth.eval_public.hex()})
 
     def test_cascade_suspend_invalidates_dependents(self):
         from dataclasses import replace
@@ -267,7 +308,8 @@ class CatalogTests(unittest.TestCase):
 
     def test_scoped_qualified_head_differs_from_global(self):
         self.auth.qualify(_proc(pid="p1", status="candidate"))
-        self.catalog.set_scope("p1", "family", actor_role="operator")
+        r1 = self.auth.issue_receipt(repo_id="repo-1", family_id="fam-1")
+        self._grant("p1", "family", receipts=(r1,), family_id="fam-1")
         self.assertNotEqual(
             self.catalog.qualified_head("family"),
             self.catalog.qualified_head("cross_repository"))

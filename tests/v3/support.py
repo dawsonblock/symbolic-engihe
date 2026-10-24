@@ -35,16 +35,26 @@ class FixtureAuthority:
             "key-" + hashlib.sha256(self.eval_public).hexdigest()[:24]
         )
         self._receipts: dict[str, OutcomeReceiptV1] = {}
+        self._repo_map: dict[str, dict] = {}
         self.controller = PromotionController(
             self.store,
             self.root / "decisions",
             operator_token_digest=operator_token_digest(_TOKEN),
             trusted_evaluator_keys={self.eval_key_id: self.eval_public.hex()},
             receipt_resolver=self._resolve,
+            repo_resolver=self._resolve_repo,
         )
 
     def _resolve(self, digest: str):
         return self._receipts[digest]
+
+    def _resolve_repo(self, tree_digest: str):
+        return self._repo_map.get(tree_digest)
+
+    def bind_repo(self, tree_digest: str, repo_id: str,
+                  family_id: str | None = None):
+        self._repo_map[tree_digest] = {
+            "repository_id": repo_id, "family_id": family_id}
 
     def _eval_signer(self, payload: bytes):
         return self.eval_key_id, signatures.sign(self.eval_seed, payload).hex()
@@ -54,8 +64,10 @@ class FixtureAuthority:
         *,
         task_id: str = "t1",
         outcome: str = "pass",
-        repo_digest: str = "ab" * 32,
+        repo_digest: str | None = None,
         criterion_version: str = "v1",
+        repo_id: str | None = None,
+        family_id: str | None = None,
     ) -> OutcomeReceiptV1:
         """Sign a receipt with the test evaluator key; register for resolve."""
         import secrets as _s
@@ -64,7 +76,9 @@ class FixtureAuthority:
             "receipt_id": "rcpt-" + _s.token_hex(12),
             "evaluator_identity": "fixture-evaluator",
             "task_id": task_id,
-            "evaluated_repo_digest": repo_digest,
+            "evaluated_repo_digest": repo_digest or (
+                "ab" * 32 if repo_id is None else
+                hashlib.sha256(repo_id.encode()).hexdigest()),
             "test_suite_commitment": hashlib.sha256(
                 f"{task_id}:{criterion_version}".encode()
             ).hexdigest(),
@@ -79,6 +93,8 @@ class FixtureAuthority:
         unsigned["signature"] = signatures.sign(self.eval_seed, body).hex()
         receipt = OutcomeReceiptV1.from_dict(unsigned)
         self._receipts[receipt.digest] = receipt
+        if repo_id is not None:
+            self.bind_repo(receipt.evaluated_repo_digest, repo_id, family_id)
         return receipt
 
     def _transition(self, pid: str, status: str, receipts=()):

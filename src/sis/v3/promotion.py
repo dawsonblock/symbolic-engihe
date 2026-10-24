@@ -16,7 +16,7 @@ import secrets
 import tempfile
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import signatures
@@ -26,6 +26,7 @@ from .contracts import (
     ProcedureRecordV1,
     PromotionDecisionV1,
     PromotionDecisionV2,
+    ScopeGrantV1,
     canonical_digest,
     canonical_json,
     loads_json,
@@ -39,6 +40,7 @@ from .verifier import (
 )
 
 _SIGNATURE_DOMAIN = b"sis-v3:promotion_decision:1\0"
+_SCOPE_DOMAIN = b"sis-v3:scope_grant:1\0"
 _TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"candidate", "retired"}),
     "candidate": frozenset({"evaluated", "retired"}),
@@ -76,6 +78,10 @@ class EligibilitySnapshot:
     qualified_head: str
     decision_head: str | None
     inconsistencies: tuple[str, ...]
+    scopes: Mapping[str, ScopeGrantV1] = field(default_factory=dict)
+    # procedure_id -> {"scope", "repo_ids": frozenset, "family_id"} — the
+    # grant binding when signed, else the evidence-derived repository scope.
+    scope_bindings: Mapping[str, Mapping] = field(default_factory=dict)
 
     @property
     def qualified(self) -> tuple[ProcedureRecordV1, ...]:
@@ -100,6 +106,7 @@ class PromotionController:
         operator_token_digest: str | None,
         trusted_evaluator_keys: Mapping[str, str],
         receipt_resolver: Callable[[str], OutcomeReceiptV1] | None = None,
+        repo_resolver: Callable[[str], Mapping | None] | None = None,
         min_pass_receipts: int = 1,
         min_distinct_repos: int = 1,
         expected_protocol: ExpectedProtocol | None = None,
@@ -126,6 +133,7 @@ class PromotionController:
         self._operator_keys = dict(trusted_operator_keys or {})
         self._trusted = dict(trusted_evaluator_keys)
         self._resolve_receipt = receipt_resolver
+        self._repo_resolver = repo_resolver
         self._min_receipts = min_pass_receipts
         self._min_repos = min_distinct_repos
         self._protocol = expected_protocol
@@ -133,9 +141,12 @@ class PromotionController:
         self.policy_version = policy_version
         self._journal_dir = self.log_dir / "journal"
         self._journal_dir.mkdir(parents=True, exist_ok=True)
+        self._scopes_log = self.log_dir / "scopes.jsonl"
         self._prior: str | None = None
+        self._grants_prior: str | None = None
         self._decisions: list[PromotionDecisionV1 | PromotionDecisionV2] = []
         self._projected: dict[str, str] = {}  # record_digest -> decided status
+        self._grants: dict[str, ScopeGrantV1] = {}  # procedure_id -> grant
         self._lock = threading.Lock()
         self._recover()
         self._load()
@@ -239,6 +250,122 @@ class PromotionController:
             self._projected.pop(decision.candidate_digest, None)
             self._projected[decision.new_record_digest] = decision.new_status
             return decision
+
+    def grant_scope(
+        self,
+        procedure_id: str,
+        scope: str,
+        *,
+        actor_role: str,
+        actor_identity: str,
+        operator_token: str | None = None,
+        evidence_receipt_digests: tuple[str, ...] = (),
+        evaluator_signer: Callable[[bytes], tuple[str, str]] | None = None,
+        family_id: str | None = None,
+    ) -> ScopeGrantV1:
+        """Issue a signed scope grant for a currently-qualified procedure.
+
+        Scope is a signed decision, never a mutable sidecar. ``repository``
+        binds the evaluator-attested repo identities behind the supplied
+        evidence receipts; ``family`` additionally names an attested family;
+        ``cross_repository`` requires receipts resolving to at least two
+        DISTINCT repository identities — a second tree of the same repo is
+        not transfer evidence.
+        """
+        require_permission(actor_role, "promotion:approve")
+        if scope not in ("repository", "family", "cross_repository"):
+            raise ContractError("unsupported catalog scope")
+        with self._lock:
+            record = self.store.get(procedure_id)  # raises on unknown id
+            if self._status_of(record) != "qualified":
+                raise PromotionRejected(
+                    "scope_requires_qualified",
+                    f"{procedure_id} is not qualified",
+                )
+            receipts = self._verify_receipts(evidence_receipt_digests)
+            repo_ids: list[str] = []
+            families: set[str] = set()
+            for receipt in receipts:
+                if self._repo_resolver is None:
+                    raise PromotionRejected(
+                        "repo_identity_unbound",
+                        "no repo resolver configured",
+                    )
+                identity = self._repo_resolver(receipt.evaluated_repo_digest)
+                if not identity or not identity.get("repository_id"):
+                    raise PromotionRejected(
+                        "repo_identity_unresolved",
+                        receipt.evaluated_repo_digest[:16],
+                    )
+                repo_ids.append(identity["repository_id"])
+                if identity.get("family_id"):
+                    families.add(identity["family_id"])
+            distinct = set(repo_ids)
+            if scope == "repository" and not distinct:
+                raise PromotionRejected(
+                    "insufficient_evidence",
+                    "repository scope needs at least one resolved identity",
+                )
+            if scope == "family":
+                if not family_id:
+                    raise PromotionRejected(
+                        "family_binding_required",
+                        "family scope needs a family_id binding",
+                    )
+                if not distinct:
+                    raise PromotionRejected(
+                        "insufficient_evidence",
+                        "family scope needs resolved repo identities",
+                    )
+            if scope == "cross_repository" and len(distinct) < 2:
+                raise PromotionRejected(
+                    "insufficient_transfer_evidence",
+                    "cross-repository scope requires evidence from at least "
+                    "two distinct repository identities",
+                )
+            unsigned = {
+                "schema_version": 1,
+                "grant_id": "sg-" + secrets.token_hex(12),
+                "procedure_id": procedure_id,
+                "scope": scope,
+                "repo_identities": sorted(distinct),
+                "family_id": family_id,
+                "evidence_refs": list(
+                    dict.fromkeys(r.digest for r in receipts)),
+                "actor_identity": actor_identity,
+            }
+            body = _SCOPE_DOMAIN + canonical_json(unsigned)
+            if scope != "repository":
+                if evaluator_signer is None:
+                    raise PromotionRejected("evaluator_signature_required")
+                key_id, sig_hex = evaluator_signer(body)
+                if key_id not in self._trusted or not signatures.verify(
+                    bytes.fromhex(sig_hex), body,
+                    bytes.fromhex(self._trusted[key_id]),
+                ):
+                    raise PromotionRejected("evaluator_signature_invalid")
+                unsigned["evaluator_signature"] = f"{key_id}:{sig_hex}"
+            else:
+                unsigned["evaluator_signature"] = "not-required"
+            unsigned["operator_authorization"] = self._authorize_operator(
+                {**unsigned, "evaluator_signature":
+                 unsigned["evaluator_signature"]},
+                None, operator_token,
+            )
+            grant = ScopeGrantV1.from_dict(unsigned)
+            line = canonical_json({
+                "grant": grant.to_dict(),
+                "grant_digest": grant.digest,
+                "prior_grant_digest": self._grants_prior,
+            })
+            with open(self._scopes_log, "ab") as handle:
+                handle.write(line + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._grants_prior = hashlib.sha256(line).hexdigest()
+            self._fsync_dir(self.log_dir)
+            self._grants[procedure_id] = grant
+            return grant
 
     def _status_of(self, record: ProcedureRecordV1) -> str:
         """Decision-backed status of a record — never raw status alone.
@@ -491,7 +618,64 @@ class PromotionController:
             qualified_head=qualified_head,
             decision_head=head,
             inconsistencies=tuple(sorted(set(inconsistencies))),
+            scopes=dict(self._grants),
+            scope_bindings=self._scope_bindings(
+                records, qualified_digests),
         )
+
+    def _scope_bindings(
+        self,
+        records: Mapping[str, ProcedureRecordV1],
+        qualified_digests: frozenset[str],
+    ) -> dict[str, dict]:
+        """Effective serving scope per qualified procedure.
+
+        A signed grant wins; otherwise the default is ``repository`` bound
+        to the evaluator-attested identities behind the qualifying
+        decision's receipts (empty when no attestation exists — callers
+        apply the documented unbound policy).
+        """
+        bindings: dict[str, dict] = {}
+        # digest -> latest qualifying decision (for evidence-derived scope)
+        qualifying: dict[str, PromotionDecisionV2] = {}
+        for decision in self._decisions:
+            if isinstance(decision, PromotionDecisionV2) \
+                    and decision.new_status == "qualified":
+                qualifying[decision.new_record_digest] = decision
+        for digest in sorted(qualified_digests):
+            record = records.get(digest)
+            if record is None:
+                continue
+            pid = record.procedure_id
+            grant = self._grants.get(pid)
+            if grant is not None:
+                bindings[pid] = {
+                    "scope": grant.scope,
+                    "repo_ids": frozenset(grant.repo_identities),
+                    "family_id": grant.family_id,
+                    "granted": True,
+                }
+                continue
+            repo_ids: set[str] = set()
+            decision = qualifying.get(digest)
+            if decision is not None and self._resolve_receipt \
+                    and self._repo_resolver:
+                for ref in decision.receipt_refs:
+                    try:
+                        receipt = self._resolve_receipt(ref)
+                    except Exception:
+                        continue
+                    identity = self._repo_resolver(
+                        receipt.evaluated_repo_digest)
+                    if identity and identity.get("repository_id"):
+                        repo_ids.add(identity["repository_id"])
+            bindings[pid] = {
+                "scope": "repository",
+                "repo_ids": frozenset(repo_ids),
+                "family_id": None,
+                "granted": False,
+            }
+        return bindings
 
     @staticmethod
     def _decode_decision(body):
@@ -635,6 +819,7 @@ class PromotionController:
 
     def _load(self) -> None:
         if not self._log.exists():
+            self._load_scopes()
             return
         raw = self._log.read_bytes()
         lines = raw.splitlines()
@@ -677,6 +862,59 @@ class PromotionController:
                 self._projected.pop(decision.candidate_digest, None)
                 self._projected[decision.new_record_digest] = decision.new_status
             self._prior = hashlib.sha256(line).hexdigest()
+        self._load_scopes()
+
+    def _load_scopes(self) -> None:
+        """Replay the signed scope-grant log; any corruption fails closed."""
+        if not self._scopes_log.exists():
+            return
+        for position, raw in enumerate(
+                self._scopes_log.read_bytes().splitlines()):
+            line = raw.rstrip(b"\n")
+            try:
+                entry = loads_json(line)
+                grant = ScopeGrantV1.from_dict(entry["grant"])
+            except (ContractError, KeyError, TypeError) as exc:
+                raise PromotionRejected(
+                    "scope_log_corrupt", f"line {position}") from exc
+            if grant.digest != entry["grant_digest"] or \
+                    entry["prior_grant_digest"] != self._grants_prior:
+                raise PromotionRejected(
+                    "scope_log_corrupt", f"chain at line {position}")
+            problems = self._verify_grant(grant)
+            if problems:
+                raise PromotionRejected(
+                    "scope_log_corrupt",
+                    f"line {position}: {problems[0]}")
+            self._grants[grant.procedure_id] = grant
+            self._grants_prior = hashlib.sha256(line).hexdigest()
+
+    def _verify_grant(self, grant: ScopeGrantV1) -> list[str]:
+        problems: list[str] = []
+        base = grant.to_dict()
+        base.pop("evaluator_signature")
+        base.pop("operator_authorization")
+        body = _SCOPE_DOMAIN + canonical_json(base)
+        if grant.scope != "repository":
+            if grant.evaluator_signature == "not-required":
+                problems.append("evaluator_signature_required")
+            else:
+                try:
+                    key_id, sig_hex = grant.evaluator_signature.split(":", 1)
+                    if key_id not in self._trusted or not signatures.verify(
+                        bytes.fromhex(sig_hex), body,
+                        bytes.fromhex(self._trusted[key_id]),
+                    ):
+                        problems.append("evaluator_signature_invalid")
+                except (ValueError, TypeError):
+                    problems.append("evaluator_signature_malformed")
+        if grant.operator_authorization != \
+                f"operator_token_sha256:{self._token_digest}":
+            problems.append("operator_authorization_mismatch")
+        if grant.scope == "cross_repository" and \
+                len(set(grant.repo_identities)) < 2:
+            problems.append("insufficient_transfer_evidence")
+        return problems
 
 
 def operator_token_digest(token: str) -> str:

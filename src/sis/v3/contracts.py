@@ -451,6 +451,32 @@ class PromotionDecisionV2(V1Record):
     RECORD_TYPE: ClassVar[str] = "promotion_decision_v2"
 
 
+_SCOPES = frozenset({"repository", "family", "cross_repository"})
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScopeGrantV1(V1Record):
+    """Signed scope grant: repository/family/cross_repository reach.
+
+    ``repo_identities`` carries the evaluator-attested stable repository
+    identities the grant binds; ``family_id`` names an attested family;
+    ``evidence_refs`` lists the signed receipts backing transfer scope.
+    Issued only by the promotion authority — never a caller-supplied role.
+    """
+
+    grant_id: str
+    procedure_id: str
+    scope: str
+    repo_identities: tuple[str, ...]
+    family_id: str | None
+    evidence_refs: tuple[str, ...]
+    actor_identity: str
+    evaluator_signature: str
+    operator_authorization: str
+
+    RECORD_TYPE: ClassVar[str] = "scope_grant_v1"
+
+
 @dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
@@ -617,6 +643,18 @@ def _validate_record(record: V1Record) -> None:
             _text(d[name], name, maximum=128)
         for name in ("old_qualified_head", "new_qualified_head", "rollback_ref"):
             _digest(d[name], name, optional=True)
+        _text(d["evaluator_signature"], "evaluator_signature", maximum=512)
+        _text(d["operator_authorization"], "operator_authorization", maximum=512)
+    elif isinstance(record, ScopeGrantV1):
+        _identifier(d["grant_id"], "grant_id")
+        _identifier(d["procedure_id"], "procedure_id")
+        _enum(d["scope"], _SCOPES, "scope")
+        for rid in _sequence(d["repo_identities"], "repo_identities", maximum=64):
+            _identifier(rid, "repo_identities[]")
+        _identifier(d["family_id"], "family_id") if d["family_id"] is not None else None
+        for ref in _sequence(d["evidence_refs"], "evidence_refs", maximum=64):
+            _digest(ref, "evidence_refs[]")
+        _identifier(d["actor_identity"], "actor_identity")
         _text(d["evaluator_signature"], "evaluator_signature", maximum=512)
         _text(d["operator_authorization"], "operator_authorization", maximum=512)
     elif isinstance(record, GuidanceRequestV1):

@@ -166,13 +166,25 @@ class SemanticCheckTests(unittest.TestCase):
         self.assertEqual(changes[0].new_class, OpClass.COMMUTATIVE)
         self.assertTrue(metamorphic_violations(changes))
 
-    def test_commutative_swap_is_allowed(self):
+    def test_same_class_swap_is_flagged_not_proven(self):
+        # v3.1.x defect: a+b -> a*b slipped through as "same-class".
+        # Every operator substitution is a flag; only an executable
+        # contract can discharge it — class is never proof.
         changes = operator_changes(
             "def f(a, b):\n    return a + b\n",
             "def f(a, b):\n    return a * b\n",
         )
         self.assertEqual(len(changes), 1)
-        self.assertFalse(metamorphic_violations(changes))
+        self.assertTrue(metamorphic_violations(changes))
+
+    def test_operand_reorder_is_flagged(self):
+        changes = operator_changes(
+            "def f(a, b):\n    return a - b\n",
+            "def f(a, b):\n    return b - a\n",
+        )
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].kind, "operand_reorder")
+        self.assertTrue(metamorphic_violations(changes))
 
     def test_structural_change_and_syntax_errors(self):
         changes = operator_changes("x = a - b\n", "x = a - b\ny = a + b\n")

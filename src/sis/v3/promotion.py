@@ -111,6 +111,8 @@ class PromotionController:
         min_distinct_repos: int = 1,
         expected_protocol: ExpectedProtocol | None = None,
         revoked_evaluator_keys: frozenset[str] | set[str] = frozenset(),
+        consumed_ledger=None,
+        envelope_registry=None,
         policy_version: str = "promotion-policy-v1",
         trusted_operator_keys: Mapping[str, str] | None = None,
     ) -> None:
@@ -138,6 +140,8 @@ class PromotionController:
         self._min_repos = min_distinct_repos
         self._protocol = expected_protocol
         self._revoked_eval_keys = set(revoked_evaluator_keys)
+        self._consumed_ledger = consumed_ledger
+        self._envelope_registry = envelope_registry
         self.policy_version = policy_version
         self._journal_dir = self.log_dir / "journal"
         self._journal_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +164,7 @@ class PromotionController:
         actor_identity: str,
         operator_token: str | None = None,
         receipt_digests: tuple[str, ...] = (),
+        outcome_envelopes: tuple = (),
         evaluator_signer: Callable[[bytes], tuple[str, str]] | None = None,
         operator_signer: Callable[[bytes], tuple[str, str]] | None = None,
         rollback_ref: str | None = None,
@@ -181,6 +186,7 @@ class PromotionController:
                     "illegal_transition", f"{current_status} -> {new_status}"
                 )
             verified_receipts = self._verify_receipts(receipt_digests)
+            verified_receipts += self._consume_envelopes(outcome_envelopes)
             if new_status == "qualified":
                 # Qualification and requalification (suspended -> qualified)
                 # both run the full evidence check — no transition exception.
@@ -784,6 +790,30 @@ class PromotionController:
             except EvaluationRejected as exc:
                 raise PromotionRejected(exc.reason, str(exc)) from exc
         return receipts
+
+    def _consume_envelopes(self, envelopes: tuple) -> list:
+        """Verify AND durably consume outcome envelopes for this transition.
+
+        Consumption is atomic under the ledger's inter-process lock: a
+        spent (signer, nonce) can never back a second promotion — the
+        replay check fires before the decision is written.
+        """
+        from .outcome_v2 import EnvelopeRejected
+        consumed = []
+        for env in envelopes:
+            if self._consumed_ledger is None or self._envelope_registry is None:
+                raise PromotionRejected(
+                    "envelope_consumption_unconfigured",
+                    "consumed_ledger and envelope_registry are required",
+                )
+            try:
+                consumed.append(self._consumed_ledger.verify_and_consume(
+                    env, self._envelope_registry,
+                    revoked_keys=self._revoked_eval_keys,
+                ))
+            except EnvelopeRejected as exc:
+                raise PromotionRejected(exc.reason, str(exc)) from exc
+        return consumed
 
     def _simulate_head(
         self, record: ProcedureRecordV1, next_revision: ProcedureRecordV1

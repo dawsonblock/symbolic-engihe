@@ -17,6 +17,7 @@ import math
 import secrets
 import shutil
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -47,6 +48,36 @@ class BudgetCaps:
                 raise ContractError(f"{name} must be a positive integer")
 
 
+@dataclass
+class UsageMeter:
+    """Harness-issued, agent-independent usage accounting (PR-05).
+
+    The agent callable receives the meter inside ``ArmContext`` and
+    records consumption *through the adapter/runtime path it drives* —
+    token deltas from SDK event streams, tool invocations via the adapter
+    or executor. Counters produced this way are ``verified``: they were
+    metered by the runtime path, not self-reported by the agent. An arm
+    that returns a bare usage mapping is ``reported``; an arm with no
+    usage data at all is ``unverified``.
+    """
+
+    tokens: int = 0
+    tools: int = 0
+    verified: bool = False
+
+    def record_tokens(self, count: int) -> None:
+        if type(count) is not int or not 0 <= count <= 2**63 - 1:
+            raise ContractError("token count must be a bounded nonnegative int")
+        self.tokens += count
+        self.verified = True
+
+    def record_tool_call(self, count: int = 1) -> None:
+        if type(count) is not int or not 0 < count <= 2**31 - 1:
+            raise ContractError("tool count must be a bounded positive int")
+        self.tools += count
+        self.verified = True
+
+
 @dataclass(frozen=True)
 class ArmContext:
     """The only input that varies between arms of the same task."""
@@ -55,6 +86,7 @@ class ArmContext:
     arm: str
     workspace: Path
     budget: BudgetCaps
+    usage_meter: UsageMeter | None = None
     guidance: GuidanceV1 | None = None
     context_digest: str | None = None  # placebo (B) or episode-context (C) digest
 
@@ -71,6 +103,7 @@ class ArmResult:
     error: str | None = None
     tokens_used: int | None = None
     tools_used: int | None = None
+    budget_accounting: str = "unverified"
 
 
 @dataclass
@@ -146,34 +179,62 @@ class BenchmarkHarness:
                     "arm": arm, "task_id": task.task_id,
                     "nonce": secrets.token_hex(8),
                 })
+            meter = UsageMeter()
             ctx = ArmContext(
                 task=task, arm=arm, workspace=workspace,
-                budget=budget, guidance=guidance, context_digest=context_digest,
+                budget=budget, usage_meter=meter, guidance=guidance,
+                context_digest=context_digest,
             )
             start = time.monotonic()
             error = None
             usage = None
-            try:
-                usage = agent(ctx)
-            except Exception as exc:  # arm failures are observations, not verdicts
-                error = f"{type(exc).__name__}:{str(exc)[:200]}"
+            # Hard wall-clock enforcement (PR-05): the agent runs in a
+            # daemon thread and the harness stops waiting at the budget —
+            # a runaway arm is flagged and its result recorded, never
+            # allowed to stall the suite. Python cannot preempt arbitrary
+            # in-process code, so a timed-out callable is abandoned in a
+            # daemon thread; subprocess-based agents must use the
+            # WorkspaceExecutor, which kills at the same bound.
+            box: dict = {}
+            def _drive() -> None:
+                try:
+                    box["usage"] = agent(ctx)
+                except Exception as exc:
+                    box["error"] = f"{type(exc).__name__}:{str(exc)[:200]}"
+            worker = threading.Thread(target=_drive, daemon=True)
+            worker.start()
+            worker.join(timeout=budget.wall_seconds)
+            timed_out = worker.is_alive()
+            if timed_out:
+                error = "agent_timeout"
+                usage = None
+            else:
+                error = box.get("error")
+                usage = box.get("usage")
             elapsed = max(0.0, time.monotonic() - start)
             wall = math.ceil(elapsed)  # integer-only canonical report; no floor bypass
-            # A callback can supply independently checked SDK usage counters;
-            # agents that don't expose them remain explicitly unverified.
+            # Usage precedence (PR-05): metered counters (produced by the
+            # runtime path the agent drove) outrank agent-reported usage;
+            # missing data stays explicitly unverified.
             tokens = tools = None
-            if isinstance(usage, Mapping):
+            accounting = "unverified"
+            if meter.verified:
+                tokens, tools = meter.tokens, meter.tools
+                accounting = "verified"
+            elif isinstance(usage, Mapping):
                 tokens, tools = usage.get("tokens_used"), usage.get("tools_used")
                 if (tokens is not None and (type(tokens) is not int or tokens < 0)) or \
                    (tools is not None and (type(tools) is not int or tools < 0)):
                     error = "invalid_usage_counters"
-            exceeded = (elapsed > budget.wall_seconds or
+                else:
+                    accounting = "reported"
+            exceeded = (timed_out or elapsed > budget.wall_seconds or
                         (tokens is not None and tokens > budget.token_budget) or
                         (tools is not None and tools > budget.tool_budget))
             submission_digest = tree_digest(workspace)
             if error is not None:
                 return ArmResult(task.task_id, arm, "error", None, submission_digest,
-                                 wall, exceeded, error)
+                                 wall, exceeded, error, tokens, tools, accounting)
             cache_key = (task.task_id, submission_digest)
             cached = self._receipt_cache.get(cache_key)
             if cached is not None:
@@ -188,11 +249,13 @@ class BenchmarkHarness:
                     )
                 except Exception as exc:
                     return ArmResult(task.task_id, arm, "error", None, submission_digest,
-                                     wall, exceeded, f"evaluation:{str(exc)[:200]}", tokens, tools)
+                                     wall, exceeded, f"evaluation:{str(exc)[:200]}",
+                                     tokens, tools, accounting)
                 outcome, receipt_digest = receipt.outcome, receipt.digest
                 self._receipt_cache[cache_key] = (outcome, receipt_digest)
             return ArmResult(task.task_id, arm, outcome,
-                             receipt_digest, submission_digest, wall, exceeded, None, tokens, tools)
+                             receipt_digest, submission_digest, wall, exceeded,
+                             None, tokens, tools, accounting)
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
 
@@ -207,6 +270,7 @@ class BenchmarkHarness:
                     "wall_seconds": res.wall_seconds,
                     "budget_exceeded": res.budget_exceeded,
                     "tokens_used": res.tokens_used, "tools_used": res.tools_used,
+                    "budget_accounting": res.budget_accounting,
                     **({"error": res.error} if res.error else {}),
                 }
             per_task.append(entry)
@@ -249,7 +313,7 @@ class BenchmarkHarness:
             ),
             "paired": pairs,
             "per_task": per_task,
-            "budget_enforcement": "wall clock measured precisely; token/tool budgets checked only when independently supplied runtime counters are available; missing usage is UNVERIFIED",
+            "budget_enforcement": "wall clock is hard-enforced: arms run in a watchdog thread abandoned at the limit (agent_timeout); token/tool budgets prefer harness-metered (verified) counters over agent-reported usage; missing usage is UNVERIFIED",
             "harness_digest": None,
         }
 

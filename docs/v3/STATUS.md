@@ -478,3 +478,27 @@ remaining_unknowns:
   - "no revocation expiry/appeal semantics yet (kind=revocation-of-revocation not modeled)"
 next_gate: "PR-05+: authenticated Codex runtime + execution qualification (Stage 2)"
 ```
+
+## v3.1-alpha — execution qualification: hard budgets + auth gate (PR-05, Stage 2 start)
+
+```yaml
+phase_id: v31-execution-qualification
+tickets: [PR-05]
+status: implemented_and_tested
+changed_files:
+  - src/sis/v3/benchmark.py           # watchdog-thread arm execution (agent_timeout at wall_seconds), UsageMeter on ArmContext, verified|reported|unverified accounting in report
+  - src/sis/v3/adapters/codex.py      # require_authentication fail-closed probe; usage(thread_id) — stream-derived token/tool counters
+  - tests/v3/test_execution_qualification.py  # NEW: 10 tests
+observed_outcomes:
+  - "Full suite: 635 passed, 2 skipped"
+  - "runaway arm abandoned at wall_seconds → error=agent_timeout + budget_exceeded; suite does not wait"
+  - "meter-recorded usage reports accounting=verified; agent-dict usage=reported; absent=unverified"
+  - "metered token overrun flags budget_exceeded and excludes the arm from solved counts"
+  - "require_authentication: unauthenticated/missing-probe clients fail closed (authentication_failed | authentication_unverifiable)"
+  - "adapter.usage(thread_id) returns stream-derived total_tokens and tool_request count; never agent self-report"
+remaining_unknowns:
+  - "live SDK authentication is probed not exercised — no real Codex credentials were used; no live-integration claim"
+  - "thread-based preemption cannot kill arbitrary in-process code; subprocess agents should run via WorkspaceExecutor"
+  - "token accounting depends on SDK token_usage events; SDKs that do not report remain unverified"
+next_gate: "PR-06+: trustworthy source-change capture + learning loop"
+```

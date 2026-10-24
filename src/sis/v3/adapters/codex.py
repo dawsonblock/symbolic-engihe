@@ -59,18 +59,24 @@ class CodexAdapter:
         sdk: Any | None = None,
         client: Any | None = None,
         sdk_version: str | None = None,
+        require_authentication: bool = False,
     ) -> None:
         if sdk_version is not None and (
             not isinstance(sdk_version, str) or not _SAFE_VERSION.fullmatch(sdk_version)
         ):
             raise ValueError("sdk_version must be a bounded version identifier")
+        if type(require_authentication) is not bool:
+            raise ValueError("require_authentication must be Boolean")
         self._config = config
         self._sdk = sdk
         self._client = client
         self._owns_client = client is None
         self._sdk_version = sdk_version
+        self._require_auth = require_authentication
         self._threads: dict[str, _ThreadState] = {}
         self._active_turns: dict[str, Any] = {}
+        self._usage: dict[str, int] = {}
+        self._tools: dict[str, int] = {}
         self._lock = RLock()
 
     def __enter__(self) -> "CodexAdapter":
@@ -210,10 +216,36 @@ class CodexAdapter:
                     notification=notification,
                 )
                 previous_digest = event.digest
+                self._record_usage(thread_id, event)
                 yield event
         finally:
             with self._lock:
                 self._active_turns.pop(turn_id, None)
+
+    def _record_usage(self, thread_id: str, event: ObservationEventV1) -> None:
+        """Track runtime-derived usage from normalized event payloads."""
+        summary = event.payload.get("summary") or {}
+        usage = summary.get("token_usage") or {}
+        total = (usage.get("total") or {}).get("total_tokens")
+        with self._lock:
+            if type(total) is int:
+                self._usage[thread_id] = total
+            if event.event_type == "tool_request":
+                self._tools[thread_id] = self._tools.get(thread_id, 0) + 1
+
+    def usage(self, thread_id: str) -> dict[str, int | None]:
+        """Runtime-extracted usage for a thread: stream-derived, not self-reported.
+
+        ``tokens`` is the last ``total_tokens`` the SDK reported on the
+        stream (``None`` when the SDK never reported usage);
+        ``tools`` counts ``tool_request`` events observed so far.
+        """
+        thread_id = self._validate_thread_id(thread_id)
+        with self._lock:
+            return {
+                "tokens": self._usage.get(thread_id),
+                "tools": self._tools.get(thread_id, 0),
+            }
 
     def _normalize_event(
         self,
@@ -346,7 +378,45 @@ class CodexAdapter:
             sdk = self._get_sdk()
             self._client = sdk.Codex() if self._config is None else sdk.Codex(config=self._config)
             self._owns_client = True
+            if self._require_auth:
+                self._require_authenticated(self._client)
+        elif self._require_auth:
+            self._require_authenticated(self._client)
         return self._client
+
+    @staticmethod
+    def _require_authenticated(client: Any) -> None:
+        """Fail closed unless the SDK client provably holds a session.
+
+        ``require_authentication`` means "the runtime is authenticated or
+        nothing runs" — a missing, falsy, or unverifiable auth probe is a
+        refusal, never a silent degradation to an anonymous runtime.
+        """
+        for probe in ("authenticated", "is_authenticated", "auth_status"):
+            candidate = getattr(client, probe, None)
+            if candidate is None:
+                continue
+            try:
+                result = candidate() if callable(candidate) else candidate
+            except Exception as exc:
+                raise CodexAdapterError(
+                    f"authentication probe failed: {type(exc).__name__}") from exc
+            if not result:
+                raise CodexAdapterError("authentication_failed")
+            return
+        authenticate = getattr(client, "authenticate", None)
+        if callable(authenticate):
+            try:
+                if not authenticate():
+                    raise CodexAdapterError("authentication_failed")
+            except CodexAdapterError:
+                raise
+            except Exception as exc:
+                raise CodexAdapterError(
+                    f"authentication_failed: {type(exc).__name__}") from exc
+            return
+        raise CodexAdapterError(
+            "authentication_unverifiable: SDK exposes no auth probe")
 
     def _get_sdk(self) -> Any:
         if self._sdk is None:

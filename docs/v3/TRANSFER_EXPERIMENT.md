@@ -1,9 +1,28 @@
 # v4.0.x — held-out transfer efficacy experiments (SIS3-501)
 
-**Status: two real experiments executed against the live Codex backend.
-v4.0.1 (4 arms × 6 tasks) shows D solved 6/6 while A/B/C each solved 4/6
-— directional signal now placebo-controlled, but n=6 discordant pairs
-still cannot reach significance (exact McNemar p = 0.25).**
+**Status: three real runs executed against the live Codex backend.
+v4.0.2 (4 arms × 12 held-out tasks + control): D solved 12/12; A/B/C
+10/12 each; placebo/raw-context zero effect (0/0/12). Guidance rescues
+exactly the tasks the baseline misses — but baseline misses only 2/12
+on this bug class, so discordant pairs = 2 (exact McNemar p = 0.25).
+M5 stays OPEN: power requires a harder task distribution where the
+baseline genuinely fails, not more tasks of this class.**
+
+## v4.0.2 — four-arm run (52 live turns, independent scoring)
+
+| Metric | A | B (placebo) | C (raw ctx) | D (guidance) |
+|--------|---|-------------|-------------|--------------|
+| Held-out solves | 10/12 | 10/12 | 10/12 | **12/12** |
+| Paired vs D | 2W/0L/10T | 2W/0L/10T | 2W/0L/10T | — |
+| B vs A, C vs A | 0/0/12 | — | 0/0/12 | — |
+
+Wins concentrated on ho3 `energy` and ho6 `speed` — identical structure
+to other tasks; the agent's per-run variance decided which failed.
+Harder variants (nested chains `rows-cols-depth`, `n-n-n`, multi-function
+files, distractors) were all solved by every arm — task difficulty, not
+quantity, is the power bottleneck.
+
+## v4.0.1 — four-arm run, 6 tasks (28 live turns)
 
 ## v4.0.1 — four-arm run (28 live turns, independent scoring)
 

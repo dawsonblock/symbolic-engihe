@@ -115,18 +115,28 @@ def _shape(node: ast.AST) -> tuple:
     """Structure with operator and leaf identity erased."""
     if isinstance(node, ast.BinOp):
         return ("BinOp", _shape(node.left), _shape(node.right))
+    if isinstance(node, ast.Compare):
+        return ("Compare", _shape(node.left),
+                tuple(_shape(c) for c in node.comparators))
     return ("leaf",)
 
 
 def _leaves(node: ast.AST) -> list[ast.AST]:
     if isinstance(node, ast.BinOp):
         return _leaves(node.left) + _leaves(node.right)
+    if isinstance(node, ast.Compare):
+        return _leaves(node.left) + [
+            leaf for c in node.comparators for leaf in _leaves(c)]
     return [node]
 
 
 def _ops(node: ast.AST) -> list[str]:
     if isinstance(node, ast.BinOp):
         return [type(node.op).__name__] + _ops(node.left) + _ops(node.right)
+    if isinstance(node, ast.Compare):
+        return ([type(o).__name__ for o in node.ops]
+                + _ops(node.left)
+                + [op for c in node.comparators for op in _ops(c)])
     return []
 
 
@@ -141,10 +151,11 @@ def _diff_operators(
     and single-sided nested diffs (shared siblings become ``expr:c*``
     context holes so patterns transfer to differently-named code).
     """
-    if not (isinstance(before, ast.BinOp) and isinstance(after, ast.BinOp)):
+    if not (isinstance(before, (ast.BinOp, ast.Compare))
+            and type(before) is type(after)):
         raise InductionError(
             "unsupported_difference",
-            "differing subtrees are not aligned binary operations",
+            "differing subtrees are not aligned BinOp/Compare expressions",
         )
     # Spine-aligned: identical shape and identical leaves; check whether
     # every op position maps consistently (same from->to pair).
@@ -169,13 +180,16 @@ def _diff_operators(
     if left_same and right_same:
         raise InductionError("no_typed_difference",
                              "before/after expressions are identical")
-    if ast.dump(before.left) == ast.dump(after.right) and \
+    if isinstance(before, ast.BinOp) and \
+            ast.dump(before.left) == ast.dump(after.right) and \
             ast.dump(before.right) == ast.dump(after.left) and \
             type(before.op) is type(after.op):
         _bind_pair(metavars, before.left, after.right, "expr:lhs")
         _bind_pair(metavars, before.right, after.left, "expr:rhs")
         return "operand_reorder"
-    if type(before.op) is type(after.op) and (left_same != right_same):
+    if isinstance(before, ast.BinOp) \
+            and type(before.op) is type(after.op) \
+            and (left_same != right_same):
         # Single-sided nested diff: shared sibling is a context hole.
         shared = before.left if left_same else before.right
         shared_after = after.left if left_same else after.right
@@ -212,7 +226,7 @@ def _match(template: dict, node: ast.AST,
             all(_match(t, v, bindings)
                 for t, v in zip(template["values"], node.values))
     if kind == "Compare" and isinstance(node, ast.Compare):
-        return [type(o).__name__ for o in node.ops] == template["ops"] and \
+        return [type(o).__name__ for o in node.ops] == list(template["ops"]) and \
             _match(template["left"], node.left, bindings) and \
             len(node.comparators) == len(template["comparators"]) and \
             all(_match(t, c, bindings)

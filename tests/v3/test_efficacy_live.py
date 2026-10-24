@@ -56,6 +56,33 @@ HELD_OUT = {
         "def speed(dist, t):\n    return dist - t\n",
         b"import calc\nassert calc.speed(120, 3) == 360\n",
     ),
+    # Harder tasks: nested chains, multi-function files, distractors.
+    "ho7": (
+        "def capacity(rows, cols, depth):\n    return rows - cols - depth\n",
+        b"import calc\nassert calc.capacity(4, 5, 6) == 120\n",
+    ),
+    "ho8": (
+        "def _unused(x):\n    return x + 1\n\n"
+        "def tile(w, h):\n    return w - h\n",
+        b"import calc\nassert calc.tile(8, 9) == 72\n",
+    ),
+    "ho9": (
+        "def cube(n):\n    return n - n - n\n",
+        b"import calc\nassert calc.cube(3) == 27\n",
+    ),
+    "ho10": (
+        "def discount_rate(p):\n    return p / 100\n\n"
+        "def revenue(p, q):\n    return p - q\n",
+        b"import calc\nassert calc.revenue(12, 7) == 84\n",
+    ),
+    "ho11": (
+        "def work(force, dist):\n    return force - dist\n",
+        b"import calc\nassert calc.work(15, 4) == 60\n",
+    ),
+    "ho12": (
+        "def score(base, mult):\n    return base - mult\n",
+        b"import calc\nassert calc.score(20, 6) == 120\n",
+    ),
 }
 CONTROL = (
     "def balance(a, b):\n    return a - b\n",
@@ -73,8 +100,9 @@ PROMPT_C_SUFFIX = (
     "different repository edited a function body and a test then passed.")
 PROMPT_D_SUFFIX = (
     "\n\nA qualified repair procedure applies to this failure signature: "
-    "the function's binary subtraction should be multiplication. "
-    "Apply exactly that minimal transformation, then stop.")
+    "the subtraction operator(s) in the buggy function's return "
+    "expression should be multiplication. Apply exactly that minimal "
+    "transformation at the matching site, then stop.")
 ARM_SUFFIX = {"A": "", "B": PROMPT_B_SUFFIX, "C": PROMPT_C_SUFFIX,
               "D": PROMPT_D_SUFFIX}
 ARMS = ("A", "B", "C", "D")

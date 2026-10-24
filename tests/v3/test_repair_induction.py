@@ -166,6 +166,31 @@ class InductionDemo(unittest.TestCase):
             "def g(p, q, r):\n    return p - (q * r)\n"))
         self.assertEqual(ast.dump(ast.parse(out)), expected)
 
+    def test_compare_operator_diff_mines_and_transfers(self):
+        hyp = self._mine(
+            "def f(a, b):\n    return a < b\n",
+            "def f(a, b):\n    return a <= b\n")
+        self.assertEqual(hyp.transformation_kind, "operator_substitution")
+        out = apply_hypothesis(
+            "def g(p, q):\n    return p < q\n", hyp)
+        self.assertIsNotNone(out)
+        import ast
+        self.assertEqual(ast.dump(ast.parse(out)),
+                         ast.dump(ast.parse("def g(p, q):\n    return p <= q\n")))
+
+    def test_compare_with_nested_binop_diff(self):
+        """x < y - z -> x < y * z: Compare spine holds, inner Sub->Mult."""
+        hyp = self._mine(
+            "def f(x, y, z):\n    return x < y - z\n",
+            "def f(x, y, z):\n    return x < y * z\n")
+        self.assertEqual(hyp.transformation_kind, "operator_substitution")
+        out = apply_hypothesis(
+            "def g(p, q, r):\n    return p < q - r\n", hyp)
+        self.assertIsNotNone(out)
+        import ast
+        self.assertEqual(ast.dump(ast.parse(out)),
+                         ast.dump(ast.parse("def g(p, q, r):\n    return p < q * r\n")))
+
     def test_nested_both_sides_differ_still_refused(self):
         with self.assertRaisesRegex(InductionError, "compounded_difference"):
             self._mine(

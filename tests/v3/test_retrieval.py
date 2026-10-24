@@ -25,6 +25,7 @@ def _request(**over):
 
 def _proc(pid="p1", status="qualified", pre=({"kind": "language_is", "value": "python"},),
           contra=(), dist=None, cex=()):
+    """``status`` is the TARGET state — fixtures mint it via real decisions."""
     return ProcedureRecordV1(
         schema_version=1, procedure_id=pid, revision=1, intent="i",
         language="python", frameworks=(), task_signatures=("s",),
@@ -37,13 +38,29 @@ def _proc(pid="p1", status="qualified", pre=({"kind": "language_is", "value": "p
     )
 
 
-def _store(*records, root=None):
-    store = ProcedureStore(root or Path(tempfile.mkdtemp()))
+def _authority(*records, root=None):
+    """Build a FixtureAuthority; qualify every record via signed decisions.
+
+    A record whose target status is not ``qualified`` is stored at its
+    requested (writable) status and never promoted — it must not serve.
+    """
+    from tests.v3.support import FixtureAuthority
+    auth = FixtureAuthority(root)
     for rec in records:
-        # Test fixtures seed qualified state explicitly; production callers
-        # must go through a signed promotion decision instead.
-        store.add(rec, allow_qualified=True)
-    return store
+        target = rec.status
+        seed = replace(rec, status="candidate", revision=1)
+        if target == "qualified":
+            auth.qualify(seed)
+        elif target in {"draft", "candidate"}:
+            auth.store.add(seed if target == "candidate" else
+                           replace(seed, status="draft"))
+        else:
+            raise AssertionError(f"unsupported fixture target status {target}")
+    return auth
+
+
+def _snapshot(*records, root=None):
+    return _authority(*records, root=root).snapshot()
 
 
 class ExpiryRevocationTests(unittest.TestCase):
@@ -56,8 +73,8 @@ class ExpiryRevocationTests(unittest.TestCase):
 
     def test_expired_record_abstains(self):
         record = replace(_proc(), expires_at="2020-01-01T00:00:00Z")
-        store = _store(record)
-        result = retrieve(self.request, store)
+        snapshot = _snapshot(record)
+        result = retrieve(self.request, snapshot)
         self.assertEqual(result.candidates, ())
         self.assertEqual(result.rejections[0].reason_code, "expired")
 
@@ -68,30 +85,29 @@ class ExpiryRevocationTests(unittest.TestCase):
 
     def test_future_expiry_still_serves(self):
         record = replace(_proc(), expires_at="2999-01-01T00:00:00Z")
-        store = _store(record)
-        self.assertEqual(len(retrieve(self.request, store).candidates), 1)
+        snapshot = _snapshot(record)
+        self.assertEqual(len(retrieve(self.request, snapshot).candidates), 1)
 
     def test_revoked_digest_abstains_immediately(self):
-        record = _proc()
-        store = _store(record)
-        self.assertEqual(len(retrieve(self.request, store).candidates), 1)
-        result = retrieve(self.request, store, revoked={record.digest})
+        snapshot = _snapshot(_proc())
+        served_digest = snapshot.qualified[0].digest
+        self.assertEqual(len(retrieve(self.request, snapshot).candidates), 1)
+        result = retrieve(self.request, snapshot, revoked={served_digest})
         self.assertEqual(result.candidates, ())
         self.assertEqual(result.rejections[0].reason_code, "revoked")
 
     def test_now_injection_controls_expiry(self):
-        record = replace(_proc(), expires_at="2030-01-01T00:00:00Z")
-        store = _store(record)
-        future = retrieve(self.request, store, now="2031-01-01T00:00:00Z")
+        snapshot = _snapshot(replace(_proc(), expires_at="2030-01-01T00:00:00Z"))
+        future = retrieve(self.request, snapshot, now="2031-01-01T00:00:00Z")
         self.assertEqual(future.rejections[0].reason_code, "expired")
-        self.assertEqual(len(retrieve(self.request, store, now="2029-01-01T00:00:00Z").candidates), 1)
+        self.assertEqual(len(retrieve(self.request, snapshot, now="2029-01-01T00:00:00Z").candidates), 1)
 
     def test_guidance_passes_revocation_through(self):
-        record = _proc()
-        store = _store(record)
-        served = sis_recommend(self.request, store)
+        snapshot = _snapshot(_proc())
+        served = sis_recommend(self.request, snapshot)
         self.assertEqual(served.decision, "recommend")
-        denied = sis_recommend(self.request, store, revoked={record.digest})
+        denied = sis_recommend(self.request, snapshot,
+                               revoked={snapshot.qualified[0].digest})
         self.assertEqual(denied.decision, "abstain")
         self.assertEqual(denied.reason_code, "revoked")
 
@@ -128,40 +144,40 @@ class GateTests(unittest.TestCase):
             precondition_holds({"kind": "exec_python", "value": "x"}, c)
 
     def test_qualified_survives_gates_and_is_returned(self):
-        store = _store(_proc(pre=(
+        snapshot = _snapshot(_proc(pre=(
             {"kind": "language_is", "value": "python"},
             {"kind": "failure_signature_is", "value": "sig-x"},
         )), root=Path(self.temp.name) / "s")
-        result = retrieve(_request(), store, files_present=("src/m.py",))
+        result = retrieve(_request(), snapshot, files_present=("src/m.py",))
         self.assertEqual(len(result.candidates), 1)
         self.assertEqual(result.candidates[0].record.procedure_id, "p1")
 
     def test_unmet_precondition_rejects(self):
-        store = _store(_proc(pre=({"kind": "language_is", "value": "rust"},)),
+        snapshot = _snapshot(_proc(pre=({"kind": "language_is", "value": "rust"},)),
                        root=Path(self.temp.name) / "s")
-        result = retrieve(_request(), store)
+        result = retrieve(_request(), snapshot)
         self.assertFalse(result.candidates)
         self.assertEqual(result.rejections[0].reason_code, "precondition_failed")
 
     def test_contraindication_fires_negative_transfer(self):
         contra = ({"kind": "failure_signature_is", "value": "sig-x"},)
-        store = _store(_proc(contra=contra, cex=("1" * 64,)),
+        snapshot = _snapshot(_proc(contra=contra, cex=("1" * 64,)),
                        root=Path(self.temp.name) / "s")
-        result = retrieve(_request(), store)
+        result = retrieve(_request(), snapshot)
         self.assertFalse(result.candidates)
         self.assertEqual(result.rejections[0].reason_code, "prior_negative_transfer")
 
     def test_nonqualified_not_retrieved(self):
-        store = _store(_proc(status="candidate"), root=Path(self.temp.name) / "s")
-        result = retrieve(_request(), store)
+        snapshot = _snapshot(_proc(status="candidate"), root=Path(self.temp.name) / "s")
+        result = retrieve(_request(), snapshot)
         self.assertFalse(result.candidates)
         self.assertEqual(result.rejections[-1].reason_code, "no_qualified_procedure")
 
     def test_ranking_prefers_more_evidence(self):
         weak = _proc(pid="weak", dist={"tasks": 2, "successes": 0, "failures": 2, "regressions": 0})
         strong = _proc(pid="strong", dist={"tasks": 5, "successes": 5, "failures": 0, "regressions": 0})
-        store = _store(weak, strong, root=Path(self.temp.name) / "s")
-        result = retrieve(_request(), store)
+        snapshot = _snapshot(weak, strong, root=Path(self.temp.name) / "s")
+        result = retrieve(_request(), snapshot)
         self.assertEqual(result.candidates[0].record.procedure_id, "strong")
 
 
@@ -172,11 +188,11 @@ class GuidanceTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_recommend_returns_bound_record(self):
-        store = _store(_proc(pre=(
+        snapshot = _snapshot(_proc(pre=(
             {"kind": "language_is", "value": "python"},
             {"kind": "symbol_present", "value": "remaining_balance"},
         )), root=self.root / "s")
-        g = sis_recommend(_request(), store, files_present=("src/m.py",))
+        g = sis_recommend(_request(), snapshot, files_present=("src/m.py",))
         self.assertEqual(g.decision, "recommend")
         self.assertEqual(g.procedure_ids, ("p1",))
         self.assertTrue(g.matched_preconditions)
@@ -184,8 +200,8 @@ class GuidanceTests(unittest.TestCase):
         self.assertIsNone(g.reason_code)
 
     def test_unverified_intent_still_abstains(self):
-        store = _store(_proc(), root=self.root / "s")
-        g = sis_recommend(_request(semantic_contract_digest=None), store)
+        snapshot = _snapshot(_proc(), root=self.root / "s")
+        g = sis_recommend(_request(semantic_contract_digest=None), snapshot)
         self.assertEqual(g.decision, "abstain")
         self.assertEqual(g.reason_code, "unverified_task_intent")
 
@@ -202,8 +218,8 @@ class GuidanceTests(unittest.TestCase):
             contra=({"kind": "symbol_present", "value": "remaining_balance"},),
             cex=("2" * 64,),
         )
-        store = _store(bad_proc, root=self.root / "s")
-        g = sis_recommend(_request(), store)
+        snapshot = _snapshot(bad_proc, root=self.root / "s")
+        g = sis_recommend(_request(), snapshot)
         self.assertEqual(g.decision, "abstain")
         self.assertEqual(g.reason_code, "prior_negative_transfer")
         self.assertFalse(g.procedure_ids)

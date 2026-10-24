@@ -80,6 +80,17 @@ class PromotionTests(unittest.TestCase):
         base.update(over)
         return base
 
+    def _to_evaluated(self):
+        import secrets as _s
+        self.store.add(_proc(status="draft"))
+        (self.repo / ("mark-" + _s.token_hex(4))).write_text("x\n")
+        receipt = self._receipt()
+        self.controller.transition("p1", "candidate",
+                                   **self._kw(evaluator_signer=None))
+        self.controller.transition("p1", "evaluated",
+                                   **self._kw(receipt_digests=(receipt.digest,)))
+        return receipt
+
     def test_full_lifecycle(self):
         self.store.add(_proc(status="draft"))
         receipt = self._receipt()
@@ -109,11 +120,10 @@ class PromotionTests(unittest.TestCase):
                                        **self._kw(operator_token="wrong-token-0000"))
 
     def test_qualified_requires_verified_receipts_and_signature(self):
-        self.store.add(_proc(status="evaluated"))
+        receipt = self._to_evaluated()
         with self.assertRaisesRegex(PromotionRejected, "insufficient_evidence"):
             self.controller.transition("p1", "qualified",
                                        **self._kw(receipt_digests=()))
-        receipt = self._receipt()
         with self.assertRaisesRegex(PromotionRejected, "evaluator_signature_required"):
             self.controller.transition("p1", "qualified",
                                        **self._kw(receipt_digests=(receipt.digest,),
@@ -267,14 +277,19 @@ class ReceiptAuthorityTests(unittest.TestCase):
         self._receipts[receipt.digest] = receipt
         return receipt
 
-    def _to_evaluated(self):
-        self.store.add(_proc(status="draft"))
-        receipt = self._receipt()
-        self.controller.transition(
-            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+    def _to_evaluated(self, controller=None, pid="p1", receipt=None):
+        import secrets as _s
+        ctl = controller or self.controller
+        self.store.add(_proc(status="draft", pid=pid))
+        if receipt is None:
+            # Fresh tree digest -> a new evaluation, not a duplicate.
+            (self.repo / ("mark-" + _s.token_hex(4))).write_text("x\n")
+            receipt = self._receipt(task_id="t-" + _s.token_hex(4))
+        ctl.transition(
+            pid, "candidate", actor_role="operator", actor_identity="op-1",
             operator_token=TOKEN)
-        self.controller.transition(
-            "p1", "evaluated", actor_role="operator", actor_identity="op-1",
+        ctl.transition(
+            pid, "evaluated", actor_role="operator", actor_identity="op-1",
             operator_token=TOKEN, receipt_digests=(receipt.digest,),
             evaluator_signer=self._eval_signer)
         return receipt
@@ -286,7 +301,7 @@ class ReceiptAuthorityTests(unittest.TestCase):
         forged["outcome"] = "pass"
         self._receipts[receipt.digest] = forged  # resolver serves the forgery
         head = self.controller.qualified_head()
-        self.store.add(_proc(status="evaluated"))
+        self._to_evaluated()
         with self.assertRaises(PromotionRejected):
             self.controller.transition(
                 "p1", "qualified", actor_role="operator", actor_identity="op-1",
@@ -299,7 +314,7 @@ class ReceiptAuthorityTests(unittest.TestCase):
         real = self._receipt()
         other = self._receipt(task_id="t2")  # different task, valid signature
         self._receipts[real.digest] = other  # resolver substitutes Y for X
-        self.store.add(_proc(status="evaluated"))
+        self._to_evaluated()
         with self.assertRaisesRegex(PromotionRejected, "receipt_digest_mismatch"):
             self.controller.transition(
                 "p1", "qualified", actor_role="operator", actor_identity="op-1",
@@ -314,7 +329,7 @@ class ReceiptAuthorityTests(unittest.TestCase):
         from sis.v3.contracts import OutcomeReceiptV1
         forged_rec = OutcomeReceiptV1.from_dict(forged)
         self._receipts[forged_rec.digest] = forged_rec  # attacker-presented digest
-        self.store.add(_proc(status="evaluated"))
+        self._to_evaluated()
         with self.assertRaisesRegex(PromotionRejected, "receipt_signature_invalid"):
             self.controller.transition(
                 "p1", "qualified", actor_role="operator", actor_identity="op-1",
@@ -334,10 +349,13 @@ class ReceiptAuthorityTests(unittest.TestCase):
             receipt_resolver=self._resolve,
         )
         receipt = self._receipt()
-        self.store.add(_proc(status="evaluated"))
+        self.store.add(_proc(status="draft"))
+        controller.transition(
+            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_token=TOKEN)
         with self.assertRaisesRegex(PromotionRejected, "untrusted_signer"):
             controller.transition(
-                "p1", "qualified", actor_role="operator", actor_identity="op-1",
+                "p1", "evaluated", actor_role="operator", actor_identity="op-1",
                 operator_token=TOKEN, receipt_digests=(receipt.digest,),
                 evaluator_signer=self._eval_signer)
         controller2 = PromotionController(
@@ -347,9 +365,13 @@ class ReceiptAuthorityTests(unittest.TestCase):
             revoked_evaluator_keys={self.verifier.keystore.key_id},
             receipt_resolver=self._resolve,
         )
+        self.store.add(_proc(status="draft", pid="p1b"))
+        controller2.transition(
+            "p1b", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_token=TOKEN)
         with self.assertRaisesRegex(PromotionRejected, "signer_revoked"):
             controller2.transition(
-                "p1", "qualified", actor_role="operator", actor_identity="op-1",
+                "p1b", "evaluated", actor_role="operator", actor_identity="op-1",
                 operator_token=TOKEN, receipt_digests=(receipt.digest,),
                 evaluator_signer=self._eval_signer)
 
@@ -366,10 +388,13 @@ class ReceiptAuthorityTests(unittest.TestCase):
             receipt_resolver=self._resolve,
         )
         receipt = self._receipt()
-        self.store.add(_proc(status="evaluated"))
+        self.store.add(_proc(status="draft"))
+        controller.transition(
+            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_token=TOKEN)
         with self.assertRaisesRegex(PromotionRejected, "protocol_binding_mismatch"):
             controller.transition(
-                "p1", "qualified", actor_role="operator", actor_identity="op-1",
+                "p1", "evaluated", actor_role="operator", actor_identity="op-1",
                 operator_token=TOKEN, receipt_digests=(receipt.digest,),
                 evaluator_signer=self._eval_signer)
 
@@ -405,7 +430,7 @@ class ReceiptAuthorityTests(unittest.TestCase):
             receipt_resolver=self._resolve,
         )
         receipt = self._receipt()
-        self.store.add(_proc(status="evaluated"))
+        self._to_evaluated(controller)
         with self.assertRaisesRegex(PromotionRejected, "insufficient_evidence"):
             controller.transition(
                 "p1", "qualified", actor_role="operator", actor_identity="op-1",
@@ -414,7 +439,7 @@ class ReceiptAuthorityTests(unittest.TestCase):
 
     def test_malformed_and_unresolvable_receipts_rejected(self):
         self._receipts["e" * 64] = {"not": "a receipt"}
-        self.store.add(_proc(status="evaluated"))
+        self._to_evaluated()
         with self.assertRaisesRegex(PromotionRejected, "receipt_malformed"):
             self.controller.transition(
                 "p1", "qualified", actor_role="operator", actor_identity="op-1",
@@ -451,7 +476,7 @@ class LedgerProjectionTests(unittest.TestCase):
 
     def test_direct_qualified_write_rejected(self):
         from sis.v3.procedures import ProcedureConflict
-        with self.assertRaisesRegex(ProcedureConflict, "qualified_write_requires_decision"):
+        with self.assertRaisesRegex(ProcedureConflict, "governed_status_requires_decision"):
             self.store.add(_proc(status="qualified"))
         digest = self.store.add(_proc(status="draft"))
         self.assertEqual(len(digest), 64)
@@ -565,6 +590,125 @@ class LedgerProjectionTests(unittest.TestCase):
         report = fresh.verify()
         self.assertFalse(report["ok"])
         self.assertTrue(any("evaluator_signature_required" in p
+                            for p in report["problems"]))
+
+
+class AtomicCommitTests(unittest.TestCase):
+    """SIS-313b: intent journal — crash between record and decision appends."""
+
+    def setUp(self):
+        from tests.v3.support import FixtureAuthority
+        self.auth = FixtureAuthority()
+        self.receipt = self.auth.issue_receipt()
+        self.auth.store.add(_proc(status="draft"))
+        self.auth.controller.transition(
+            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_token=self.auth.token)
+
+    def _reopen(self):
+        from tests.v3.support import FixtureAuthority
+        reopened = PromotionController(
+            self.auth.store, self.auth.root / "decisions",
+            operator_token_digest=operator_token_digest(FixtureAuthority.token),
+            trusted_evaluator_keys={
+                self.auth.eval_key_id: self.auth.eval_public.hex()},
+            receipt_resolver=self.auth._resolve)
+        return reopened
+
+    def _intents(self):
+        return sorted((self.auth.root / "decisions" / "journal").glob("*.intent"))
+
+    def _evaluate(self, ctl=None):
+        (ctl or self.auth.controller).transition(
+            "p1", "evaluated", actor_role="operator", actor_identity="op-1",
+            operator_token=self.auth.token, receipt_digests=(self.receipt.digest,),
+            evaluator_signer=self.auth._eval_signer)
+
+    def test_crash_before_record_intent_completes_on_restart(self):
+        orig = self.auth.store._commit_record
+        def boom(record, **kw):
+            raise RuntimeError("crash before record append")
+        self.auth.store._commit_record = boom
+        with self.assertRaises(RuntimeError):
+            self._evaluate()
+        self.auth.store._commit_record = orig
+        self.assertEqual(len(self._intents()), 1)
+        self.assertNotEqual(self.auth.store.get("p1").status, "evaluated")
+        reopened = self._reopen()
+        self.assertEqual(self._intents(), [])
+        self.assertEqual(self.auth.store.get("p1").status, "evaluated")
+        self.assertEqual(
+            reopened.projected_statuses()[
+                self.auth.store.get("p1").digest], "evaluated")
+
+    def test_crash_between_record_and_decision_recovers(self):
+        log_dir = self.auth.root / "decisions"
+        orig_open = open
+
+        class CrashOnce:
+            def __init__(self):
+                self.fired = False
+            def __call__(self, path, mode="r", *a, **k):
+                target = Path(path)
+                if (not self.fired and "b" in mode
+                        and target.parent == log_dir
+                        and target.name == "decisions.jsonl"):
+                    self.fired = True
+                    raise RuntimeError("crash before decision append")
+                return orig_open(path, mode, *a, **k)
+        crash = CrashOnce()
+        import builtins
+        saved = builtins.open
+        builtins.open = crash
+        try:
+            with self.assertRaises(RuntimeError):
+                self._evaluate()
+        finally:
+            builtins.open = saved
+        self.assertTrue(crash.fired)
+        self.assertEqual(len(self._intents()), 1)
+        # Record committed; decision absent -> recovery appends it.
+        reopened = self._reopen()
+        self.assertEqual(self._intents(), [])
+        self.assertEqual(self.auth.store.get("p1").status, "evaluated")
+        self.assertEqual(
+            reopened.projected_statuses()[
+                self.auth.store.get("p1").digest], "evaluated")
+        self.assertTrue(reopened.verify()["ok"])
+
+    def test_diverged_intent_fails_closed(self):
+        orig = self.auth.store._commit_record
+        self.auth.store._commit_record = (
+            lambda record, **kw: (_ for _ in ()).throw(RuntimeError("crash")))
+        with self.assertRaises(RuntimeError):
+            self._evaluate()
+        self.auth.store._commit_record = orig
+        intent_path = self._intents()[0]
+        import json
+        intent = json.loads(intent_path.read_text())
+        intent["decision_entry_prior"] = "0" * 64
+        intent_path.write_text(json.dumps(intent) + "\n")
+        with self.assertRaisesRegex(PromotionRejected,
+                                    "intent_journal_conflict"):
+            self._reopen()
+
+    def test_phantom_backing_not_servable(self):
+        # A governed record committed under a nonexistent decision is an
+        # inconsistency: the snapshot must flag it, never serve it.
+        from dataclasses import replace as _replace
+        rec = _proc(status="evaluated", pid="px")
+        self.auth.store._commit_record(rec, backing_decision="f" * 64)
+        snap = self._reopen().eligibility_snapshot()
+        self.assertTrue(snap.inconsistencies)
+        self.assertNotIn(rec.digest, snap.qualified_digests)
+
+    def test_unbacked_governed_record_flagged_by_verify(self):
+        from dataclasses import replace as _replace
+        rec = _proc(status="qualified", pid="px")
+        self.auth.store._append_locked(rec, backing_decision=None)
+        report = self.auth.store.verify()
+        self.assertFalse(report["ok"])
+        self.assertTrue(any("unbacked_status" in p
                             for p in report["problems"]))
 
 

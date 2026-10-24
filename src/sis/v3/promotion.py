@@ -13,9 +13,10 @@ import hashlib
 import os
 import re
 import secrets
+import tempfile
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import signatures
@@ -56,8 +57,40 @@ class PromotionRejected(RuntimeError):
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
+@dataclass(frozen=True)
+class EligibilitySnapshot:
+    """Committed, signature-verified servable state — the only authority.
+
+    Constructed solely by ``PromotionController.eligibility_snapshot`` from
+    a fresh replay of the decision log resolved against the record store.
+    Serving code must consume this, never raw ``ProcedureRecordV1.status``.
+
+    ``inconsistencies`` non-empty means the evidence base cannot be
+    projected cleanly; every guidance surface must abstain while it is
+    non-empty.
+    """
+
+    records: Mapping[str, ProcedureRecordV1]   # record_digest -> record
+    statuses: Mapping[str, str]                # record_digest -> committed status
+    qualified_digests: frozenset[str]
+    qualified_head: str
+    decision_head: str | None
+    inconsistencies: tuple[str, ...]
+
+    @property
+    def qualified(self) -> tuple[ProcedureRecordV1, ...]:
+        return tuple(
+            self.records[d] for d in sorted(self.qualified_digests) if d in self.records
+        )
+
+
 class PromotionController:
-    """Append-only decision log over a ``ProcedureStore``."""
+    """Append-only decision log over a ``ProcedureStore``.
+
+    Commits are atomic across the record log and decision log through a
+    durable intent journal: the signed pair is journaled before either file
+    is appended, and recovery completes any intent interrupted mid-commit.
+    """
 
     def __init__(
         self,
@@ -98,10 +131,13 @@ class PromotionController:
         self._protocol = expected_protocol
         self._revoked_eval_keys = set(revoked_evaluator_keys)
         self.policy_version = policy_version
+        self._journal_dir = self.log_dir / "journal"
+        self._journal_dir.mkdir(parents=True, exist_ok=True)
         self._prior: str | None = None
         self._decisions: list[PromotionDecisionV1 | PromotionDecisionV2] = []
         self._projected: dict[str, str] = {}  # record_digest -> decided status
         self._lock = threading.Lock()
+        self._recover()
         self._load()
 
     def transition(
@@ -128,9 +164,10 @@ class PromotionController:
         require_permission(actor_role, "promotion:approve")
         with self._lock:
             record = self.store.get(procedure_id)
-            if new_status not in _TRANSITIONS.get(record.status, frozenset()):
+            current_status = self._status_of(record)
+            if new_status not in _TRANSITIONS.get(current_status, frozenset()):
                 raise PromotionRejected(
-                    "illegal_transition", f"{record.status} -> {new_status}"
+                    "illegal_transition", f"{current_status} -> {new_status}"
                 )
             verified_receipts = self._verify_receipts(receipt_digests)
             if new_status == "qualified":
@@ -166,7 +203,7 @@ class PromotionController:
                 "actor_identity": actor_identity,
                 "approved": True,
                 "policy_version": self.policy_version,
-                "prior_status": record.status,
+                "prior_status": current_status,
                 "new_status": new_status,
                 "old_qualified_head": old_head,
                 "new_qualified_head": expected_new_head,
@@ -188,29 +225,166 @@ class PromotionController:
             unsigned["operator_authorization"] = self._authorize_operator(
                 unsigned, operator_signer, operator_token
             )
+            decision = PromotionDecisionV2.from_dict(unsigned)
 
-            self.store.add(next_revision, allow_qualified=True)
+            # Atomic commit: durable intent, then record, then decision.
+            self._commit(next_revision, decision)
             actual_head = self.store.qualified_head_digest()
             if actual_head != expected_new_head:
                 raise PromotionRejected(
                     "qualified_head_divergence",
                     f"declared {expected_new_head}, actual {actual_head}",
                 )
-            decision = PromotionDecisionV2.from_dict(unsigned)
-            line = canonical_json({
-                "decision": decision.to_dict(),
-                "decision_digest": decision.digest,
-                "prior_decision_digest": self._prior,
-            })
-            with open(self._log, "ab") as handle:
-                handle.write(line + b"\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            self._prior = hashlib.sha256(line).hexdigest()
             self._decisions.append(decision)
             self._projected.pop(decision.candidate_digest, None)
             self._projected[decision.new_record_digest] = decision.new_status
             return decision
+
+    def _status_of(self, record: ProcedureRecordV1) -> str:
+        """Decision-backed status of a record — never raw status alone.
+
+        A record claiming a governed status without a committed decision is
+        inconsistent; transitions on it fail closed.
+        """
+        decided = self._projected.get(record.digest)
+        if decided is not None:
+            return decided
+        if record.status in ProcedureStore.WRITABLE_STATUSES:
+            return record.status
+        raise PromotionRejected(
+            "uncommitted_record",
+            f"{record.procedure_id}@{record.revision} carries governed status "
+            "without a committed decision",
+        )
+
+    def _commit(self, record: ProcedureRecordV1, decision: PromotionDecisionV2) -> None:
+        """Atomically persist record revision + signed decision.
+
+        1. Durable intent containing both payloads (fsync file + directory).
+        2. Append the record line (fsync).
+        3. Append the decision line (fsync).
+        4. Clear the intent (unlink + directory fsync).
+
+        A crash anywhere leaves either nothing or a recoverable intent that
+        ``_recover`` completes idempotently at next start.
+        """
+        intent_path = self._journal_dir / f"{decision.decision_id}.intent"
+        intent = {
+            "schema": 1,
+            "record": record.to_dict(),
+            "decision": decision.to_dict(),
+            "record_entry_prior": self.store._prior,
+            "decision_entry_prior": self._prior,
+        }
+        fd, tmp = tempfile.mkstemp(dir=self._journal_dir, prefix=".txn-")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(canonical_json(intent) + b"\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, intent_path)
+            self._fsync_dir(self._journal_dir)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        self.store._commit_record(record, backing_decision=decision.digest)
+        line = canonical_json({
+            "decision": decision.to_dict(),
+            "decision_digest": decision.digest,
+            "prior_decision_digest": self._prior,
+        })
+        with open(self._log, "ab") as handle:
+            handle.write(line + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._prior = hashlib.sha256(line).hexdigest()
+        intent_path.unlink()
+        self._fsync_dir(self._journal_dir)
+
+    @staticmethod
+    def _fsync_dir(path: Path) -> None:
+        try:
+            dir_fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
+
+    def _recover(self) -> None:
+        """Complete any commit interrupted between the two appends.
+
+        Runs before ``_load``. For each pending intent: append the record
+        line if absent, append the decision line only when its recorded
+        prior matches the current log head (single-writer invariant), then
+        clear the intent. Anything else is corruption — fail closed.
+        """
+        if not self._journal_dir.exists():
+            return
+        for intent_path in sorted(self._journal_dir.glob("*.intent")):
+            try:
+                intent = loads_json(intent_path.read_bytes())
+                record = ProcedureRecordV1.from_dict(intent["record"])
+                decision = self._decode_decision(intent["decision"])
+            except (ContractError, KeyError, TypeError, ValueError) as exc:
+                raise PromotionRejected(
+                    "intent_journal_corrupt", intent_path.name
+                ) from exc
+            if intent["decision_entry_prior"] != self._head_of_log():
+                raise PromotionRejected(
+                    "intent_journal_conflict",
+                    "decision head diverged from the journaled commit",
+                )
+            existing = self.store._digests.get(
+                (record.procedure_id, record.revision)
+            )
+            if existing is None:
+                if intent["record_entry_prior"] != self.store._prior:
+                    raise PromotionRejected(
+                        "intent_journal_conflict",
+                        "record head diverged from the journaled commit",
+                    )
+                self.store._commit_record(record, backing_decision=decision.digest)
+            elif existing != record.digest:
+                raise PromotionRejected(
+                    "intent_journal_conflict", "record revision conflict"
+                )
+            if not self._decision_present(decision.digest):
+                line = canonical_json({
+                    "decision": decision.to_dict(),
+                    "decision_digest": decision.digest,
+                    "prior_decision_digest": intent["decision_entry_prior"],
+                })
+                with open(self._log, "ab") as handle:
+                    handle.write(line + b"\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            intent_path.unlink()
+            self._fsync_dir(self._journal_dir)
+
+    def _head_of_log(self) -> str | None:
+        """Digest of the last complete decision line, or None for empty."""
+        if not self._log.exists():
+            return None
+        lines = self._log.read_bytes().splitlines()
+        if not lines:
+            return None
+        return hashlib.sha256(lines[-1].rstrip(b"\n")).hexdigest()
+
+    def _decision_present(self, digest: str) -> bool:
+        if not self._log.exists():
+            return False
+        for raw in self._log.read_bytes().splitlines():
+            try:
+                entry = loads_json(raw.rstrip(b"\n"))
+            except ContractError:
+                continue
+            if entry.get("decision_digest") == digest:
+                return True
+        return False
 
     def qualified_head(self) -> str:
         return self.store.qualified_head_digest()
@@ -222,18 +396,22 @@ class PromotionController:
         """The decision-backed status map — the catalog's authority view."""
         return dict(self._projected)
 
-    def verify(self) -> dict:
-        """Replay the log: chain, signatures, transitions, head continuity."""
+    def _replay(self):
+        """Replay the decision log: chain, signatures, transitions, heads.
+
+        Returns ``(statuses, qualified, decided_by, problems, head, legacy)``.
+        Shared by ``verify()`` and ``eligibility_snapshot()`` so both read
+        identical committed state.
+        """
         problems: list[str] = []
         qualified: set[str] = set()
         statuses: dict[str, str] = {}
+        decided_by: dict[str, str] = {}  # record_digest -> decision digest
         legacy = 0
         prior: str | None = None
-        count = 0
         if self._log.exists():
             with open(self._log, "rb") as handle:
                 for position, raw in enumerate(handle):
-                    count += 1
                     line = raw.rstrip(b"\n")
                     try:
                         entry = loads_json(line)
@@ -251,11 +429,69 @@ class PromotionController:
                         problems.extend(
                             p + f"_at_{position}" for p in self._verify_v2(
                                 decision, statuses, qualified))
+                        statuses.pop(decision.candidate_digest, None)
+                        statuses[decision.new_record_digest] = decision.new_status
+                        decided_by.pop(decision.candidate_digest, None)
+                        decided_by[decision.new_record_digest] = decision.digest
                     prior = hashlib.sha256(line).hexdigest()
+        return statuses, qualified, decided_by, problems, prior, legacy
+
+    def verify(self) -> dict:
+        """Replay the log: chain, signatures, transitions, head continuity."""
+        statuses, qualified, _decided_by, problems, prior, legacy = self._replay()
+        count = len(self._decisions)
         if not problems:
             problems.extend(self._projection_drift(qualified, statuses))
         return {"ok": not problems, "entries": count, "legacy_v1": legacy,
                 "head": prior, "problems": problems}
+
+    def eligibility_snapshot(self) -> EligibilitySnapshot:
+        """Fresh committed, verified servable state.
+
+        Re-reads the record store and replays the decision log from disk, so
+        revocations and commits by other processes take effect at read time.
+        Every projected record digest must resolve to a stored record, and
+        every governed record must trace to a committed decision; otherwise
+        ``inconsistencies`` is non-empty and serving must abstain.
+        """
+        self.store.refresh()
+        statuses, qualified_set, decided_by, problems, head, _legacy = self._replay()
+        inconsistencies = list(problems)
+        records: dict[str, ProcedureRecordV1] = {}
+        for digest in statuses:
+            rec = self.store.get_by_digest(digest)
+            if rec is None:
+                inconsistencies.append(f"orphan_decision:{digest[:16]}")
+                continue
+            records[digest] = rec
+            backing = self.store.backing_decision(digest)
+            if backing is not None and backing != decided_by.get(digest):
+                inconsistencies.append(f"backing_mismatch:{digest[:16]}")
+        decided_digests = set(decided_by.values())
+        for backing_source in self.store.all_latest():
+            backing = self.store.backing_decision(backing_source.digest)
+            if backing is not None and backing not in decided_digests:
+                inconsistencies.append(f"phantom_backing:{backing_source.digest[:16]}")
+            if backing_source.status not in ProcedureStore.WRITABLE_STATUSES \
+                    and backing_source.digest not in statuses:
+                inconsistencies.append(f"uncommitted_record:{backing_source.digest[:16]}")
+            # Undecided (draft/candidate) records are still resolvable —
+            # benchmark ablations may inspect them, they are never servable.
+            records.setdefault(backing_source.digest, backing_source)
+        qualified_digests = frozenset(
+            d for d in qualified_set if d in records
+        )
+        qualified_head = canonical_digest("qualified_catalog", 1, {
+            "head": sorted(qualified_digests),
+        })
+        return EligibilitySnapshot(
+            records=records,
+            statuses=dict(statuses),
+            qualified_digests=qualified_digests,
+            qualified_head=qualified_head,
+            decision_head=head,
+            inconsistencies=tuple(sorted(set(inconsistencies))),
+        )
 
     @staticmethod
     def _decode_decision(body):

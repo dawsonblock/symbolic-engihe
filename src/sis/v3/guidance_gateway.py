@@ -24,26 +24,35 @@ from pathlib import Path
 
 from .contracts import ContractError, GuidanceRequestV1, GuidanceV1
 from .guidance import _abstain, sis_recommend
-from .procedures import ProcedureStore
-from .retrieval import retrieve
 
 PHASES = frozenset({"shadow", "diagnostic", "conditional"})
 
 
 class GuidanceGateway:
-    """Phase-gated read-only guidance surface."""
+    """Phase-gated read-only guidance surface.
+
+    ``snapshot_provider`` is a callable returning a fresh
+    ``EligibilitySnapshot`` — typically
+    ``PromotionController.eligibility_snapshot``. The gateway rebuilds the
+    snapshot on every request so revocations, suspensions, and ledger
+    inconsistencies take effect at read time, never after a cascade.
+    """
 
     def __init__(
         self,
-        catalog: ProcedureStore,
+        snapshot_provider,
         *,
         phase: str = "shadow",
         kill_switch_path: str | Path | None = None,
         log_dir: str | Path | None = None,
+        revoked_provider=None,
     ) -> None:
         if phase not in PHASES:
             raise ContractError("unknown guidance phase")
-        self.catalog = catalog
+        if not callable(snapshot_provider):
+            raise ContractError("snapshot_provider must be callable")
+        self._snapshot_provider = snapshot_provider
+        self._revoked_provider = revoked_provider
         self.phase = phase
         self._kill_path = Path(kill_switch_path) if kill_switch_path else None
         self._log_dir = Path(log_dir) if log_dir else None
@@ -72,10 +81,13 @@ class GuidanceGateway:
         if not isinstance(request, GuidanceRequestV1):
             request = GuidanceRequestV1.from_dict(request)
 
+        revoked = frozenset(
+            self._revoked_provider() if self._revoked_provider else ())
         # Always run the full pipeline for the internal record.
         full = sis_recommend(
-            request, self.catalog,
+            request, self._snapshot_provider(),
             files_present=files_present, symbols_extra=symbols_extra,
+            revoked=revoked,
         )
         with self._lock:
             self._log({
@@ -129,8 +141,9 @@ class GuidanceGateway:
 
 def retrieve_shadow(
     request: GuidanceRequestV1,
-    catalog: ProcedureStore,
+    snapshot,
     **kwargs,
 ):
     """Internal-only retrieval for shadow analysis; never served to agents."""
-    return retrieve(request, catalog, **kwargs)
+    from .retrieval import retrieve
+    return retrieve(request, snapshot, **kwargs)

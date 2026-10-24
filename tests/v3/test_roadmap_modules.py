@@ -30,7 +30,7 @@ from sis.v3.semantic_checks import (
 from sis.v3.verifier import EvaluatorKeyStore
 
 from tests.v3.test_episode_replay import make_event
-from tests.v3.test_retrieval import _proc, _request, _store
+from tests.v3.test_retrieval import _authority, _proc, _request
 
 D = "0" * 64
 TOKEN = "operator-token-0123456789"
@@ -191,8 +191,7 @@ class CounterexampleIndexTests(unittest.TestCase):
             contra=({"kind": "language_is", "value": "python"},),
             cex=("a" * 64,),
         )
-        store = _store(record)
-        index = CounterexampleIndex(store)
+        index = CounterexampleIndex(_authority(record).store)
         ctx = __import__("sis.v3.retrieval", fromlist=["RetrievalContext"]).RetrievalContext(
             language="python", toolchain="t", dependency_digests={},
             files_present=frozenset(), symbols_present=frozenset(),
@@ -214,12 +213,13 @@ class CatalogTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.store = ProcedureStore(self.root / "catalog")
+        self.auth = _authority()
+        self.store = self.auth.store
         self.catalog = Catalog(self.store, self.root / "scopes.json")
 
     def test_scope_roundtrip_and_filtering(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
-        self.store.add(_proc(pid="p2"), allow_qualified=True)
+        self.auth.qualify(_proc(pid="p1", status="candidate"))
+        self.auth.qualify(_proc(pid="p2", status="candidate"))
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.catalog.set_scope("p2", "cross_repository", actor_role="operator")
         self.assertEqual(self.catalog.scope_of("p1"), "family")
@@ -231,7 +231,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(fresh.scope_of("p1"), "family")
 
     def test_scope_requires_operator_and_valid_scope(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
+        self.auth.qualify(_proc(pid="p1", status="candidate"))
         with self.assertRaises(AuthorizationDenied):
             self.catalog.set_scope("p1", "family", actor_role="agent")
         with self.assertRaises(ContractError):
@@ -247,27 +247,26 @@ class CatalogTests(unittest.TestCase):
     def test_cascade_suspend_invalidates_dependents(self):
         from dataclasses import replace
         receipt = "b" * 64
-        self.store.add(replace(_proc(pid="p1"), evidence_refs=(receipt,)),
-                       allow_qualified=True)
-        self.store.add(_proc(pid="p2"), allow_qualified=True)
-        controller = PromotionController(
-            self.store, self.root / "decisions",
-            operator_token_digest=operator_token_digest(TOKEN),
-            trusted_evaluator_keys={},
-        )
+        self.auth.qualify(replace(_proc(pid="p1", status="candidate"),
+                                  evidence_refs=(receipt,)))
+        self.auth.qualify(_proc(pid="p2", status="candidate"))
+        controller = self.auth.controller
         suspended = self.catalog.cascade_suspend(
             receipt,
             lambda pid: controller.transition(
                 pid, "suspended", actor_role="operator",
-                actor_identity="op-1", operator_token=TOKEN).decision_id,
+                actor_identity="op-1", operator_token=self.auth.token).decision_id,
         )
         self.assertEqual(len(suspended), 1)
         self.assertTrue(all(d.startswith("dec-") for d in suspended))
         self.assertEqual(self.store.get("p1").status, "suspended")
         self.assertEqual(self.store.get("p2").status, "qualified")
+        self.assertEqual(len(self.auth.controller.eligibility_snapshot().qualified), 1)
+        self.assertEqual(
+            self.auth.controller.eligibility_snapshot().qualified[0].procedure_id, "p2")
 
     def test_scoped_qualified_head_differs_from_global(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
+        self.auth.qualify(_proc(pid="p1", status="candidate"))
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.assertNotEqual(
             self.catalog.qualified_head("family"),
@@ -279,12 +278,12 @@ class GatewayTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.store = _store(_proc(pid="p1"))
+        self.auth = _authority(_proc(pid="p1"), root=self.root / "auth")
         self.request = _request()
 
     def test_shadow_abstains_but_logs_would_recommend(self):
         gw = GuidanceGateway(
-            self.store, phase="shadow", log_dir=self.root / "logs")
+            self.auth.snapshot, phase="shadow", log_dir=self.root / "logs")
         result = gw.recommend(self.request)
         self.assertEqual(result.decision, "abstain")
         self.assertEqual(result.reason_code, "catalog_unavailable")
@@ -294,14 +293,14 @@ class GatewayTests(unittest.TestCase):
 
     def test_diagnostic_abstains_with_reason_but_no_procedures(self):
         gw = GuidanceGateway(
-            self.store, phase="diagnostic", log_dir=self.root / "logs")
+            self.auth.snapshot, phase="diagnostic", log_dir=self.root / "logs")
         result = gw.recommend(self.request)
         self.assertEqual(result.decision, "abstain")
         self.assertEqual(result.procedure_ids, ())
         self.assertEqual(result.reason_code, "insufficient_support")
 
     def test_conditional_serves_recommendation(self):
-        gw = GuidanceGateway(self.store, phase="conditional")
+        gw = GuidanceGateway(self.auth.snapshot, phase="conditional")
         result = gw.recommend(self.request)
         self.assertEqual(result.decision, "recommend")
         self.assertEqual(result.procedure_ids, ("p1",))
@@ -309,7 +308,7 @@ class GatewayTests(unittest.TestCase):
     def test_kill_switch_file_and_env(self):
         kill = self.root / "KILL"
         gw = GuidanceGateway(
-            self.store, phase="conditional", kill_switch_path=kill)
+            self.auth.snapshot, phase="conditional", kill_switch_path=kill)
         self.assertEqual(gw.recommend(self.request).decision, "recommend")
         kill.touch()
         result = gw.recommend(self.request)
@@ -325,7 +324,7 @@ class GatewayTests(unittest.TestCase):
 
     def test_record_outcome_validation_and_log(self):
         gw = GuidanceGateway(
-            self.store, phase="conditional", log_dir=self.root / "logs")
+            self.auth.snapshot, phase="conditional", log_dir=self.root / "logs")
         result = gw.recommend(self.request)
         gw.record_outcome(result.digest, True)
         gw.record_outcome(result.digest, None)
@@ -339,17 +338,17 @@ class GatewayTests(unittest.TestCase):
 
     def test_unknown_phase_rejected(self):
         with self.assertRaises(ContractError):
-            GuidanceGateway(self.store, phase="full-auto")
+            GuidanceGateway(self.auth.snapshot, phase="full-auto")
 
 
 class AblationTests(unittest.TestCase):
     def test_skip_contraindications_surfaces_blocked_procedure(self):
         record = _proc(contra=({"kind": "language_is", "value": "python"},))
-        store = _store(record)
-        result = retrieve(_request(), store)
+        snapshot = _authority(record).snapshot()
+        result = retrieve(_request(), snapshot)
         self.assertEqual(result.candidates, ())
         ablated = retrieve(
-            _request(), store,
+            _request(), snapshot,
             ablations=AblationFlags(skip_contraindications=True))
         self.assertEqual(len(ablated.candidates), 1)
 
@@ -358,15 +357,15 @@ class AblationTests(unittest.TestCase):
             pre=({"kind": "language_is", "value": "rust"},),
             status="draft",
         )
-        store = _store(record)
-        self.assertEqual(retrieve(_request(), store).candidates, ())
+        snapshot = _authority(record).snapshot()
+        self.assertEqual(retrieve(_request(), snapshot).candidates, ())
         ablated = retrieve(
-            _request(), store,
+            _request(), snapshot,
             ablations=AblationFlags(
                 skip_preconditions=True, include_unqualified=True))
         self.assertEqual(len(ablated.candidates), 1)
         with self.assertRaises(ContractError):
-            retrieve(_request(), store, ablations="yes")
+            retrieve(_request(), snapshot, ablations="yes")
 
 
 class BenchmarkStatsTests(unittest.TestCase):

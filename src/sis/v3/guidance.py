@@ -6,7 +6,6 @@ survives every hard gate with evidence references attached. Guidance is
 advice — it never mutates catalog, evidence, or agent state.
 """
 from .contracts import GuidanceRequestV1, GuidanceV1, canonical_digest
-from .procedures import ProcedureStore
 from .retrieval import retrieve
 
 
@@ -22,14 +21,18 @@ _POLICY_DIGEST = canonical_digest("guidance_policy", 1, _POLICY_DESCRIPTOR)
 
 def sis_recommend(
     request: GuidanceRequestV1 | dict,
-    catalog: ProcedureStore | None = None,
+    snapshot=None,
     *,
     files_present=(),
     symbols_extra=(),
     revoked=frozenset(),
     now: str | None = None,
 ) -> GuidanceV1:
-    """Return a strict, bounded recommendation or abstention; never mutates state."""
+    """Return a strict, bounded recommendation or abstention; never mutates state.
+
+    ``snapshot`` is the ``EligibilitySnapshot`` produced by the promotion
+    authority — the single decision-backed view of qualified state.
+    """
     if not isinstance(request, GuidanceRequestV1):
         request = GuidanceRequestV1.from_dict(request)
     if request.semantic_contract_digest is None:
@@ -40,7 +43,23 @@ def sis_recommend(
                 "Reproduce the target failure with task-owned tests before considering any procedure.",
             ),
         )
-    if catalog is None or not catalog.by_status("qualified"):
+    if snapshot is None:
+        return _abstain(
+            "no_qualified_procedure",
+            (
+                "No qualified procedure is available for retrieval.",
+                "Verify the task outcome independently and retain the evidence for later review.",
+            ),
+        )
+    if snapshot.inconsistencies:
+        return _abstain(
+            "conflicting_evidence",
+            (
+                "The qualification evidence base is inconsistent; abstaining rather than serving unverifiable guidance.",
+                "Re-run the evidence replay and inspect the reported inconsistencies before serving.",
+            ),
+        )
+    if not snapshot.qualified:
         return _abstain(
             "no_qualified_procedure",
             (
@@ -50,7 +69,7 @@ def sis_recommend(
         )
 
     result = retrieve(
-        request, catalog,
+        request, snapshot,
         files_present=files_present, symbols_extra=symbols_extra, limit=3,
         revoked=revoked, now=now,
     )
@@ -69,7 +88,7 @@ def sis_recommend(
         schema_version=1,
         decision="recommend",
         procedure_ids=tuple(c.record.procedure_id for c in top),
-        revision=catalog.qualified_head_digest(),
+        revision=snapshot.qualified_head,
         matched_preconditions=tuple(
             cond for candidate in top for cond in candidate.matched_preconditions
         )[:32],

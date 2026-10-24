@@ -62,9 +62,9 @@ class ProcedureStoreTests(unittest.TestCase):
 
     def test_new_revision_appends(self):
         self.store.add(_record())
-        nxt = replace(_record(), revision=2, status="evaluated")
+        nxt = replace(_record(), revision=2, status="draft")
         self.store.add(nxt)
-        self.assertEqual(self.store.get("proc-a").status, "evaluated")
+        self.assertEqual(self.store.get("proc-a").status, "draft")
         self.assertEqual(self.store.get("proc-a", 1).status, "candidate")
 
     def test_replace_requires_increment(self):
@@ -74,14 +74,14 @@ class ProcedureStoreTests(unittest.TestCase):
         self.store.replace_record(replace(_record(), revision=3))
 
     def test_persistence_and_verify(self):
-        self.store.add(_record())
-        self.store.add(replace(_record(), revision=2, status="qualified"),
-                       allow_qualified=True)
-        reloaded = ProcedureStore(self.store.root)
+        from tests.v3.support import FixtureAuthority
+        auth = FixtureAuthority()
+        auth.qualify(_record())
+        reloaded = ProcedureStore(auth.store.root)
         self.assertEqual(reloaded.get("proc-a").status, "qualified")
         self.assertTrue(reloaded.verify()["ok"])
         self.assertEqual(
-            self.store.qualified_head_digest(), reloaded.qualified_head_digest()
+            auth.store.qualified_head_digest(), reloaded.qualified_head_digest()
         )
 
     def test_tampered_log_detected(self):

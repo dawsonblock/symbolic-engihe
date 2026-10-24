@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from .contracts import ContractError, GuidanceRequestV1, ProcedureRecordV1
-from .procedures import ProcedureStore
 
 
 def _parse_ts(value: str) -> datetime:
@@ -118,7 +117,7 @@ class RetrievalResult:
 
 def retrieve(
     request: GuidanceRequestV1,
-    store: ProcedureStore,
+    snapshot,
     *,
     files_present=(),
     symbols_extra=(),
@@ -129,15 +128,20 @@ def retrieve(
 ) -> RetrievalResult:
     """Apply hard gates then rank surviving qualified procedures.
 
-    ``revoked`` is a policy-managed denylist of procedure record digests —
-    it invalidates cached recommendations immediately even while a record's
-    stored status remains ``qualified``. ``now`` injects trusted UTC time for
-    deterministic testing; expired or malformed ``expires_at`` abstains.
+    ``snapshot`` is an ``EligibilitySnapshot`` — the decision-ledger-derived
+    authority view. Raw ``ProcedureRecordV1.status`` is never consulted, so
+    uncommitted or tampered catalog writes cannot be served. ``revoked`` is
+    a policy-managed denylist of record digests; ``now`` injects trusted
+    UTC time for deterministic testing.
     """
+    from .promotion import EligibilitySnapshot
+
     if type(limit) is not int or not 1 <= limit <= 3:
         raise ContractError("retrieval limit must be in [1,3]")
     if not isinstance(ablations, AblationFlags):
         raise ContractError("ablations must be an AblationFlags value")
+    if not isinstance(snapshot, EligibilitySnapshot):
+        raise ContractError("retrieve requires an EligibilitySnapshot")
     try:
         current = _parse_ts(now) if now else datetime.now(timezone.utc)
     except (ValueError, TypeError) as exc:
@@ -148,9 +152,18 @@ def retrieve(
     candidates: list[Candidate] = []
     rejections: list[Rejection] = []
 
-    pool = store.by_status("qualified")
+    if snapshot.inconsistencies:
+        rejections.append(Rejection(
+            procedure_id="*",
+            reason_code="conflicting_evidence",
+            detail="eligibility projection is inconsistent: "
+                   + ", ".join(snapshot.inconsistencies[:4]),
+        ))
+        return RetrievalResult(candidates=(), rejections=tuple(rejections))
+
+    pool = list(snapshot.qualified)
     if ablations.include_unqualified:
-        pool = list(store.all_latest())
+        pool = list(snapshot.records.values())
     for record in pool:
         if record.digest in revoked:
             rejections.append(Rejection(
@@ -203,7 +216,7 @@ def retrieve(
         ))
 
     candidates.sort(key=lambda c: (-c.score, c.record.digest))
-    if not candidates and not store.by_status("qualified"):
+    if not candidates and not snapshot.qualified:
         rejections.append(Rejection(
             procedure_id="*",
             reason_code="no_qualified_procedure",

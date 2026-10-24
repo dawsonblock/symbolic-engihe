@@ -229,5 +229,46 @@ class VerifierCustodyTests(VerifierFixture):
             )
 
 
+class BackendDispatchTests(unittest.TestCase):
+    """Active backend is reported; vendored path stays wire-compatible."""
+
+    def test_backend_reports_active_provider(self):
+        try:
+            import cryptography  # noqa: F401
+        except ImportError:
+            self.assertEqual(signatures.backend(), "vendored-python")
+        else:
+            self.assertEqual(signatures.backend(), "cryptography")
+
+    def test_vendored_fallback_interoperates_with_active_backend(self):
+        seed = bytes(range(32))
+        self.assertEqual(signatures.public_key(seed), signatures._py_public_key(seed))
+        message = b"sis-v3 test message"
+        self.assertEqual(
+            signatures.sign(seed, message), signatures._py_sign(seed, message)
+        )
+        sig = signatures._py_sign(seed, message)
+        self.assertTrue(signatures.verify(sig, message, signatures.public_key(seed)))
+        sig2 = signatures.sign(seed, message)
+        self.assertTrue(
+            signatures._py_verify(sig2, message, signatures._py_public_key(seed))
+        )
+
+    def test_persisted_receipt_reloads_by_digest(self):
+        class _Fixture(VerifierFixture):
+            def runTest(self):
+                receipt = self.evaluate()
+                loaded = self.verifier.load_receipt(receipt.digest)
+                self.assertEqual(loaded, receipt)
+                fresh = OutcomeVerifier(
+                    executor=self.eval_executor,
+                    key_dir=self.key_dir,
+                    registry_dir=self.registry_dir,
+                )
+                self.assertEqual(fresh.load_receipt(receipt.digest), receipt)
+
+        _Fixture("runTest")()
+
+
 if __name__ == "__main__":
     unittest.main()

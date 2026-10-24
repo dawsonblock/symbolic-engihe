@@ -82,6 +82,18 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(all(v == 1 for v in report["solved_counts"].values()))
         self.assertEqual(report["paired"]["D_vs_A"]["ties"], 1)
 
+    def test_budget_violation_flagged(self):
+        import time
+        def agent(ctx):
+            time.sleep(2.1)
+        report = self.harness.run(
+            [(self.task, self.repo)], agent,
+            budget=BudgetCaps(wall_seconds=1, token_budget=1000, tool_budget=10),
+            arms=("A",),
+        )
+        self.assertEqual(report["budget_violations"], 1)
+        self.assertTrue(report["per_task"][0]["arms"]["A"]["budget_exceeded"])
+
     def test_fresh_workspace_per_arm(self):
         seen = []
         def agent(ctx):

@@ -145,6 +145,47 @@ class PromotionTests(unittest.TestCase):
                 trusted_evaluator_keys={self.key_id: self.public.hex()},
             )
 
+    def test_operator_signature_authorizes_without_token(self):
+        import hashlib
+        op_seed, op_public = signatures.generate_keypair()
+        op_key_id = "key-" + hashlib.sha256(op_public).hexdigest()[:24]
+        controller = PromotionController(
+            self.store, self.root / "decisions-signed",
+            operator_token_digest=None,
+            trusted_evaluator_keys={self.key_id: self.public.hex()},
+            trusted_operator_keys={op_key_id: op_public.hex()},
+        )
+        self.store.add(_proc(status="draft"))
+        op_signer = lambda payload: (op_key_id, signatures.sign(op_seed, payload).hex())
+        decision = controller.transition(
+            "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            operator_signer=op_signer,
+        )
+        self.assertTrue(decision.operator_authorization.startswith(f"ed25519:{op_key_id}:"))
+
+    def test_wrong_operator_key_denied(self):
+        import hashlib
+        op_seed, op_public = signatures.generate_keypair()
+        op_key_id = "key-" + hashlib.sha256(op_public).hexdigest()[:24]
+        bad_seed, _ = signatures.generate_keypair()
+        controller = PromotionController(
+            self.store, self.root / "decisions-signed2",
+            operator_token_digest=None,
+            trusted_evaluator_keys={self.key_id: self.public.hex()},
+            trusted_operator_keys={op_key_id: op_public.hex()},
+        )
+        self.store.add(_proc(status="draft"))
+        bad_signer = lambda payload: (op_key_id, signatures.sign(bad_seed, payload).hex())
+        with self.assertRaisesRegex(PromotionRejected, "operator_signature_invalid"):
+            controller.transition(
+                "p1", "candidate", actor_role="operator", actor_identity="op-1",
+                operator_signer=bad_signer,
+            )
+        with self.assertRaisesRegex(PromotionRejected, "operator_authorization_failed"):
+            controller.transition(
+                "p1", "candidate", actor_role="operator", actor_identity="op-1",
+            )
+
     def test_checkpoint_restore(self):
         self.store.add(_proc(status="draft"))
         receipt = self._receipt()

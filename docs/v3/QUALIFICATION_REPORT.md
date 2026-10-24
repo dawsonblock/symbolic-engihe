@@ -1,6 +1,11 @@
 # SIS3-013 qualification report — gate status
 
-Date: 2026-10-24. Suite: 479 tests, 0 failures, 2 skips.
+Date: 2026-10-23/24. Suite: 488 tests, 0 failures, 2 skips.
+
+Repair pass landed: `cryptography` Ed25519 backend preferred (vendored
+fallback kept wire-identical), per-principal operator signatures for
+promotion (token fallback retained), evaluator signing moved into a child
+process (`evaluator_worker`), benchmark wall-clock violations flagged.
 
 ## Milestone gate ledger
 

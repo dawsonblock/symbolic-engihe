@@ -257,3 +257,29 @@ remaining_unknowns:
   - "Miner is deterministic and records observed evidence; no LLM candidate generation yet"
 next_gate: "When quota resets, run scripts/v3/run_codex_episode.py for a passing live episode; then pilot qualification + the four-arm benchmark on scripted tasks before any efficacy language"
 ```
+
+## Repair pass (post-012)
+
+```yaml
+phase_id: repairs-1
+status: tested
+source_files_changed:
+  - src/sis/v3/signatures.py  # cryptography preferred, vendored fallback
+  - src/sis/v3/promotion.py   # per-principal operator Ed25519 auth
+  - src/sis/v3/evaluator_worker.py  # evaluator signing in a child process
+  - src/sis/v3/benchmark.py   # wall-clock budget violation flags
+  - tests/v3/test_receipt_signatures.py
+  - tests/v3/test_promotion.py
+  - tests/v3/test_benchmark.py
+  - tests/v3/test_evaluator_worker.py
+tests_added: 9
+observed_outcomes:
+  - "Full suite: 488 tests, 0 failures, 2 skips"
+  - "signatures.backend() == 'cryptography' here (constant-time); vendored path byte-identical and still tested"
+  - "Promotion accepts operator Ed25519 signatures; wrong key / missing credentials rejected; shared token remains as fallback"
+  - "evaluate_via_subprocess: seed loads only inside the child process; signed receipt verifies offline; unregistered task rejected with exit 2"
+  - "Benchmark arms now flag wall_seconds > budget.wall_seconds as budget_exceeded and count them in the report"
+remaining_unknowns:
+  - "Subprocess custody shares one OS principal — a true split needs a separate service account/host"
+  - "Passing live Codex episode still pending quota reset"
+```

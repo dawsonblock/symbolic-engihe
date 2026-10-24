@@ -1,20 +1,28 @@
-"""Ed25519 signatures (RFC 8032) in pure standard-library Python.
+"""Ed25519 signatures (RFC 8032) for v3 outcome receipts.
 
-This is a compact, self-contained implementation used to sign and verify
-v3 outcome receipts without adding a mandatory runtime dependency. It is
-validated against the RFC 8032 test vectors and, when the optional
-``cryptography`` package is installed, cross-checked against its Ed25519
-backend in the test suite.
-
-Scalar arithmetic here is not constant-time. That is acceptable for the
-low-volume offline receipt signing this module exists for; deployments that
-sign under side-channel exposure or at volume SHOULD swap in a vetted
-provider (``cryptography``/PyNaCl/KMS) behind the same four-function API.
+When the optional ``cryptography`` package is installed it is used — a
+vetted, constant-time backend. Otherwise a compact pure-Python RFC 8032
+implementation provides the same wire-compatible signature scheme; it is
+validated against the RFC test vectors and cross-checked against the
+``cryptography`` backend in the test suite, but its scalar arithmetic is
+not constant-time. ``backend()`` reports which implementation is active so
+receipts and reports can state it honestly.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+
+try:  # preferred constant-time backend
+    from cryptography.exceptions import InvalidSignature as _InvalidSignature
+    from cryptography.hazmat.primitives import serialization as _serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey as _Ed25519PrivateKey,
+        Ed25519PublicKey as _Ed25519PublicKey,
+    )
+    _HAS_CRYPTOGRAPHY = True
+except ImportError:  # pragma: no cover - depends on environment
+    _HAS_CRYPTOGRAPHY = False
 
 _Q = 2**255 - 19
 _L = 2**252 + 27742317777372353535851937790883648493
@@ -108,16 +116,14 @@ def _clamped_scalar(digest: bytes) -> int:
     return value
 
 
-def public_key(seed: bytes) -> bytes:
-    """Derive the 32-byte Ed25519 public key for a 32-byte secret seed."""
+def _py_public_key(seed: bytes) -> bytes:
     if not isinstance(seed, bytes) or len(seed) != 32:
         raise ValueError("seed must be 32 bytes")
     a = _clamped_scalar(_sha512(seed))
     return _encode_point(_scalarmult(_B, a))
 
 
-def sign(seed: bytes, message: bytes) -> bytes:
-    """Return the 64-byte deterministic Ed25519 signature over ``message``."""
+def _py_sign(seed: bytes, message: bytes) -> bytes:
     if not isinstance(seed, bytes) or len(seed) != 32:
         raise ValueError("seed must be 32 bytes")
     digest = _sha512(seed)
@@ -129,8 +135,7 @@ def sign(seed: bytes, message: bytes) -> bytes:
     return encoded_r + _encode_int(s)
 
 
-def verify(signature: bytes, message: bytes, public: bytes) -> bool:
-    """Check an Ed25519 signature; malformed inputs return False."""
+def _py_verify(signature: bytes, message: bytes, public: bytes) -> bool:
     if not (isinstance(signature, bytes) and isinstance(message, bytes) and isinstance(public, bytes)):
         return False
     if len(signature) != 64 or len(public) != 32:
@@ -149,6 +154,46 @@ def verify(signature: bytes, message: bytes, public: bytes) -> bool:
     a_point = (a_x, a_y, 1, a_x * a_y % _Q)
     right = _to_affine(_add(right_point, _scalarmult(a_point, h)))
     return left == right
+
+
+def backend() -> str:
+    """Name the active signing backend for honest reporting."""
+    return "cryptography" if _HAS_CRYPTOGRAPHY else "vendored-python"
+
+
+def public_key(seed: bytes) -> bytes:
+    """Derive the 32-byte Ed25519 public key for a 32-byte secret seed."""
+    if not _HAS_CRYPTOGRAPHY:
+        return _py_public_key(seed)
+    if not isinstance(seed, bytes) or len(seed) != 32:
+        raise ValueError("seed must be 32 bytes")
+    return _Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+        _serialization.Encoding.Raw, _serialization.PublicFormat.Raw
+    )
+
+
+def sign(seed: bytes, message: bytes) -> bytes:
+    """Return the 64-byte deterministic Ed25519 signature over ``message``."""
+    if not _HAS_CRYPTOGRAPHY:
+        return _py_sign(seed, message)
+    if not isinstance(seed, bytes) or len(seed) != 32:
+        raise ValueError("seed must be 32 bytes")
+    return _Ed25519PrivateKey.from_private_bytes(seed).sign(message)
+
+
+def verify(signature: bytes, message: bytes, public: bytes) -> bool:
+    """Check an Ed25519 signature; malformed inputs return False."""
+    if not _HAS_CRYPTOGRAPHY:
+        return _py_verify(signature, message, public)
+    if not (isinstance(signature, bytes) and isinstance(message, bytes) and isinstance(public, bytes)):
+        return False
+    if len(signature) != 64 or len(public) != 32:
+        return False
+    try:
+        _Ed25519PublicKey.from_public_bytes(public).verify(signature, message)
+    except (_InvalidSignature, ValueError):
+        return False
+    return True
 
 
 def generate_keypair() -> tuple[bytes, bytes]:

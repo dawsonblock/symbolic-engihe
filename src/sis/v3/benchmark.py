@@ -66,6 +66,7 @@ class ArmResult:
     receipt_digest: str | None
     submission_digest: str | None
     wall_seconds: int
+    budget_exceeded: bool = False
     error: str | None = None
 
 
@@ -153,9 +154,11 @@ class BenchmarkHarness:
             except Exception as exc:  # arm failures are observations, not verdicts
                 error = f"{type(exc).__name__}:{str(exc)[:200]}"
             wall = max(0, int(time.monotonic() - start))
+            exceeded = wall > budget.wall_seconds
             submission_digest = tree_digest(workspace)
             if error is not None:
-                return ArmResult(task.task_id, arm, "error", None, submission_digest, wall, error)
+                return ArmResult(task.task_id, arm, "error", None, submission_digest,
+                                 wall, exceeded, error)
             cache_key = (task.task_id, submission_digest)
             cached = self._receipt_cache.get(cache_key)
             if cached is not None:
@@ -169,12 +172,12 @@ class BenchmarkHarness:
                         evaluation_nonce=f"bench-{task.task_id}-{arm}-" + secrets.token_hex(6),
                     )
                 except Exception as exc:
-                    return ArmResult(task.task_id, arm, "error", None, submission_digest, wall,
-                                     f"evaluation:{str(exc)[:200]}")
+                    return ArmResult(task.task_id, arm, "error", None, submission_digest,
+                                     wall, exceeded, f"evaluation:{str(exc)[:200]}")
                 outcome, receipt_digest = receipt.outcome, receipt.digest
                 self._receipt_cache[cache_key] = (outcome, receipt_digest)
             return ArmResult(task.task_id, arm, outcome,
-                             receipt_digest, submission_digest, wall)
+                             receipt_digest, submission_digest, wall, exceeded)
         finally:
             shutil.rmtree(workspace, ignore_errors=True)
 
@@ -187,6 +190,7 @@ class BenchmarkHarness:
                     "outcome": res.outcome,
                     "receipt_digest": res.receipt_digest,
                     "wall_seconds": res.wall_seconds,
+                    "budget_exceeded": res.budget_exceeded,
                     **({"error": res.error} if res.error else {}),
                 }
             per_task.append(entry)
@@ -213,6 +217,9 @@ class BenchmarkHarness:
                        "token_budget": budget.token_budget,
                        "tool_budget": budget.tool_budget},
             "solved_counts": solved,
+            "budget_violations": sum(
+                1 for t in results for r in t.arms.values() if r.budget_exceeded
+            ),
             "paired": pairs,
             "per_task": per_task,
             "budget_enforcement": "wall_seconds measured; token/tool budgets are declared caps enforced by the agent runtime, not the harness",

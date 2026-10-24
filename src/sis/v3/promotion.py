@@ -58,14 +58,16 @@ class PromotionController:
         store: ProcedureStore,
         log_dir: str | Path,
         *,
-        operator_token_digest: str,
+        operator_token_digest: str | None,
         trusted_evaluator_keys: Mapping[str, str],
         receipt_resolver: Callable[[str], OutcomeReceiptV1] | None = None,
         min_pass_receipts: int = 1,
         policy_version: str = "promotion-policy-v1",
+        trusted_operator_keys: Mapping[str, str] | None = None,
     ) -> None:
-        if not isinstance(operator_token_digest, str) or not re.fullmatch(
-            r"[0-9a-f]{64}", operator_token_digest
+        if operator_token_digest is not None and not (
+            isinstance(operator_token_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", operator_token_digest)
         ):
             raise ContractError("operator_token_digest must be a SHA-256 hex digest")
         if type(min_pass_receipts) is not int or min_pass_receipts < 1:
@@ -75,6 +77,7 @@ class PromotionController:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._log = self.log_dir / "decisions.jsonl"
         self._token_digest = operator_token_digest
+        self._operator_keys = dict(trusted_operator_keys or {})
         self._trusted = dict(trusted_evaluator_keys)
         self._resolve_receipt = receipt_resolver
         self._min_receipts = min_pass_receipts
@@ -91,15 +94,14 @@ class PromotionController:
         *,
         actor_role: str,
         actor_identity: str,
-        operator_token: str,
+        operator_token: str | None = None,
         receipt_digests: tuple[str, ...] = (),
         evaluator_signer: Callable[[bytes], tuple[str, str]] | None = None,
+        operator_signer: Callable[[bytes], tuple[str, str]] | None = None,
         rollback_ref: str | None = None,
     ) -> PromotionDecisionV1:
         """Move a procedure along a legal edge under full authority."""
         require_permission(actor_role, "promotion:approve")
-        if hashlib.sha256(operator_token.encode()).hexdigest() != self._token_digest:
-            raise PromotionRejected("operator_authorization_failed")
         with self._lock:
             record = self.store.get(procedure_id)
             if new_status not in _TRANSITIONS.get(record.status, frozenset()):
@@ -148,8 +150,8 @@ class PromotionController:
                 unsigned["evaluator_signature"] = f"{key_id}:{sig_hex}"
             else:
                 unsigned["evaluator_signature"] = "not-required"
-            unsigned["operator_authorization"] = (
-                "operator_token_sha256:" + self._token_digest
+            unsigned["operator_authorization"] = self._authorize_operator(
+                unsigned, operator_signer, operator_token
             )
             unsigned["new_qualified_head"] = None  # filled after record update
 
@@ -200,6 +202,27 @@ class PromotionController:
                         problems.append(f"chain_conflict_at_{position}")
                     prior = hashlib.sha256(line).hexdigest()
         return {"ok": not problems, "entries": count, "head": prior, "problems": problems}
+
+    def _authorize_operator(
+        self,
+        unsigned: dict,
+        operator_signer: Callable[[bytes], tuple[str, str]] | None,
+        operator_token: str | None,
+    ) -> str:
+        """Authorize via operator Ed25519 signature, else shared token digest."""
+        payload = _SIGNATURE_DOMAIN + canonical_json(unsigned)
+        if operator_signer is not None:
+            key_id, sig_hex = operator_signer(payload)
+            trusted = self._operator_keys.get(key_id)
+            if trusted is None or not signatures.verify(
+                bytes.fromhex(sig_hex), payload, bytes.fromhex(trusted)
+            ):
+                raise PromotionRejected("operator_signature_invalid")
+            return f"ed25519:{key_id}:{sig_hex}"
+        if operator_token is not None and self._token_digest is not None:
+            if hashlib.sha256(operator_token.encode()).hexdigest() == self._token_digest:
+                return "operator_token_sha256:" + self._token_digest
+        raise PromotionRejected("operator_authorization_failed")
 
     def _verify_receipts(self, digests: tuple[str, ...]) -> list[OutcomeReceiptV1]:
         receipts = []

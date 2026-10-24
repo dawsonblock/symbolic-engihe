@@ -1,6 +1,10 @@
 # SIS3-013 qualification report — gate status
 
-Date: 2026-10-23/24. Suite: 526 tests, 0 failures, 2 skips (run under `-W error`).
+Date: 2026-10-23/24. Suite (at SIS3-013): 526 tests, 0 failures, 2 skips.
+Current (v3.1.0–v4.0.0 line): **600 passed, 6 skipped**; live Codex SDK
+tests and the live efficacy experiment run separately under
+`SIS3_LIVE_CODEX=1` (4/4 adapter tests + 1 experiment passed against the
+real backend).
 
 Repair pass landed: `cryptography` Ed25519 backend preferred (vendored
 fallback kept wire-identical), per-principal operator signatures for

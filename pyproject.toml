@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "symbolic-induction-engine"
-version = "2.4.0"
+version = "4.0.0"
 description = "Model-independent, bounded symbolic rule induction with evidence-gated persistence"
 readme = "README.md"
 requires-python = ">=3.10"

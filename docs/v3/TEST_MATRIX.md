@@ -34,7 +34,14 @@ regenerated during development.
 | Promotion (SIS3-011) | Not present in baseline | Full lifecycle; operator token + evaluator signature for evidence transitions; chained decision log; checkpoint/restore |
 | Anchors (audit) | head export only | AnchorChain in separate-custody dir; grew/corrupt/missing divergence detection |
 | Benchmark (SIS3-012) | Not present in baseline | Paired A/B/C/D harness, fresh workspaces, independent scoring, wins/losses/ties; Wilson CI95 per arm + exact McNemar p per pair |
-| Release artifact (SIS3-101/102) | SOURCE manifest Git-pinned only | `RELEASE_SHA256.json` (220 files) + ZIP-native `verify()` (streaming, no extraction) + `verify_tree` on fresh extraction; tamper/extra/missing/duplicate/symlink/manifest-self-coverage rejected; `close()`/ctx-manager on all SQLite owners |
+| Release artifact (SIS3-101/102) | SOURCE manifest Git-pinned only | `RELEASE_SHA256.json` (229 files) + deterministic `build_zip` (byte-identical rebuilds) + ZIP-native `verify()` + `verify_tree`; tamper/extra/missing/duplicate/symlink/manifest-self-coverage rejected; `--attest` provenance record |
+| Authoritative promotion (v3.1.1) | `allow_qualified` code bypass | Governed status only via signed decisions + `backing_decision` binding; intent-journal atomic commit w/ crash recovery; `EligibilitySnapshot` sole serving authority |
+| Policy-gated serving (v3.2.0) | Raw `record.status` reads | Snapshot rebuilt per request; `ScopeGrantV1` signed repo/family/cross-repo grants; wrong-repo and revoked-evidence abstention; kill switch → `catalog_unavailable` |
+| Outcome replay (v3.2.1) | Pure `verify_envelope` | `verify_and_consume` durable nonce ledger; spent envelopes cannot back second promotions; restart-surviving |
+| Semantic checks closure (v3.2.1) | Same-class swaps presumed safe | AST flags every operator substitution/operand reorder/structural change; `a+b→a*b` now a violation |
+| Live Codex adapter (v3.3.0) | Undocumented API risk | `openai-codex==0.163.0` public SDK; bounded `ObservationEventV1` envelopes; `SIS3_LIVE_CODEX=1` live suite 4/4 vs real backend |
+| Typed repair induction (v3.4.0) | Generic workflow-text mining | `RepairHypothesisV1` AST templates + typed metavariables; mine→qualify→transfer across disjoint repos; counterexample contract failure → abstain |
+| Held-out efficacy (v4.0.0) | Scripted agents only | Live Codex A-vs-D on 3 disjoint held-out repos + control: 1 win/0 losses/2 ties — directional, underpowered (`TRANSFER_EXPERIMENT.md`) |
 | Episode projection (SIS3-122) | Not present in baseline | Deterministic replay projection; `agent_view` excludes evaluator payloads and artifact bytes |
 | OutcomeEnvelopeV2 (SIS3-131) | V1 receipts only | Attempt/env/exec-receipt binding, nonce + expiry, pinned key registry w/ validity windows, revocation + replay rejected; V1 serialization unchanged |
 | Semantic checks (SIS3-141) | Text-level negative transfer only | AST operator-class diff; noncommutative↔commutative swaps flagged (`remaining_balance` class protected); counterexample index surfaces corpus negatives |

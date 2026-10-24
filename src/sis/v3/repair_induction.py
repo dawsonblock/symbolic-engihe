@@ -107,7 +107,10 @@ def _diff_operators(
                 metavars[id(before.right)] = f"expr:rhs"
                 metavars[id(after.right)] = f"expr:rhs"
                 return "operator_substitution"
-            return "generic_strategy"
+            raise InductionError(
+                "no_typed_difference",
+                "before/after expressions are identical; nothing was repaired",
+            )
         if ast.dump(before.left) == ast.dump(after.right) and \
                 ast.dump(before.right) == ast.dump(after.left) and \
                 type(before.op) is type(after.op):

@@ -40,3 +40,37 @@ store now exist as additive `sis.v3` modules; none of them are wired into the
 v2 service, HTTP server, or SQLite schema. Qualified retrieval, promotion, and
 any production wiring still require their own milestone, API compatibility
 review, security tests, and independent evidence.
+
+## v3.1.1 → v4.0.0 migration notes
+
+**Breaking (v3.1.1):** `ProcedureStore.add()` accepts only `draft` /
+`candidate`. All governed statuses (`evaluated`, `qualified`,
+`suspended`, `cross_repository`) are minted exclusively by
+`PromotionController.transition()` with a signed decision; the
+`allow_qualified` keyword is gone. Any fixture or caller that wrote
+qualified state directly must move to the signed transition path (see
+`tests/v3/support.py` `FixtureAuthority.qualify`).
+
+**Breaking (v3.2.0):** serving no longer reads `record.status`.
+Retrieval/guidance/gateway consume an `EligibilitySnapshot` built from
+replayed decisions; callers supply a snapshot provider (and optionally a
+revocation provider + repo resolver). `Catalog.set_scope` is removed —
+scopes change via signed `ScopeGrantV1` decisions.
+
+**Breaking (v3.2.1):** promotion now requires `verify_and_consume` —
+envelopes are single-use; a spent nonce fails with `replayed_nonce`.
+Tests must mint a fresh envelope per transition.
+
+**Additive (v3.3.0):** `sis.v3.adapters.codex` is optional; install the
+`codex` extra (`openai-codex==0.163.0`). Live tests are gated by
+`SIS3_LIVE_CODEX=1` and skip by default.
+
+**Additive (v3.4.0):** `RepairHypothesisV1` contract record +
+`sis.v3.repair_induction` module. Hypotheses are mined only from
+independently `pass`ed episodes, enter governance as `candidate`
+`ProcedureRecordV1` projections, and typed transformations carry a
+mandatory `semantic_contract_digest`. No persisted schema changed.
+
+**Behavioral (v3.1.2):** benchmark "solved" means independently
+verified pass; wall usage is recorded as fixed-precision strings;
+arm order is seedable. Report consumers must read the new fields.

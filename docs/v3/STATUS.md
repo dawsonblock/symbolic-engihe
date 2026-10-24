@@ -602,3 +602,20 @@ observed_outcomes:
 remaining_unknowns:
   - "efficacy gate remains OPEN until the preregistered repo-disjoint study runs"
 ```
+
+## v3.1-alpha — executable study runner + end-to-end loop validation
+
+```yaml
+phase_id: v31-study-runner-e2e
+tickets: [M6-runner, e2e]
+status: implemented_and_tested
+changed_files:
+  - tools/run_paired_study.py    # NEW: preregistered study entry point
+  - tests/v3/test_e2e_loop.py    # NEW: 2 tests — capture→induce→promote→grant→serve
+observed_outcomes:
+  - "Full suite: 661 passed, 2 skipped"
+  - "e2e test drives a learned strategy candidate through real signed promotion, a committed cross-repo grant, and StrictGuidanceGateway serving — decision=recommend"
+  - "run_paired_study.py enforces repo disjointness, hard budgets, and the preregistered D-vs-A decision rule; exits 0 only on PASS"
+remaining_unknowns:
+  - "the study has still not been executed against live Codex — efficacy gate OPEN"
+```

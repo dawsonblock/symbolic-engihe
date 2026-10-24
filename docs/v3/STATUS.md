@@ -619,3 +619,22 @@ observed_outcomes:
 remaining_unknowns:
   - "the study has still not been executed against live Codex — efficacy gate OPEN"
 ```
+
+## v3.1-alpha — live study attempt #1 (authenticated Codex, M6)
+
+```yaml
+phase_id: v31-live-study-1
+tickets: [M6-live]
+status: executed_gate_not_met
+changed_files:
+  - tools/live_study.py  # NEW: self-contained live paired study
+observed_outcomes:
+  - "authenticated codex exec (ChatGPT login) ran all 8 arm executions (2 tasks x 4 arms), 16-35s each, zero errors, zero budget violations"
+  - "arm D received real gateway-served guidance (signed promotion + committed cross-repo grant); grading was evaluator-private pytest injected at evaluation time"
+  - "result: A=2/2, B=2/2, C=2/2, D=2/2 -> solved_delta=0, mcnemar_p=1.0 -> efficacy gate NOT MET"
+  - "corpus had a ceiling effect: trivial one-line bugs are solved by baseline Codex unaided; n=2 is also far below McNemar power (need >=6 all-discordant pairs for p<=0.05)"
+  - "debugging found the runner PATH resolves python3 to the Xcode stub without pytest; verifier argv must use sys.executable"
+remaining_unknowns:
+  - "efficacy gate remains OPEN: needs a harder held-out corpus where baseline Codex actually fails, and >=8 tasks for statistical power"
+  - "run_paired_study.py spec runner lacks verifier wiring (superseded by live_study.py for now)"
+```

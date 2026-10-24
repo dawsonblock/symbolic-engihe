@@ -1,9 +1,10 @@
 """Production-oriented fail-closed guidance boundary.
 
-Legacy GuidanceGateway accepts a ProcedureStore and is retained for fixture
-compatibility. Production code should use StrictGuidanceGateway, which makes
-verified promotion decisions necessary and refuses cross-namespace retrieval
-without an independently supplied signed-grant predicate.
+The legacy phase-gated gateway moved to ``sis.v3.compat.guidance_gateway``
+for fixture compatibility. Production code uses ``StrictGuidanceGateway``
+over an ``AuthorityDB`` transactional store: verified promotion decisions are
+necessary for any qualified record to exist at all, and cross-namespace
+retrieval requires an independently supplied signed-grant predicate.
 """
 from __future__ import annotations
 
@@ -12,9 +13,9 @@ import os
 from pathlib import Path
 
 from .authority import AuthorizedCatalogView, AuthorityError
+from .authority_db import AuthorityDB
 from .contracts import GuidanceRequestV1, GuidanceV1, canonical_digest
 from .guidance import _abstain, sis_recommend
-from .procedures import ProcedureStore
 from .promotion import PromotionController
 from .catalog import Catalog
 
@@ -44,7 +45,7 @@ class StrictGuidanceGateway:
     Without it, only explicit repo-local ownership matches are allowed.
     """
 
-    def __init__(self, store: ProcedureStore, authority: PromotionController,
+    def __init__(self, store: AuthorityDB, authority: PromotionController,
                  *, catalog: Catalog | None = None,
                  procedure_owners: dict[str, str] | None = None,
                  namespace_authorizer: Callable[[object, str, str], bool] | None = None,

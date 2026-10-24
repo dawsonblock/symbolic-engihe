@@ -60,28 +60,26 @@ class ProcedureStoreTests(unittest.TestCase):
         with self.assertRaises(ProcedureConflict):
             self.store.add(conflicting)
 
-    def test_new_revision_appends(self):
+    def test_successor_revision_requires_authority(self):
+        """Revision >1 and decision-managed statuses are authority-only writes."""
         self.store.add(_record())
-        nxt = replace(_record(), revision=2, status="evaluated")
-        self.store.add(nxt)
-        self.assertEqual(self.store.get("proc-a").status, "evaluated")
-        self.assertEqual(self.store.get("proc-a", 1).status, "candidate")
-
-    def test_replace_requires_increment(self):
-        self.store.add(_record(revision=2))
-        with self.assertRaises(ProcedureConflict):
-            self.store.replace_record(replace(_record(), revision=2))
-        self.store.replace_record(replace(_record(), revision=3))
+        nxt = replace(_record(), revision=2)  # still "candidate" status
+        with self.assertRaisesRegex(ProcedureConflict, "seed_revision_must_be_one"):
+            self.store.add(nxt)
+        for status in ("evaluated", "qualified", "suspended", "retired"):
+            with self.assertRaisesRegex(
+                    ProcedureConflict, "status_write_requires_committed_decision"):
+                self.store.add(replace(_record(pid="proc-x"), status=status))
 
     def test_persistence_and_verify(self):
         self.store.add(_record())
-        self.store.add(replace(_record(), revision=2, status="qualified"),
-                       allow_qualified=True)
+        self.store.add(_record(pid="proc-b", status="draft"))
         reloaded = ProcedureStore(self.store.root)
-        self.assertEqual(reloaded.get("proc-a").status, "qualified")
+        self.assertEqual(reloaded.get("proc-a").status, "candidate")
+        self.assertEqual(reloaded.get("proc-b").status, "draft")
         self.assertTrue(reloaded.verify()["ok"])
         self.assertEqual(
-            self.store.qualified_head_digest(), reloaded.qualified_head_digest()
+            self.store.catalog_digest(), reloaded.catalog_digest()
         )
 
     def test_tampered_log_detected(self):

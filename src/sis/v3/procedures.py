@@ -50,7 +50,15 @@ def _utcnow() -> str:
 
 
 class ProcedureStore:
-    """Append-only catalog of procedure revisions keyed by content digest."""
+    """Append-only intake catalog of procedure revisions keyed by digest.
+
+    As of the authority-recovery hardening this store is a *candidate intake
+    repository*, not a source of qualified state: ``add`` accepts only
+    revision-1 ``draft``/``candidate`` records. Qualified eligibility exists
+    only inside ``sis.v3.authority_db.AuthorityDB`` via committed signed
+    promotion decisions; serving layers must read through
+    ``AuthorizedCatalogView`` over the authority store.
+    """
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -62,17 +70,22 @@ class ProcedureStore:
         self._lock = threading.Lock()
         self._load()
 
-    def add(self, record: ProcedureRecordV1 | Mapping, *, allow_qualified: bool = False) -> str:
-        """Append a revision; idempotent on identical content.
+    def add(self, record: ProcedureRecordV1 | Mapping) -> str:
+        """Append a new seed revision; idempotent on identical content.
 
-        ``status == "qualified"`` requires ``allow_qualified`` — only the
-        promotion controller and explicit test fixtures may seed qualified
-        state; a bare add must never mint qualified records.
+        This intake interface only accepts revision-1 ``draft``/``candidate``
+        records. Decision-managed statuses (``evaluated``, ``qualified``,
+        ``suspended``, ``retired``) and successor revisions are materialized
+        exclusively by the authority service through a committed signed
+        decision — there is no flag, role string, or caller attestation that
+        can make a direct write qualified.
         """
         if not isinstance(record, ProcedureRecordV1):
             record = ProcedureRecordV1.from_dict(record)
-        if record.status == "qualified" and not allow_qualified:
-            raise ProcedureConflict("qualified_write_requires_decision")
+        if record.status not in {"draft", "candidate"}:
+            raise ProcedureConflict("status_write_requires_committed_decision")
+        if record.revision != 1:
+            raise ProcedureConflict("seed_revision_must_be_one")
         with self._lock:
             key = (record.procedure_id, record.revision)
             existing = self._digests.get(key)
@@ -123,12 +136,7 @@ class ProcedureStore:
             "head": sorted(rec.digest for rec in self.by_status("qualified")),
         })
 
-    def replace_record(self, record: ProcedureRecordV1) -> str:
-        """Append a new revision (status change); revision must increment."""
-        latest = self._records.get(record.procedure_id)
-        if latest is not None and record.revision <= max(latest):
-            raise ProcedureConflict("revision must strictly increase")
-        return self.add(record)
+
 
     def verify(self) -> dict:
         """Replay the log; every line's record digest and chain must hold."""

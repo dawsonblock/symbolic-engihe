@@ -6,21 +6,21 @@ import unittest
 from pathlib import Path
 
 from sis.v3 import signatures
+from sis.v3.authority_db import AuthorityDB
 from sis.v3.benchmark import mcnemar_p, wilson_ci
 from sis.v3.catalog import Catalog, CatalogError
+from sis.v3.compat.guidance_gateway import GuidanceGateway
 from sis.v3.contracts import (
     ContractError, ObservationEventV1, OutcomeEnvelopeV2, canonical_digest,
 )
 from sis.v3.counterexamples import CounterexampleIndex
 from sis.v3.episode_projection import agent_view, project_episode
 from sis.v3.episode_store import EpisodeStore
-from sis.v3.guidance_gateway import GuidanceGateway
 from sis.v3.outcome_v2 import (
     EnvelopeRejected, TrustedKey, TrustedKeyRegistry, issue_envelope,
     verify_envelope,
 )
 from sis.v3.policy import AuthorizationDenied
-from sis.v3.procedures import ProcedureStore
 from sis.v3.promotion import PromotionController, operator_token_digest
 from sis.v3.retrieval import AblationFlags, retrieve
 from sis.v3.semantic_checks import (
@@ -214,12 +214,30 @@ class CatalogTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.store = ProcedureStore(self.root / "catalog")
-        self.catalog = Catalog(self.store, self.root / "scopes.json")
+        self.db = AuthorityDB(self.root / "authority.db")
+        self.addCleanup(self.db.close)
+        self.catalog = Catalog(self.db, self.root / "scopes.json")
+
+    def _qualified(self, *records):
+        """Drive records to qualified through real signed decisions."""
+        from tests.v3.authority_testkit import (
+            drive, evaluator_keypair, seed as seed_record, signed_receipt,
+        )
+        seed_bytes, pub, key_id = evaluator_keypair()
+        controller = PromotionController(
+            self.db, operator_token_digest=operator_token_digest(TOKEN),
+            trusted_evaluator_keys={key_id: pub.hex()})
+        receipt = signed_receipt(seed_bytes, key_id)
+        controller._resolve_receipt = {receipt.digest: receipt}.__getitem__
+        for rec in records:
+            seed_record(self.db, rec)
+            drive(self.db, controller, rec.procedure_id, rec.status,
+                  token=TOKEN, seed=seed_bytes, key_id=key_id,
+                  receipts=[receipt])
+        return controller
 
     def test_scope_roundtrip_and_filtering(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
-        self.store.add(_proc(pid="p2"), allow_qualified=True)
+        self._qualified(_proc(pid="p1"), _proc(pid="p2"))
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.catalog.set_scope("p2", "cross_repository", actor_role="operator")
         self.assertEqual(self.catalog.scope_of("p1"), "family")
@@ -227,11 +245,11 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(
             {r.procedure_id for r in self.catalog.procedures(scope="family")},
             {"p1"})
-        fresh = Catalog(self.store, self.root / "scopes.json")
+        fresh = Catalog(self.db, self.root / "scopes.json")
         self.assertEqual(fresh.scope_of("p1"), "family")
 
     def test_scope_requires_operator_and_valid_scope(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
+        self._qualified(_proc(pid="p1"))
         with self.assertRaises(AuthorizationDenied):
             self.catalog.set_scope("p1", "family", actor_role="agent")
         with self.assertRaises(ContractError):
@@ -242,33 +260,28 @@ class CatalogTests(unittest.TestCase):
     def test_corrupt_scope_metadata_fails_closed(self):
         (self.root / "scopes.json").write_text("not-json")
         with self.assertRaises(CatalogError):
-            Catalog(self.store, self.root / "scopes.json")
+            Catalog(self.db, self.root / "scopes.json")
 
-    def test_cascade_suspend_rejects_unauthorized_qualified_seed(self):
-        """A role string cannot launder a fixture-seeded qualified procedure."""
+    def test_cascade_suspend_drives_signed_suspension_decisions(self):
+        """Cascade suspension only acts on decision-backed qualified records."""
         from dataclasses import replace
-        from sis.v3.promotion import PromotionRejected
         receipt = "b" * 64
-        self.store.add(replace(_proc(pid="p1"), evidence_refs=(receipt,)),
-                       allow_qualified=True)
-        self.store.add(_proc(pid="p2"), allow_qualified=True)
-        controller = PromotionController(
-            self.store, self.root / "decisions",
-            operator_token_digest=operator_token_digest(TOKEN),
-            trusted_evaluator_keys={},
+        controller = self._qualified(
+            replace(_proc(pid="p1"), evidence_refs=(receipt,)),
+            _proc(pid="p2"),
         )
-        with self.assertRaisesRegex(PromotionRejected, "authority_state_invalid"):
-            self.catalog.cascade_suspend(
-                receipt,
-                lambda pid: controller.transition(
-                    pid, "suspended", actor_role="operator",
-                    actor_identity="op-1", operator_token=TOKEN).decision_id,
-            )
-        self.assertEqual(self.store.get("p1").status, "qualified")
-        self.assertFalse(controller.verify()["ok"])
+        self.catalog.cascade_suspend(
+            receipt,
+            lambda pid: controller.transition(
+                pid, "suspended", actor_role="operator",
+                actor_identity="op-1", operator_token=TOKEN).decision_id,
+        )
+        self.assertEqual(self.db.get("p1").status, "suspended")
+        self.assertEqual(self.db.get("p2").status, "qualified")
+        self.assertTrue(controller.verify()["ok"])
 
     def test_scoped_qualified_head_differs_from_global(self):
-        self.store.add(_proc(pid="p1"), allow_qualified=True)
+        self._qualified(_proc(pid="p1"))
         self.catalog.set_scope("p1", "family", actor_role="operator")
         self.assertNotEqual(
             self.catalog.qualified_head("family"),
@@ -276,6 +289,8 @@ class CatalogTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.TestCase):
+    """Legacy phase-gated gateway — compat/testing namespace only."""
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -1,30 +1,29 @@
 """Governed procedure lifecycle: draft→candidate→evaluated→qualified→suspended→retired (SIS3-011).
 
-Every transition is an append-only, hash-chained ``PromotionDecisionV1`` that
-requires operator authority (role gate + operator token digest) and, for the
-``evaluated → qualified`` step, at least one distinct verified outcome
-receipt plus an evaluator Ed25519 signature over the decision payload. Status
-changes mint a new immutable ``ProcedureRecordV1`` revision — history is never
-rewritten, and the qualified head is recomputed after each decision.
+Every transition produces a signed ``PromotionDecisionV2`` that requires
+operator authority (role gate + operator signature or token digest) and, for
+the ``evaluated``/``qualified`` edges, verified outcome receipts plus an
+evaluator Ed25519 signature over the decision payload.
+
+Persistence is a single transactional authority store
+(:class:`sis.v3.authority_db.AuthorityDB`): the verified decision and the
+materialized revision commit in one SQLite transaction — they become visible
+together or not at all. There is no journaled-then-materialized gap, no
+recovery replay that can mint state, and no second writable catalog. Chain
+heads are re-checked inside the write transaction, so a stale controller or
+concurrent writer is rejected atomically.
 """
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import secrets
 import threading
-from contextlib import contextmanager
 from collections.abc import Callable, Mapping
 from dataclasses import replace
-from pathlib import Path
-
-try:
-    import fcntl  # POSIX advisory process-wide writer lock
-except ImportError:  # pragma: no cover - Windows requires a single-writer service
-    fcntl = None
 
 from . import signatures
+from .authority_db import AuthorityDB, AuthorityError
 from .contracts import (
     ContractError,
     OutcomeReceiptV1,
@@ -33,10 +32,8 @@ from .contracts import (
     PromotionDecisionV2,
     canonical_digest,
     canonical_json,
-    loads_json,
 )
 from .policy import require_permission
-from .procedures import ProcedureStore
 from .verifier import (
     EvaluationRejected,
     ExpectedProtocol,
@@ -62,13 +59,84 @@ class PromotionRejected(RuntimeError):
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
+def verify_decision_v2(
+    decision: PromotionDecisionV2,
+    statuses: dict[str, str],
+    qualified: set[str],
+    *,
+    trusted: Mapping[str, str],
+    operator_keys: Mapping[str, str],
+    token_digest: str | None,
+) -> list[str]:
+    """Re-verify one V2 decision against replayed state.
+
+    Checks evaluator signature, operator authorization, transition legality,
+    status monotonicity and qualified-head arithmetic — the same checks the
+    controller ran live, recomputable over committed rows by the store or the
+    migration tool. ``statuses``/``qualified`` are mutated to include the
+    decision's effect.
+    """
+    problems: list[str] = []
+    base = decision.to_dict()
+    base.pop("evaluator_signature")
+    base.pop("operator_authorization")
+    body = _SIGNATURE_DOMAIN + canonical_json(base)
+    if decision.new_status in {"qualified", "evaluated"} and \
+            decision.evaluator_signature == "not-required":
+        problems.append("evaluator_signature_required")
+    elif decision.evaluator_signature != "not-required":
+        try:
+            key_id, sig_hex = decision.evaluator_signature.split(":", 1)
+            if key_id not in trusted or not signatures.verify(
+                bytes.fromhex(sig_hex), body, bytes.fromhex(trusted[key_id])
+            ):
+                problems.append("evaluator_signature_invalid")
+        except (ValueError, TypeError):
+            problems.append("evaluator_signature_malformed")
+    auth = decision.operator_authorization
+    if auth.startswith("ed25519:"):
+        try:
+            _, key_id, sig_hex = auth.split(":", 2)
+            signed = _SIGNATURE_DOMAIN + canonical_json(
+                {**base, "evaluator_signature": decision.evaluator_signature})
+            if key_id not in operator_keys or not signatures.verify(
+                bytes.fromhex(sig_hex), signed, bytes.fromhex(operator_keys[key_id])
+            ):
+                problems.append("operator_signature_invalid")
+        except (ValueError, TypeError):
+            problems.append("operator_authorization_malformed")
+    elif auth != f"operator_token_sha256:{token_digest}":
+        problems.append("operator_authorization_mismatch")
+    if decision.prior_status not in _TRANSITIONS or \
+            decision.new_status not in _TRANSITIONS[decision.prior_status]:
+        problems.append("illegal_transition")
+    if statuses.get(decision.candidate_digest, decision.prior_status) != decision.prior_status:
+        problems.append("nonmonotonic_status")
+    expected_old = canonical_digest(
+        "qualified_catalog", 1, {"head": sorted(qualified)})
+    if decision.old_qualified_head not in {expected_old, None}:
+        problems.append("old_head_mismatch")
+    if decision.prior_status == "qualified":
+        qualified.discard(decision.candidate_digest)
+    if decision.new_status == "qualified":
+        qualified.add(decision.new_record_digest)
+    expected_new = canonical_digest(
+        "qualified_catalog", 1, {"head": sorted(qualified)})
+    if decision.new_qualified_head is not None and \
+            decision.new_qualified_head != expected_new:
+        problems.append("new_head_mismatch")
+    statuses[decision.new_record_digest] = decision.new_status
+    statuses.pop(decision.candidate_digest, None)
+    return problems
+
+
 class PromotionController:
-    """Append-only decision log over a ``ProcedureStore``."""
+    """Signed-decision authority over an ``AuthorityDB`` transactional store."""
 
     def __init__(
         self,
-        store: ProcedureStore,
-        log_dir: str | Path,
+        store: AuthorityDB,
+        log_dir=None,
         *,
         operator_token_digest: str | None,
         trusted_evaluator_keys: Mapping[str, str],
@@ -80,6 +148,17 @@ class PromotionController:
         policy_version: str = "promotion-policy-v1",
         trusted_operator_keys: Mapping[str, str] | None = None,
     ) -> None:
+        if log_dir is not None:
+            raise ContractError(
+                "legacy JSONL decision journals are no longer a write target; "
+                "pass an AuthorityDB and use tools/migrate_authority.py to "
+                "import existing journals"
+            )
+        if not isinstance(store, AuthorityDB):
+            raise ContractError(
+                "PromotionController requires an AuthorityDB authority store; "
+                "bare ProcedureStore data is intake, never authority"
+            )
         if operator_token_digest is not None and not (
             isinstance(operator_token_digest, str)
             and re.fullmatch(r"[0-9a-f]{64}", operator_token_digest)
@@ -92,9 +171,6 @@ class PromotionController:
         if expected_protocol is not None and not isinstance(expected_protocol, ExpectedProtocol):
             raise ContractError("expected_protocol must be an ExpectedProtocol")
         self.store = store
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self._log = self.log_dir / "decisions.jsonl"
         self._token_digest = operator_token_digest
         self._operator_keys = dict(trusted_operator_keys or {})
         self._trusted = dict(trusted_evaluator_keys)
@@ -108,9 +184,8 @@ class PromotionController:
         self._decisions: list[PromotionDecisionV1 | PromotionDecisionV2] = []
         self._projected: dict[str, str] = {}  # record_digest -> decided status
         self._lock = threading.Lock()
-        self._writer_path = self.log_dir / "promotion.writer.lock"
-        with self._exclusive_writer():
-            self._load()
+        self.store._bind_authority(self)
+        self._load()
 
     def transition(
         self,
@@ -130,11 +205,12 @@ class PromotionController:
 
         The complete post-state — new record digest and expected qualified
         head — is computed *before* either signature, so both signatures bind
-        the exact committed outcome. ``expected_old_head`` is an
-        optimistic-concurrency guard against stale views.
+        the exact committed outcome. The decision and its materialized
+        revision commit in one database transaction; a stale head or forged
+        post-state aborts the whole transaction.
         """
         require_permission(actor_role, "promotion:approve")
-        with self._lock, self._exclusive_writer():
+        with self._lock:
             self._check_fresh_authority()
             record = self.store.get(procedure_id)
             if new_status not in _TRANSITIONS.get(record.status, frozenset()):
@@ -198,25 +274,22 @@ class PromotionController:
                 unsigned, operator_signer, operator_token
             )
 
-            # WRITE-AHEAD AUTHORITY: durably commit the fully signed decision
-            # before materializing its record. If the process crashes in the
-            # gap, guidance fails closed on drift and a fresh controller can
-            # replay the signed, digest-bound record deterministically.
             decision = PromotionDecisionV2.from_dict(unsigned)
-            line = canonical_json({
-                "decision": decision.to_dict(),
-                "decision_digest": decision.digest,
-                "prior_decision_digest": self._prior,
-            })
-            with open(self._log, "ab") as handle:
-                handle.write(line + b"\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            self._prior = hashlib.sha256(line).hexdigest()
+            try:
+                self.store.commit_transition(
+                    decision=decision,
+                    record=next_revision,
+                    expected_prior_decision_digest=self._prior,
+                    expected_new_qualified_head=expected_new_head,
+                    receipts=verified_receipts,
+                    authority=self,
+                )
+            except AuthorityError as exc:
+                raise PromotionRejected("authority_commit_failed", str(exc)) from exc
+            self._prior = decision.digest
             self._decisions.append(decision)
             self._projected.pop(decision.candidate_digest, None)
             self._projected[decision.new_record_digest] = decision.new_status
-            self.store.add(next_revision, allow_qualified=True)
             actual_head = self.store.qualified_head_digest()
             if actual_head != expected_new_head:
                 raise PromotionRejected(
@@ -225,40 +298,14 @@ class PromotionController:
                 )
             return decision
 
-    @contextmanager
-    def _exclusive_writer(self):
-        """Prevent two POSIX writers/recovery workers from interleaving fsyncs.
-
-        This is advisory, not a security boundary against hostile local
-        processes. Windows deployments require an external single-writer
-        authority service or equivalent OS lock.
-        """
-        if fcntl is None:
-            yield
-            return
-        fd = os.open(self._writer_path, os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
-
     def _check_fresh_authority(self) -> None:
         """Prevent writes from a stale in-memory controller or damaged state.
 
-        This is an optimistic guard; exclusive multi-process writers must
-        additionally use an OS-level lock or a single-writer service.
+        The committed chain head is re-read and fully re-verified before every
+        transition; the commit transaction then rechecks the head under the
+        write lock, so a concurrent commit can never slip through this gap.
         """
-        if self._log.exists():
-            raw = self._log.read_bytes()
-            if not raw.endswith(b"\n"):
-                raise PromotionRejected("incomplete_decision_tail")
-            last = raw.splitlines()[-1] if raw else None
-            disk_head = hashlib.sha256(last).hexdigest() if last else None
-        else:
-            disk_head = None
-        if disk_head != self._prior or self.store.verify()["head"] != self.store._prior:
+        if self.store.decision_head() != self._prior:
             raise PromotionRejected("stale_controller")
         result = self.verify()
         if not result["ok"]:
@@ -275,110 +322,48 @@ class PromotionController:
         return dict(self._projected)
 
     def verify(self, *, check_projection: bool = True) -> dict:
-        """Replay journal: signatures, authorization, head continuity and store state."""
-        problems: list[str] = []
-        qualified: set[str] = set()
+        """Replay committed decisions: signatures, chain continuity, projection."""
+        structural = self.store.verify()
+        problems: list[str] = list(structural["problems"])
+        if problems:
+            # Structural corruption (digests, chain links, undecodable rows,
+            # unauthorized revisions) means nothing downstream can be trusted;
+            # replaying parsed decisions over it would itself be unsafe.
+            return {"ok": False, "entries": structural.get("entries", 0),
+                    "legacy_v1": 0, "head": structural.get("head"),
+                    "problems": problems}
         statuses: dict[str, str] = {}
-        legacy = 0
-        prior: str | None = None
+        qualified: set[str] = set()
         count = 0
-        if self._log.exists():
-            with open(self._log, "rb") as handle:
-                for position, raw in enumerate(handle):
-                    count += 1
-                    line = raw.rstrip(b"\n")
-                    try:
-                        entry = loads_json(line)
-                        decision = self._decode_decision(entry["decision"])
-                        if decision.digest != entry["decision_digest"]:
-                            problems.append(f"decision_digest_mismatch_at_{position}")
-                    except (ContractError, KeyError, TypeError):
-                        problems.append(f"undecodable_decision_at_{position}")
-                        continue
-                    if entry.get("prior_decision_digest") != prior:
-                        problems.append(f"chain_conflict_at_{position}")
-                    if isinstance(decision, PromotionDecisionV1):
-                        legacy += 1  # legacy entries: chain/digest verified only
-                    else:
-                        problems.extend(
-                            p + f"_at_{position}" for p in self._verify_v2(
-                                decision, statuses, qualified))
-                    prior = hashlib.sha256(line).hexdigest()
+        legacy = 0
+        head: str | None = None
+        for decision in self.store.decisions():
+            count += 1
+            head = decision.digest
+            if isinstance(decision, PromotionDecisionV1):
+                legacy += 1  # legacy entries: structural checks only
+            else:
+                problems.extend(
+                    p + f"_at_{count - 1}" for p in verify_decision_v2(
+                        decision, statuses, qualified,
+                        trusted=self._trusted,
+                        operator_keys=self._operator_keys,
+                        token_digest=self._token_digest,
+                    )
+                )
         if not problems and check_projection:
             problems.extend(self._projection_drift(qualified, statuses))
         return {"ok": not problems, "entries": count, "legacy_v1": legacy,
-                "head": prior, "problems": problems}
-
-    @staticmethod
-    def _decode_decision(body):
-        if isinstance(body, Mapping) and "new_record_digest" in body:
-            return PromotionDecisionV2.from_dict(body)
-        return PromotionDecisionV1.from_dict(body)
-
-    def _verify_v2(self, decision, statuses, qualified) -> list[str]:
-        """Check one V2 decision against replayed state and signatures."""
-        problems: list[str] = []
-        base = decision.to_dict()
-        base.pop("evaluator_signature")
-        base.pop("operator_authorization")
-        body = _SIGNATURE_DOMAIN + canonical_json(base)
-        if decision.new_status in {"qualified", "evaluated"} and \
-                decision.evaluator_signature == "not-required":
-            problems.append("evaluator_signature_required")
-        elif decision.evaluator_signature != "not-required":
-            try:
-                key_id, sig_hex = decision.evaluator_signature.split(":", 1)
-                if key_id not in self._trusted or not signatures.verify(
-                    bytes.fromhex(sig_hex), body, bytes.fromhex(self._trusted[key_id])
-                ):
-                    problems.append("evaluator_signature_invalid")
-            except (ValueError, TypeError):
-                problems.append("evaluator_signature_malformed")
-        auth = decision.operator_authorization
-        if auth.startswith("ed25519:"):
-            try:
-                _, key_id, sig_hex = auth.split(":", 2)
-                signed = _SIGNATURE_DOMAIN + canonical_json(
-                    {**base, "evaluator_signature": decision.evaluator_signature})
-                if key_id not in self._operator_keys or not signatures.verify(
-                    bytes.fromhex(sig_hex), signed, bytes.fromhex(self._operator_keys[key_id])
-                ):
-                    problems.append("operator_signature_invalid")
-            except (ValueError, TypeError):
-                problems.append("operator_authorization_malformed")
-        elif auth != f"operator_token_sha256:{self._token_digest}":
-            problems.append("operator_authorization_mismatch")
-        if decision.prior_status not in _TRANSITIONS or \
-                decision.new_status not in _TRANSITIONS[decision.prior_status]:
-            problems.append("illegal_transition")
-        if statuses.get(decision.candidate_digest, decision.prior_status) != decision.prior_status:
-            problems.append("nonmonotonic_status")
-        expected_old = canonical_digest(
-            "qualified_catalog", 1, {"head": sorted(qualified)})
-        if decision.old_qualified_head not in {expected_old, None}:
-            problems.append("old_head_mismatch")
-        if decision.prior_status == "qualified":
-            qualified.discard(decision.candidate_digest)
-        if decision.new_status == "qualified":
-            qualified.add(decision.new_record_digest)
-        expected_new = canonical_digest(
-            "qualified_catalog", 1, {"head": sorted(qualified)})
-        if decision.new_qualified_head is not None and \
-                decision.new_qualified_head != expected_new:
-            problems.append("new_head_mismatch")
-        statuses[decision.new_record_digest] = decision.new_status
-        statuses.pop(decision.candidate_digest, None)
-        return problems
+                "head": head, "problems": problems}
 
     def _projection_drift(self, qualified, statuses) -> list[str]:
-        """Report store/catalog state the ledger cannot account for."""
+        """Report committed catalog state the decisions cannot account for."""
         problems: list[str] = []
         projected_q = {r.digest for r in self.store.by_status("qualified")}
         if projected_q != qualified:
             problems.append("qualified_projection_drift")
-        # Every committed decision must have materialized its new record.
-        # This is necessary even for non-qualified transitions; otherwise a
-        # crash between the journal and catalog fsyncs can go undetected.
+        # Every committed decision must have materialized its new record —
+        # atomic commits make this a tamper/corruption check, not crash repair.
         latest = {r.digest: r.status for r in self.store.all_latest()}
         for digest, status in statuses.items():
             if latest.get(digest) != status:
@@ -458,100 +443,18 @@ class PromotionController:
             )
 
     def _load(self) -> None:
-        if not self._log.exists():
-            return
-        raw = self._log.read_bytes()
-        lines = raw.splitlines()
-        # Crash-tail repair applies ONLY to a non-newline-terminated write.
-        # A malformed newline-terminated final record is tampering/corruption,
-        # not an interrupted write and must fail closed.
-        # If EVERY line is undecodable that is corruption, not a torn write —
-        # never truncate the whole ledger away.
-        if raw.endswith(b"\n"):
-            try:
-                loads_json(lines[-1].rstrip(b"\n"))
-            except ContractError as exc:
-                raise PromotionRejected("decision_log_corrupt", "terminated invalid record") from exc
-        else:
-            try:
-                loads_json(lines[-1].rstrip(b"\n"))
-            except ContractError:
-                lines.pop()
-        if not lines:
-            raise PromotionRejected("decision_log_corrupt", "no valid entries")
-        if len(lines) < len(raw.splitlines()):
-            with open(self._log, "wb") as handle:
-                handle.write(b"".join(line.rstrip(b"\n") + b"\n" for line in lines))
-                handle.flush()
-                os.fsync(handle.fileno())
-        for position, line in enumerate(lines):
-            line = line.rstrip(b"\n")
-            try:
-                entry = loads_json(line)
-                decision = self._decode_decision(entry["decision"])
-            except (ContractError, KeyError, TypeError) as exc:
-                raise PromotionRejected(
-                    "decision_log_corrupt", f"line {position}"
-                ) from exc
-            if decision.digest != entry["decision_digest"]:
-                raise PromotionRejected(
-                    "decision_log_corrupt", f"digest at line {position}"
-                )
-            if entry["prior_decision_digest"] != self._prior:
-                raise PromotionRejected(
-                    "decision_log_corrupt", f"chain at line {position}"
-                )
+        """Populate controller state from committed decisions; fail closed."""
+        report = self.verify()
+        if not report["ok"]:
+            raise PromotionRejected(
+                "authority_state_invalid", ",".join(report["problems"][:8])
+            )
+        for decision in self.store.decisions():
             self._decisions.append(decision)
             if isinstance(decision, PromotionDecisionV2):
                 self._projected.pop(decision.candidate_digest, None)
                 self._projected[decision.new_record_digest] = decision.new_status
-            self._prior = hashlib.sha256(line).hexdigest()
-        # Never replay an unauthenticated or structurally corrupt decision.
-        # Projection drift is expected after a crash between the two fsyncs.
-        preflight = self.verify(check_projection=False)
-        if not preflight["ok"]:
-            raise PromotionRejected("decision_log_corrupt", ",".join(preflight["problems"][:8]))
-        self._recover_materialization()
-        after = self.verify()
-        if not after["ok"]:
-            raise PromotionRejected("authority_recovery_failed", ",".join(after["problems"][:8]))
-
-    def _recover_materialization(self) -> None:
-        """Redo signed write-ahead transitions missing from the store.
-
-        A decision can only construct a record by replacing status/revision
-        on its exact digest-bound predecessor. Invalid or ambiguous history
-        is never automatically repaired.
-        """
-        from .procedures import ProcedureConflict, ProcedureStoreError
-        for decision in self._decisions:
-            if not isinstance(decision, PromotionDecisionV2):
-                continue
-            prior_record = next((r for versions in self.store._records.values()
-                                 for r in versions.values()
-                                 if r.digest == decision.candidate_digest), None)
-            new_record = next((r for versions in self.store._records.values()
-                               for r in versions.values()
-                               if r.digest == decision.new_record_digest), None)
-            if new_record is not None:
-                if (prior_record is None or new_record.procedure_id != prior_record.procedure_id
-                        or new_record.revision != prior_record.revision + 1
-                        or new_record.status != decision.new_status):
-                    raise PromotionRejected("recovery_record_mismatch")
-                continue
-            if prior_record is None:
-                raise PromotionRejected("recovery_predecessor_missing")
-            expected = replace(prior_record, revision=prior_record.revision + 1,
-                               status=decision.new_status)
-            if expected.digest != decision.new_record_digest:
-                raise PromotionRejected("recovery_digest_mismatch")
-            try:
-                latest = self.store.get(prior_record.procedure_id)
-                if latest.digest != prior_record.digest:
-                    raise PromotionRejected("recovery_conflicting_revision")
-                self.store.add(expected, allow_qualified=True)
-            except (ProcedureConflict, ProcedureStoreError) as exc:
-                raise PromotionRejected("authority_recovery_failed", str(exc)) from exc
+            self._prior = decision.digest
 
 
 def operator_token_digest(token: str) -> str:

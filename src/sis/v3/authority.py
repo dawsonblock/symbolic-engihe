@@ -1,7 +1,8 @@
 """Strict, decision-backed projection for security-sensitive guidance serving.
 
 Store records are *not* authority. This façade requires a fully verified
-promotion journal and exactly matching signed qualified decisions. Fail
+authority store — committed signed decisions and materialized revisions from
+one transactional ``AuthorityDB`` — plus exact projection agreement. Fail
 closed on drift, dangling writes, invalid signatures or missing controllers.
 """
 from __future__ import annotations

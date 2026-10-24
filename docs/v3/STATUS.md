@@ -373,3 +373,43 @@ remaining_unknowns:
   - "min_pass_receipts/min_distinct_repos are policy knobs; recommended pilot defaults (>=3 tasks, >=2 repos) are documented, not yet enforced as defaults"
 next_gate: "SIS-314 release attestation; then v3.2 governed artifact channel + typed AST repair procedures"
 ```
+
+## v3.1-alpha — authority transfer: transactional decision+revision store (PR-01/PR-02)
+
+```yaml
+phase_id: v31-authority-transfer
+tickets: [PR-01, PR-02]
+status: implemented_and_tested
+baseline: SIS-2026-10-24-FULL-UPGRADED-V2-Authority-Recovery.zip (sha256 f62ef2a500fe487cf17fb1b7d19862ab0eb686c411663b89d02011f310a7d077)
+changed_files:
+  - src/sis/v3/authority_db.py        # NEW: single SQLite WAL store — decision+revision commit in one transaction
+  - src/sis/v3/promotion.py           # PromotionController now persists via AuthorityDB.commit_transition; no JSONL journal
+  - src/sis/v3/procedures.py          # allow_qualified removed; intake accepts rev-1 draft/candidate only
+  - src/sis/v3/secure_guidance.py     # StrictGuidanceGateway typed over AuthorityDB
+  - src/sis/v3/authority.py           # AuthorizedCatalogView docstring updated (same strict projection contract)
+  - src/sis/v3/compat/guidance_gateway.py  # NEW: legacy GuidanceGateway moved to compat namespace (never production)
+  - src/sis/v3/guidance_gateway.py    # deprecation shim -> compat import
+  - tools/migrate_authority.py        # NEW: dry-run reconcile + quarantine + signed report + reversible cutover
+  - tests/v3/authority_testkit.py     # NEW: authenticated test factories (real signed receipts + real decisions)
+  - tests/v3/test_authority_db.py     # NEW: fault injection x8 steps, concurrency, restart, torn write, double promotion
+  - tests/v3/test_promotion.py        # migrated: SQL-level tamper tests replace JSONL journal tamper tests
+  - tests/v3/test_authority_recovery.py  # rewritten: atomic-commit semantics (zero partial state on fault)
+  - tests/v3/test_retrieval.py        # _store fixture now produces real promoted state via AuthorityDB
+  - tests/v3/test_roadmap_modules.py  # CatalogTests over AuthorityDB; gateway tests use compat namespace
+  - tests/v3/test_procedures.py       # add() contract updated; replace_record test removed
+  - tests/v3/test_upgrade_integrity_learning.py  # 3-layer I-1 test: write reject + verify + serve abstain
+tests_added: 16 (authority_db) + migrated suites
+observed_outcomes:
+  - "Full suite: 563 passed, 2 skipped"
+  - "allow_qualified bypass removed: no caller can mint qualified state; direct add(status!=draft/candidate) raises"
+  - "decision+revision visible atomically: fault injected at each of 8 commit steps leaves zero partial state"
+  - "4-process concurrent writers serialize; exactly one commits each edge; verify() stays clean"
+  - "stale controller (same or second handle) rejected via in-transaction head re-check"
+  - "restart preserves chain head + qualified head; corrupt page/decision row fails closed (no silent truncation)"
+  - "migration tool: dry-run reconcile quarantines unauthorized rev-1 fixture seeds; execute produces signed report"
+remaining_unknowns:
+  - "receipt_binding stores digest+task+repo only; full receipt custody stays in evaluator store"
+  - "backup/restore tested; power-fail mid-fsync relies on SQLite WAL semantics (platform dependent)"
+  - "scope_grant/revocation tables exist but policy integration is PR-03/PR-04"
+next_gate: "PR-03 verified scope grants + repository registry (G2)"
+```

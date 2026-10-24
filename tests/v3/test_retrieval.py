@@ -6,7 +6,6 @@ from pathlib import Path
 
 from sis.v3.contracts import ContractError, GuidanceRequestV1, ProcedureRecordV1
 from sis.v3.guidance import sis_recommend
-from sis.v3.procedures import ProcedureStore
 from sis.v3.retrieval import RetrievalContext, precondition_holds, retrieve
 
 D = "0" * 64
@@ -38,12 +37,13 @@ def _proc(pid="p1", status="qualified", pre=({"kind": "language_is", "value": "p
 
 
 def _store(*records, root=None):
-    store = ProcedureStore(root or Path(tempfile.mkdtemp()))
-    for rec in records:
-        # Test fixtures seed qualified state explicitly; production callers
-        # must go through a signed promotion decision instead.
-        store.add(rec, allow_qualified=True)
-    return store
+    """Build a real authority-backed catalog fixture.
+
+    Qualified state is produced only through signed promotion decisions
+    committed to an AuthorityDB — never by writing status fields directly.
+    """
+    from tests.v3.authority_testkit import authority_catalog
+    return authority_catalog(root or Path(tempfile.mkdtemp()), *records)
 
 
 class ExpiryRevocationTests(unittest.TestCase):
@@ -75,7 +75,9 @@ class ExpiryRevocationTests(unittest.TestCase):
         record = _proc()
         store = _store(record)
         self.assertEqual(len(retrieve(self.request, store).candidates), 1)
-        result = retrieve(self.request, store, revoked={record.digest})
+        # Revocation targets the live qualified revision's digest.
+        live = store.get("p1")
+        result = retrieve(self.request, store, revoked={live.digest})
         self.assertEqual(result.candidates, ())
         self.assertEqual(result.rejections[0].reason_code, "revoked")
 
@@ -91,7 +93,7 @@ class ExpiryRevocationTests(unittest.TestCase):
         store = _store(record)
         served = sis_recommend(self.request, store)
         self.assertEqual(served.decision, "recommend")
-        denied = sis_recommend(self.request, store, revoked={record.digest})
+        denied = sis_recommend(self.request, store, revoked={store.get("p1").digest})
         self.assertEqual(denied.decision, "abstain")
         self.assertEqual(denied.reason_code, "revoked")
 

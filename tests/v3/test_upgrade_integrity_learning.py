@@ -11,6 +11,7 @@ from sis.v3.learning import (EpisodeEvidence, induce_strategies,
 from sis.v3.nonce_store import NonceAlreadyConsumed, OutcomeNonceStore
 from sis.v3.outcome_v2 import TrustedKey, TrustedKeyRegistry, issue_envelope
 from sis.v3.verifier import EvaluatorKeyStore
+from sis.v3.authority_db import AuthorityDB, AuthorityConflict
 from sis.v3.procedures import ProcedureStore
 from sis.v3.promotion import PromotionController
 from sis.v3.secure_guidance import StrictGuidanceGateway
@@ -79,16 +80,33 @@ def test_nonce_admission_survives_reopen_and_rejects_replay(tmp_path):
 
 
 def test_strict_gateway_rejects_direct_qualified_catalog_seeding(tmp_path):
-    store = ProcedureStore(tmp_path / "catalog")
-    rec = _proc(pid="rogue")
-    store.add(rec, allow_qualified=True)  # legacy bypass simulation
-    controller = PromotionController(store, tmp_path / "decisions",
-                                     operator_token_digest=None,
+    """Three layers of the I-1 invariant: write-time rejection, fail-closed
+    verification of injected rows, and abstention at the serving boundary."""
+    db = AuthorityDB(tmp_path / "authority.db")
+    rec = _proc(pid="rogue")  # fixture record carries status="qualified"
+    # Layer 1: the intake interface cannot mint qualified state at all.
+    with pytest.raises(AuthorityConflict, match="status_write_requires_committed_decision"):
+        db.add_seed(rec)
+    # Layer 2: a legacy JSONL catalog rejects it the same way.
+    with pytest.raises(Exception, match="status_write_requires_committed_decision"):
+        ProcedureStore(tmp_path / "catalog").add(rec)
+    # Layer 3: raw-file injection past the API still cannot serve — the
+    # unauthorized revision fails verification and the live gateway abstains.
+    controller = PromotionController(db, operator_token_digest=None,
                                      trusted_evaluator_keys={})
-    gateway = StrictGuidanceGateway(store, controller, procedure_owners={"rogue": "repo-a"})
+    gateway = StrictGuidanceGateway(db, controller, procedure_owners={"rogue": "repo-a"})
+    con = db._conn()
+    con.execute(
+        "INSERT INTO procedure_revision"
+        " (procedure_id, revision, record_digest, status, record_json, committed_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        ("rogue", 1, rec.digest, "qualified",
+         rec.canonical_bytes().decode("utf-8"), "2026-01-01T00:00:00Z"))
+    assert not db.verify()["ok"]
     response = gateway.recommend(_request(), repository_id="repo-a")
     assert response.decision == "abstain"
     assert response.reason_code == "catalog_unavailable"
+    db.close()
 
 
 def test_trusted_promotion_can_be_served_by_strict_gateway(tmp_path):
@@ -101,8 +119,8 @@ def test_trusted_promotion_can_be_served_by_strict_gateway(tmp_path):
     import sys
     import hashlib
 
-    store = ProcedureStore(tmp_path / "cat")
-    store.add(_proc(pid="p1", status="evaluated"))
+    store = AuthorityDB(tmp_path / "authority.db")
+    store.add_seed(_proc(pid="p1", status="draft"))
     seed, public = signatures.generate_keypair()
     kid = "key-" + hashlib.sha256(public).hexdigest()[:24]
     verifier = OutcomeVerifier(
@@ -121,11 +139,14 @@ def test_trusted_promotion_can_be_served_by_strict_gateway(tmp_path):
                           actor_id="agent", evaluator_task_ref="t")
     receipt = verifier.evaluate(actor_role="evaluator", task=task,
                                 submission_dir=root, evaluation_nonce="test-t-1")
-    controller = PromotionController(store, tmp_path / "promotion",
+    controller = PromotionController(store,
                                      operator_token_digest=operator_token_digest("0123456789abcdef"),
                                      trusted_evaluator_keys={kid: public.hex(),
                                                              verifier.keystore.key_id: verifier.keystore.public.hex()},
                                      receipt_resolver=verifier.load_receipt)
+    from tests.v3.authority_testkit import drive
+    drive(store, controller, "p1", "evaluated",
+          token="0123456789abcdef", seed=seed, key_id=kid, receipts=[receipt])
     controller.transition("p1", "qualified", actor_role="operator", actor_identity="operator-1",
                           operator_token="0123456789abcdef", receipt_digests=(receipt.digest,),
                           evaluator_signer=lambda body: (kid, signatures.sign(seed, body).hex()))
@@ -134,6 +155,13 @@ def test_trusted_promotion_can_be_served_by_strict_gateway(tmp_path):
     assert result.decision == "recommend"
     assert result.procedure_ids == ("p1",)
     assert gateway.recommend(_request(), repository_id="repo-2").decision == "abstain"
-    # A direct-store unauthorized qualification invalidates authority globally.
-    store.add(_proc(pid="rogue"), allow_qualified=True)
+    # A raw-injected unauthorized qualification invalidates authority globally.
+    rogue = _proc(pid="rogue")
+    store._conn().execute(
+        "INSERT INTO procedure_revision"
+        " (procedure_id, revision, record_digest, status, record_json, committed_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        ("rogue", 1, rogue.digest, "qualified",
+         rogue.canonical_bytes().decode("utf-8"), "2026-01-01T00:00:00Z"))
     assert gateway.recommend(_request(), repository_id="repo-1").reason_code == "catalog_unavailable"
+    store.close()

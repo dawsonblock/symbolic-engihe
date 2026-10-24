@@ -214,7 +214,7 @@
     "tests/v3/test_roadmap_modules.py": "942d2ba2f238d06524dd080cb50361a190ccb41e9d7a3dfb954649e3e66ec6e6",
     "tests/v3/test_runner_isolation.py": "7a30c53699c7c9b3e4d8f3440cdb7915c42c887f83239696be7761b8ed5bba23",
     "tests/v3/test_schemas.py": "61b89326f9a7f47042e5204021afc5313416c7275e757393b7bf353302e34dad",
-    "tests/v3/test_source_manifest.py": "1ade73b112059f01b13ab99457085abd40e9960b200c94f0913fc06832570eea",
+    "tests/v3/test_source_manifest.py": "47b6a1b5aa34c4fc39202687d5f7c9f13c8f6d7b6433a7159aa2c50f80eba10e",
     "tests/v3/test_verified_episode.py": "840d9049ca985d65363abe693065e12745d623c68ca95cd4418e8cafd2d73eaf",
     "tools/build_release.py": "92f6cdc31e35c5078b3dfe263f6e557f56316c496cf42ac465ffcb887035f73f",
     "tools/check_source_manifest.py": "d6491c08799493891345bcff5671060740206995bfbfd0ab67c0bafb819ee983",

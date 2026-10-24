@@ -1,0 +1,32 @@
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: '3.10'
+          - os: ubuntu-latest
+            python-version: '3.12'
+          - os: ubuntu-latest
+            python-version: '3.13'
+          - os: windows-latest
+            python-version: '3.12'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests -v
+      - name: Verify pinned pristine source baseline separately from development changes
+        run: python tools/check_source_manifest.py --baseline-ref daf0cccea495f4e62f1e3ddde3f9a3a68e2e1b08
+      - name: Run CLI and HTTP integration smoke
+        if: runner.os == 'Linux'
+        run: python tools/smoke_integration.py

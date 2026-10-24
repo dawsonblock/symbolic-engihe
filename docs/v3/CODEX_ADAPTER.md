@@ -51,3 +51,50 @@ path or vendor the Codex source tree. The optional extra pins the published
 `openai-codex` wheel to `0.163.0`; the adapter's source-API behavior is covered
 with fake clients, while compatibility with that wheel and an authenticated
 live Codex run remain unverified here.
+
+## v3.3.0 live qualification (observed 2026-10-24)
+
+Executed `SIS3_LIVE_CODEX=1 PYTHONPATH=src python3 -m pytest -q
+tests/v3/test_codex_live.py` against the real installed
+`openai-codex==0.163.0` SDK (bundled `openai-codex-cli-bin==0.163.0`):
+
+- **4 passed in 15.01s** — authenticated ChatGPT account (plus tier).
+- Real `thread_start` in a disposable workspace under
+  `Sandbox.read_only`; typed notifications (`turn/started`,
+  `item/started`, `item/agentMessage/delta`, `item/completed`,
+  `thread/tokenUsage/updated`) streamed and normalized into digest-chained
+  `ObservationEventV1`s (`seq` ordered, `prior_event_digest` linked,
+  `raw_content_included=False` on every event).
+- `thread_resume(thread_id)` returned the same thread id; a second turn
+  on the resumed thread preserved episode lineage
+  (`codex-episode-<sha256(thread_id)[:32]>`).
+- `adapter.cancel(turn_id)` interrupted a running long-form turn; the
+  event iterator terminated (verified cleanup, not just a cancel request).
+- `send_external_message` delivered bounded text as SDK `ExternalMessage`;
+  events remained structural-only.
+
+Runbook to reproduce: install `.[codex]`, ensure `~/.codex/auth.json`
+contains a valid login (or `codex login`), then
+`SIS3_LIVE_CODEX=1 PYTHONPATH=src python3 -m pytest -q tests/v3/test_codex_live.py`.
+Without the env var the class skips with a BLOCKED reason; mocked tests
+must never be reported as this qualification.
+
+## Retention and privacy boundary
+
+- SIS-side logs record only bounded structural summaries — event types,
+  bounded status fields, digests — never prompt text, diffs, paths, or
+  tool output.
+- Codex-side: `thread_resume` succeeding demonstrates that thread history
+  IS retained by the provider/SDK. SIS makes no guarantee that Codex or
+  its provider forgets content; treat every prompt, file, and tool result
+  sent to a turn as provider-retained.
+- The adapter's `read_only`/`workspace_write` sandbox presets are SDK
+  presets, not an SIS security boundary; evaluator credentials, private
+  test fixtures, and promotion state are never placed in the workspace.
+
+## Negative permission probes (static, verified in unit tests)
+
+Guidance content is delivered as `ExternalMessage` at tool-level
+authority — it cannot issue evaluator commands, mutate promotion or
+candidate state, or escape the SDK sandbox. Agent-supplied text is
+bounded (`_MAX_EXTERNAL_CHARS`) and summarized structurally only.

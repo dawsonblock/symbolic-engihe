@@ -1,11 +1,14 @@
 # SIS v3 implementation status
 
-Current classification: **M0 implementation tested; its exact source-artifact
-gate remains blocked because the named ZIP is not available in the workspace.
-The SIS3-004 Codex adapter slice is implemented and locally tested, while live
-SDK integration remains unverified.** Work uses the pinned v2.4.0 Git baseline
-recorded below. SIS3-003, the durable event store, evaluator custody, procedure
-qualification, and efficacy evaluation are not implemented.
+Current classification: **M0 contracts/policy plus the SIS3-003 workspace
+executor, SIS3-005 episode store, and SIS3-006 signed-receipt verifier are
+implemented and locally tested; the exact source-artifact gate remains blocked
+because the named ZIP is not available in this workspace. The SIS3-004 Codex
+adapter slice is implemented and locally tested, while live SDK integration
+remains unverified.** Work uses the pinned v2.4.0 Git baseline recorded below.
+A genuine live-agent episode, OS-validated isolation, evaluator process
+separation (the verifier currently shares the host process with its callers in
+tests), procedure qualification, and efficacy evaluation are not established.
 
 ## SIS3-001 and SIS3-002 report
 
@@ -131,4 +134,65 @@ remaining_unknowns:
   - "No durable event store, replay/recovery, source snapshot collector, independent verifier, or signed outcome receipt exists yet"
   - "M0's exact source archive and SHA-256 remain unavailable and unverified"
 next_gate: "Run one controlled authenticated task in a disposable workspace, then implement durable event capture and exact workspace snapshot collection before claiming M1 complete"
+```
+
+## SIS3-003 / SIS3-005 / SIS3-006 report
+
+```yaml
+phase_id: SIS3-003+SIS3-005+SIS3-006
+status: tested
+base_revision: extracted archive tree (no .git; see manifest test skip note)
+source_files_changed:
+  - src/sis/v3/runner.py
+  - src/sis/v3/episode_store.py
+  - src/sis/v3/signatures.py
+  - src/sis/v3/verifier.py
+  - tests/v3/test_runner_isolation.py
+  - tests/v3/test_episode_replay.py
+  - tests/v3/test_receipt_signatures.py
+  - tests/v3/test_verified_episode.py
+  - tests/v3/test_source_manifest.py
+  - docs/v3/STATUS.md
+  - docs/v3/EVIDENCE_PROTOCOL.md
+  - docs/v3/THREAT_MODEL.md
+  - docs/v3/TRUST_BOUNDARIES.md
+  - docs/v3/TEST_MATRIX.md
+  - docs/v3/MIGRATION.md
+tests_added: 48
+commands_run:
+  - "PYTHONPATH=src python3 -m unittest discover -s tests -q"
+  - "PYTHONPATH=src python3 -W error::ResourceWarning -m unittest discover -s tests/v3 -t . -q"
+  - "PYTHONPATH=src python3 tools/smoke_integration.py"
+  - "python3 -m compileall -q src/sis/v3 tests/v3"
+observed_outcomes:
+  - "Full suite: 419 tests, 0 failures, 2 skips (pre-existing skip + pinned-baseline probe absent .git)"
+  - "v3 slice: 81 tests, 0 failures, 1 skip; no ResourceWarnings under -W error"
+  - "CLI/HTTP smoke passed; local integration evidence only"
+  - "RFC 8032 known-answer tests pass; vendored Ed25519 cross-verifies with cryptography 48.0.1 when installed"
+  - "Executor: infinite loop wall-clock killed; 4 MiB stdout capped at 1 MiB with flag; 64 MiB write stopped at RLIMIT_FSIZE; aggregate disk budget audited; fork attempt bounded; host env not leaked; symlink escape flagged; terminate_all leaves no live workers"
+  - "sandbox-exec seatbelt verified on this host: network connect denied (EPERM), writes outside workspace denied; executor reports network:seatbelt_denied vs network:not_enforced honestly"
+  - "Episode store: chained replay, idempotent retry, conflict rejection, missing-artifact rejection, partial-tail crash recovery, mid-file tamper detection, head anchoring"
+  - "Verifier: signed pass/fail receipts verify online and offline with public key only; tampered body, wrong key, unknown signer rejected; replayed nonce and duplicate evaluation rejected across restart; corrupt journal fails closed; agent/runner/learner/operator/forged roles denied evaluate"
+  - "End-to-end vertical passed with a deterministic scripted agent on a real disposable workspace; NOT a live Codex run"
+environment_and_dependency_versions:
+  - "macOS 26.x (Darwin 25.2.0)"
+  - "Python 3.12.0"
+  - "cryptography 48.0.1 present in dev env (interop check only; not required at runtime)"
+  - "sandbox-exec present at /usr/bin/sandbox-exec (deprecated Apple API; treated as experimental)"
+security_tests:
+  - "CommandSpec rejects argv traversal, oversize args/stdin/env, invalid cwd and env names"
+  - "Receipts always carry isolation:unverified_local; network enforcement status is reported, not implied"
+  - "OutcomeReceiptV1 signature is Ed25519 over canonical payload with domain sis-v3:outcome_receipt:1"
+  - "Evaluation rejected for: unregistered_task, source_mismatch (incl. missing base_commit), replayed_nonce, duplicate_evaluation, missing submission, task_registration_conflict"
+  - "Evaluator seed stored 0600 in a 0700 directory; public verification path needs only the exported public key"
+remaining_unknowns:
+  - "No live Codex/agent episode; M1 gate item 'actual coding task end-to-end' is demonstrated only with a scripted fixture agent"
+  - "local-subprocess executor is not a validated sandbox even with seatbelt; no Linux rootless or microVM backend exists"
+  - "RLIMIT_NPROC counts the real UID's processes on POSIX; low values can make forking commands fail early"
+  - "ru_maxrss is a cumulative high-water mark, not a per-exec delta"
+  - "Vendored pure-Python Ed25519 is not constant-time; production should substitute a vetted provider behind the same API"
+  - "Append-only store is code discipline over a writable filesystem, not WORM; anchor_head exports heads but no external attestation service exists"
+  - "Verifier shares the caller's OS process in tests; separate evaluator service/process custody is specified but not deployed"
+  - "No promotion controller, qualified catalog, or benchmark harness; no efficacy claim"
+next_gate: "Run one authenticated Codex task in a disposable workspace through this pipeline, then gate M1 on real adapter capture + independent receipt"
 ```

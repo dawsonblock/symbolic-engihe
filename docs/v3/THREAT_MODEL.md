@@ -46,16 +46,21 @@ legacy demo mode for compatibility.
 | Agent forges operator identity in request JSON | Keyed HTTP mutations require the separate admin header; v3 roles are resolved outside JSON | Local unkeyed loopback intentionally retains old demo authority |
 | Alias route bypasses mutation guard | Explicit path-to-handler and path-to-access maps; unmatched aliases do not dispatch | Any new endpoint must be classified and receive a negative test |
 | Sub-to-Add recipe transfers to a balance function | v3 guidance has no qualified catalog and returns `unverified_task_intent` abstention | Legacy `sis_code_preview` remains experimental and can still show the bad proposal |
-| Locally signed data is mistaken for independent outcome evidence | Contract docs distinguish receipt shape from signature verification/custody | No evaluator service, key isolation, revocation, or external anchor exists in M0 |
+| Locally signed data is mistaken for independent outcome evidence | Contract docs distinguish receipt shape from signature verification/custody; receipts are now Ed25519-signed by an evaluator-only key | Verifier shares the caller's process in tests; no separate evaluator service, revocation, or external anchor deployed |
+| Hostile repository code exhausts host resources or escapes | `LocalSubprocessExecutor` applies POSIX rlimits (CPU/address-space/file-size/NPROC), scrubbed env, capped captured output, process-group kill switch, and optional macOS seatbelt denying network and out-of-workspace writes | This is still `unverified_local`: no kernel isolation, no validated confinement claim; rlimits/seatbelt availability varies; RLIMIT_NPROC counts the UID's processes |
+| Agent or tool output forges an outcome label | `OutcomeVerifier` re-digests the submission itself, runs registered acceptance material in its own fresh workspace, and signs `OutcomeReceiptV1` with an evaluator-custodied Ed25519 seed | Only receipt integrity/custody-of-key is shown; the harness driving real agents is unbuilt |
+| Evidence log or artifacts are rewritten after the fact | `EpisodeStore` appends chained canonical events, deduplicates retries, repairs crash tails, refuses artifact-less references, re-hashes artifacts on read, and detects tamper on `verify_episode` | Writable filesystem underneath; a store writer could still truncate whole files — mitigation is `anchor_head` plus external custody |
+| Receipt replay or double-counting | Per-evaluation nonce journal, (task, tree, criterion) duplicate rejection, signer key IDs, restart-surviving state | Journal itself is evaluator-local; compromise of the evaluator host defeats it |
 
 ## Exclusions
 
-M0 does not provide a workspace executor, Docker/Podman/microVM integration,
-network or filesystem sandbox, real Codex adapter, agent event capture, outcome
-verifier, receipt signer, procedure miner, promotion controller, or benchmark.
-Do not execute adversarial repositories in the SIS service or host interpreter.
-Do not claim a Codex run, hostile-code containment, procedure qualification, or
-agent-level efficacy from this phase.
+This phase still does not provide a validated OS-isolated worker
+(Linux rootless/microVM), a live agent driver, a procedure miner, a promotion
+controller, or a benchmark. The local executor must not be presented as a
+secure sandbox; `sis.v3.signatures` is a non-constant-time reference
+implementation; the verifier must not share agent/storage credentials in any
+deployment. Do not claim a live Codex run, hostile-code containment, procedure
+qualification, or agent-level efficacy from this phase.
 
 ## Prompt-injection handling
 

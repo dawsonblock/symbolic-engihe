@@ -25,7 +25,8 @@ The contracts cover:
   command specification, exit state, bounded resource counters, and output
   hashes.
 - `OutcomeReceiptV1`: evaluated tree, test-suite commitment, criterion,
-  outcome, regression evidence, key ID, and signature-shaped field.
+  outcome, regression evidence, key ID, and a 64-byte Ed25519 signature over
+  the canonical unsigned payload.
 - `ProcedureRecordV1`: scoped language/task/failure signatures, structured
   preconditions and contraindications, plain-language steps, verification,
   counterexamples, evidence, status, and expiry.
@@ -54,23 +55,44 @@ they do not establish semantic correctness, signer custody, or independence.
 ## Observations vs. outcomes
 
 Agent statements, tool output, local test output, and candidate-reported
-completion are observations. They are not evaluator labels. A future outcome
-receipt must be created by an evaluator that runs fixed acceptance criteria on
-the exact submitted repository tree. The evaluator's key must be unavailable
-to agent, learner, and worker processes. An independent durable anchor and key
-rotation/revocation policy are also required.
+completion are observations. They are not evaluator labels. Outcome receipts
+are created only by `sis.v3.verifier.OutcomeVerifier`, which re-digests the
+submitted tree itself, replays registered acceptance material into a fresh
+evaluator-owned workspace, and signs the canonical payload with Ed25519 under
+`sis-v3:outcome_receipt:1`. The signing seed lives in a dedicated `key_dir`
+(mode 0700/0600) and never leaves the verifier; `public_key_record` exports
+public verification material, and `verify_receipt_signature` checks a receipt
+offline without access to the seed.
 
-M0 defines the `OutcomeReceiptV1` shape only. It does not sign, verify, admit,
-store, or externally anchor any receipt. The example signature and promotion
-authorization values are explicitly illustrative placeholders.
+The verifier rejects: unregistered or conflicting task registrations,
+source-commit mismatches (including a task envelope missing the pinned
+commit), replayed evaluation nonces, duplicate evaluations of the same
+tree/criterion, and submissions it cannot measure. Its `receipts.jsonl`
+journal is append-only and fails closed on restart if corrupt. In tests the
+verifier still shares its callers' OS process; production custody requires a
+separate evaluator service with its own credentials and an external anchor.
+
+The v2 example signature and promotion authorization values in
+`examples/v3/contracts_v1.json` remain illustrative placeholders that are not
+produced or accepted by the verifier.
 
 ## Idempotence and replay
 
-Events carry stable IDs, an idempotency key, sequence, and prior digest. A
-future append-only event store must enforce uniqueness and transactionally
-reject sequence conflicts. Evaluation receipts need unpredictable per-run
-identities, replay protection, exact artifact binding, signer key IDs, and
-protocol-version checks; M0 does not implement those services.
+Events carry stable IDs, an idempotency key, sequence, and prior digest.
+`sis.v3.episode_store.EpisodeStore` enforces them: conflicting `event_id` or
+`idempotency_key` reuse, sequence gaps, and chain breaks are rejected;
+byte-identical retries return the stored event; a crash-truncated tail is
+repaired without rewriting earlier bytes; `verify_episode` replays and reports
+tampering; `anchor_head` exports the ledger head to a separately controlled
+directory. Artifacts are content-addressed and re-hashed on read. This is
+append-only by implementation discipline on a writable filesystem — durable
+claims against an attacker with store write access require OS-enforced
+immutability or an external attestation service.
+
+Receipts carry unpredictable IDs, per-evaluation nonces, exact tree binding,
+signer key IDs, and a versioned signature domain; the verifier journal tracks
+nonces and evaluated (task, tree, criterion) tuples to reject replays and
+duplicates across restarts.
 
 ## Current guidance behavior
 

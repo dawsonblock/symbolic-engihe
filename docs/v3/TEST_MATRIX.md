@@ -23,6 +23,10 @@ regenerated during development.
 | v3 contracts | Not present in baseline | Round-trip, unknown-field, duplicate-key, size, digest, path, and precondition tests |
 | Authorization | Existing keyed HTTP separation | Full POST route matrix, forged JSON role, route aliases, and legacy loopback compatibility |
 | Negative transfer | Legacy local Sub-to-Add preview can misapply to `remaining_balance` | False preview reproduced; new v3 guidance abstains with `unverified_task_intent` |
+| Workspace execution (SIS3-003) | Not present in baseline | Bounded runs, rlimit enforcement, capped output, kill switch, env scrub, symlink/disk audits, optional macOS seatbelt network/write denial; receipts honest about `unverified_local` |
+| Episode store (SIS3-005) | Not present in baseline | Chained append, idempotent retry, conflict/missing-artifact rejection, crash-tail repair, tamper detection, head anchoring |
+| Signed outcomes (SIS3-006) | Not present in baseline | Evaluator-custodied Ed25519 receipts verify offline; tamper/wrong-key/replay/duplicate rejected; roles denied; journal fails closed on corruption |
+| End-to-end episode | Not present in baseline | Scripted-agent vertical through executor→store→verifier→replay; NOT a live Codex run |
 
 ## Runtime matrix
 
@@ -36,6 +40,12 @@ Docker/Podman/microVM isolation, and external custody are not verified here.
 
 Contract tests validate parsing, canonical identity, and bounds. Policy tests
 validate the code-level matrix. HTTP tests validate the current local server
-credential checks and compatibility behavior. None of these tests prove that
-roles correspond to different OS principals, signatures have an independent
-custodian, hostile code is contained, or SIS improves coding-agent outcomes.
+credential checks and compatibility behavior. Runner tests validate that the
+local executor enforces its documented limits on this host — they do not prove
+containment against adversarial code on arbitrary platforms. Verifier tests
+validate signature correctness, custody separation of the key material, and
+rejection paths — they do not prove the evaluator runs as a separate OS
+principal. The verified-episode test proves the pipeline mechanics, not agent
+efficacy: none of these tests prove that roles correspond to different OS
+principals, signatures have an independent custodian, hostile code is
+contained, or SIS improves coding-agent outcomes.

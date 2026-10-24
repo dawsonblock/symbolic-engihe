@@ -8,8 +8,10 @@
 | ToolBridge | Existing read-only tools, including experimental `sis_code_preview` | No new tool is registered in the legacy bridge | Agent behavior remains unchanged unless the v3 module is explicitly called |
 | HTTP | Existing routes and keyed operator separation | Central explicit POST handler/access inventory; unknown policy is denied | Keyed reader/admin behavior remains; unkeyed loopback demo remains for compatibility |
 | SQLite | Existing v2 tables and audit chains | No v3 tables or migrations | No database conversion or rollback operation is required |
-| Source manifest | Exact release inventory | Baseline verification mode can verify a pinned Git tree and label development delta | Do not regenerate the release manifest during development |
-| Optional dependencies | No mandatory runtime dependencies; optional extras remain optional | Pin build backend to `setuptools==82.0.1`; no new runtime dependency | Core contract/policy code uses only the standard library |
+| Source manifest | Exact release inventory | Baseline verification mode can verify a pinned Git tree and label development delta; in an extracted archive without `.git` the baseline test skips and plain worktree mode correctly fails on unmanifested dev files | Do not regenerate the release manifest during development |
+| Optional dependencies | No mandatory runtime dependencies; optional extras remain optional | Pin build backend to `setuptools==82.0.1`; no new runtime dependency | Runner, store, signatures, and verifier are standard-library only; `cryptography` is used in tests only to cross-check Ed25519 |
+| Execution | Host subprocesses only via existing demos | `sis.v3.runner` adds disposable workspace execution with `unverified_local` labeling; never presented as a security boundary | Callers must not run hostile code assuming OS isolation; replace backend before multi-tenant use |
+| Evidence | v2 SQLite audit | `sis.v3.episode_store` + `sis.v3.verifier` add chained JSONL events, content-addressed artifacts, and Ed25519-signed outcome receipts | No v2 tables changed; v3 stores are separate directories, not SQLite migrations |
 
 ## Additive interface rules
 
@@ -33,6 +35,8 @@ development changes separately. Release packaging may regenerate
 
 ## Later migration gates
 
-Do not wire Codex SDK events, workspace execution, evaluator receipts, new
-SQLite stores, or qualified retrieval into this phase. Each requires its own
-milestone, API compatibility review, security tests, and independent evidence.
+Codex SDK events, workspace execution, evaluator receipts, and the episode
+store now exist as additive `sis.v3` modules; none of them are wired into the
+v2 service, HTTP server, or SQLite schema. Qualified retrieval, promotion, and
+any production wiring still require their own milestone, API compatibility
+review, security tests, and independent evidence.

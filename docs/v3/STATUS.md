@@ -373,3 +373,23 @@ remaining_unknowns:
   - "min_pass_receipts/min_distinct_repos are policy knobs; recommended pilot defaults (>=3 tasks, >=2 repos) are documented, not yet enforced as defaults"
 next_gate: "SIS-314 release attestation; then v3.2 governed artifact channel + typed AST repair procedures"
 ```
+
+## Codex master execution plan — v3.1.0 through v4.0.0 (this branch)
+
+| Milestone | Commit | Verdict |
+|---|---|---|
+| Phase 0 baseline audit | (docs in 5cffa35) | defects B–I reproduced against b0fb6c4; A already closed |
+| v3.1.0 release integrity | 5cffa35 | GO — deterministic ZIP, strict manifest/attestation verify, adversarial ZIP tests |
+| v3.1.1 authoritative qualification + atomic promotion | e0b49e8 | GO — governed status only via signed decisions; intent journal; EligibilitySnapshot sole serving authority |
+| v3.1.2 benchmark truthfulness | e4f0808 | GO — valid-solve = independent pass; hard budgets; seeded arm order; paired stats |
+| v3.2.0 unified policy-gated eligibility | 4ee6fd2 | GO — snapshot-only serving; signed ScopeGrantV1; wrong-repo abstention; kill switch intact |
+| v3.2.1 transactional verify_and_consume + semantic-check closure | 61f05c4 | GO — one-time envelope consumption, restart-surviving replay guard; operator-class heuristics no longer waive semantic checks |
+| v3.3.0 live Codex adapter qualification | 38efcf5 | PASSED — real SDK 0.163.0, 4/4 live tests (start/stream/lineage/resume/interrupt/ExternalMessage) |
+| v3.4.0 typed symbolic repair induction | 99ffda3 | GO — RepairHypothesisV1 AST templates + typed metavariables; A→B→C disjoint-repo transfer; counterexample contract failure → abstain |
+| v4.0.0 held-out efficacy qualification | 9a146b8 | NO-GO on statistical power (honest): live Codex experiment, D vs A = 1 win / 0 losses / 2 ties on n=3 held-out tasks; no in-scope harm; negative-transfer risk confirmed on control (agent corrupts correct code under fix-pressure in both arms — contract+abstention gates are the mitigation) |
+
+Release artifact: `dist/sis-v3-release.zip` — 229 files, deterministic
+(byte-identical rebuilds), verified by `tools/verify_release.py`,
+attested in `dist/attestation.json`
+(zip_sha256 `7cfbfcae3c24c49039fb6c4c7dfd8fe0e9a0197fc182d3303ed59508c7e9ce15`,
+git `9a146b8`). Suite: 600 passed, 6 skipped.

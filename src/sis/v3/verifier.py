@@ -195,8 +195,16 @@ class OutcomeVerifier:
         task: TaskEnvelopeV1,
         submission_dir: str | Path,
         evaluation_nonce: str,
+        evaluation_scope: str | None = None,
     ) -> OutcomeReceiptV1:
-        """Independently evaluate a submission tree and sign the outcome."""
+        """Independently evaluate a submission tree and sign the outcome.
+
+        ``evaluation_scope`` partitions the duplicate-submission guard: the
+        same tree may legitimately be scored once per scope (e.g. per
+        benchmark arm), but never twice inside one scope. Callers must use
+        stable, meaningful scope names — an arbitrary unique scope defeats
+        the guard.
+        """
         require_permission(actor_role, "outcome:evaluate")
         if not isinstance(task, TaskEnvelopeV1):
             task = TaskEnvelopeV1.from_dict(task)
@@ -210,12 +218,17 @@ class OutcomeVerifier:
             raise EvaluationRejected("missing_nonce")
         if evaluation_nonce in self._nonces:
             raise EvaluationRejected("replayed_nonce", evaluation_nonce)
+        if evaluation_scope is not None and (
+                not isinstance(evaluation_scope, str)
+                or not evaluation_scope.strip() or len(evaluation_scope) > 128):
+            raise EvaluationRejected("invalid_scope")
 
         submission = Path(submission_dir)
         if not submission.is_dir():
             raise EvaluationRejected("submission_missing", str(submission))
         evaluated_repo_digest = tree_digest(submission)
-        marker = (registration.task_id, evaluated_repo_digest, registration.criterion_version)
+        marker = (registration.task_id, evaluated_repo_digest,
+                  registration.criterion_version, evaluation_scope or "")
         if marker in self._evaluated:
             raise EvaluationRejected("duplicate_evaluation", registration.task_id)
 
@@ -256,7 +269,8 @@ class OutcomeVerifier:
             _SIGNATURE_DOMAIN + canonical_json(unsigned),
         ).hex()
         receipt = OutcomeReceiptV1.from_dict({**unsigned, "signature": signature})
-        self._record(receipt, evaluation_nonce, receipt_exec.digest)
+        self._record(receipt, evaluation_nonce, receipt_exec.digest,
+                     scope=evaluation_scope)
         return receipt
 
     def verify_receipt(self, receipt: OutcomeReceiptV1 | Mapping) -> bool:
@@ -287,9 +301,11 @@ class OutcomeVerifier:
         except OSError as exc:
             raise JournalIntegrityError("receipt_missing") from exc
 
-    def _record(self, receipt: OutcomeReceiptV1, nonce: str, execution_digest: str) -> None:
+    def _record(self, receipt: OutcomeReceiptV1, nonce: str,
+                execution_digest: str, scope: str | None = None) -> None:
         entry = {
             "receipt_digest": receipt.digest,
+            "evaluation_scope": scope or "",
             "receipt_id": receipt.receipt_id,
             "task_id": receipt.task_id,
             "evaluated_repo_digest": receipt.evaluated_repo_digest,
@@ -319,7 +335,8 @@ class OutcomeVerifier:
                     os.unlink(tmp)
         self._nonces.add(nonce)
         self._evaluated.add(
-            (receipt.task_id, receipt.evaluated_repo_digest, receipt.criterion_version)
+            (receipt.task_id, receipt.evaluated_repo_digest,
+             receipt.criterion_version, scope or "")
         )
         self._journal.append(entry)
 
@@ -352,7 +369,9 @@ class OutcomeVerifier:
                     self._journal.append(entry)
                     self._nonces.add(entry["nonce"])
                     self._evaluated.add(
-                        (entry["task_id"], entry["evaluated_repo_digest"], entry["criterion_version"])
+                        (entry["task_id"], entry["evaluated_repo_digest"],
+                         entry["criterion_version"],
+                         entry.get("evaluation_scope") or "")
                     )
 
     def _persist_tasks(self) -> None:

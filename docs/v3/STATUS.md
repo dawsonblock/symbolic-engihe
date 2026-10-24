@@ -447,3 +447,34 @@ remaining_unknowns:
   - "receipts_for_grant replays stored receipt JSON; custody of evaluator receipt originals remains external"
 next_gate: "PR-04: artifact channel + revocations wiring; then independently evaluated paired study"
 ```
+
+## v3.1-alpha — signed revocations + evidence cascade (PR-04, G3)
+
+```yaml
+phase_id: v31-signed-revocations
+tickets: [PR-04]
+status: implemented_and_tested
+baseline: codex/sis-authority-transfer-qualification (through 8a1c6ea)
+changed_files:
+  - src/sis/v3/contracts.py           # RevocationV1 record (record|receipt|grant|signer kinds)
+  - src/sis/v3/revocation.py          # NEW: RevocationAuthority — signed issuance + verification
+  - src/sis/v3/authority_db.py        # commit_revocation: signed record + in-tx verifier; revocation_json column; revocations() decode-verified reads; verify() checks revocation rows
+  - src/sis/v3/promotion.py           # PromotionController.revoke(): commit + cascade_suspend for receipts, eval-key revocation for signers
+  - src/sis/v3/scope_grants.py        # verify/permits honor committed revocation sets (grant digests, signer ids, receipt digests)
+  - src/sis/v3/secure_guidance.py     # per-request committed-revocation resolution: record denylist, evidence-citing records denied, grant/signer revocation into permits
+  - tests/v3/test_revocation.py       # NEW: 15 adversarial + enforcement tests
+observed_outcomes:
+  - "Full suite: 625 passed, 2 skipped"
+  - "forged/untrusted-signer/unbound-authority/unsigned-verifier revocations rejected in-tx"
+  - "record revocation denies on next request and survives restart"
+  - "receipt revocation cascades: citing qualified records suspended via signed decisions; status change is decision-backed"
+  - "receipt revocation denies citing records pre-cascade and invalidates grants citing the receipt"
+  - "grant revocation stops cross-repo serving; owner-local unaffected"
+  - "signer revocation stops its grants at serving and blocks new evaluator decisions"
+  - "tampered revocation row -> undecodable_revocation in verify() + catalog_unavailable abstain"
+  - "duplicate revocation is a conflict, not silent state"
+remaining_unknowns:
+  - "revocation signer custody is test-scope; production custody is a deployment concern"
+  - "no revocation expiry/appeal semantics yet (kind=revocation-of-revocation not modeled)"
+next_gate: "PR-05+: authenticated Codex runtime + execution qualification (Stage 2)"
+```

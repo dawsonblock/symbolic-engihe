@@ -44,6 +44,7 @@ from .contracts import (
     ProcedureRecordV1,
     PromotionDecisionV1,
     PromotionDecisionV2,
+    RevocationV1,
     ScopeGrantV1,
     canonical_digest,
     loads_json,
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS revocation (
     kind TEXT NOT NULL,
     reason TEXT,
     actor_identity TEXT,
+    revocation_json TEXT NOT NULL DEFAULT '',
     committed_at TEXT NOT NULL,
     PRIMARY KEY (digest, kind)
 );
@@ -666,25 +668,44 @@ class AuthorityDB:
         return [OutcomeReceiptV1.from_dict(loads_json(r[0])) for r in rows]
 
     def commit_revocation(
-        self, *, digest: str, kind: str, reason: str,
-        actor_identity: str, authority,
+        self, *, revocation: RevocationV1, authority, verifier=None,
     ) -> None:
-        """Commit a revocation entry (grant, receipt or record digest)."""
+        """Atomically commit a signed ``RevocationV1``.
+
+        The mandatory ``verifier`` (normally ``RevocationAuthority.verify``)
+        re-runs inside the write transaction; unsigned or forged revocations
+        never land. ``(target, kind)`` uniqueness is enforced — a second
+        revocation of the same target is a conflict, not silent state.
+        """
         self._require_authority(authority)
-        _check_digest(digest, "digest")
+        if not isinstance(revocation, RevocationV1):
+            raise AuthorityError("revocation must be a RevocationV1")
+        if verifier is None:
+            raise AuthorityError("revocation_verifier_required")
+        target = (revocation.target_digest
+                  if revocation.target_digest is not None
+                  else revocation.target_id)
         with self._lock:
             con = self._conn()
             con.execute("BEGIN IMMEDIATE")
             try:
+                if not verifier(revocation):
+                    raise AuthorityConflict("revocation_rejected")
                 con.execute(
                     "INSERT INTO revocation"
-                    " (digest, kind, reason, actor_identity, committed_at)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (digest, kind, reason, actor_identity, _utcnow()),
+                    " (digest, kind, reason, actor_identity,"
+                    "  revocation_json, committed_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (target, revocation.kind, revocation.reason,
+                     revocation.actor_identity,
+                     revocation.canonical_bytes().decode("utf-8"),
+                     _utcnow()),
                 )
                 self._audit(con, "revocation_committed", {
-                    "digest": digest, "kind": kind, "reason": reason,
-                    "actor_identity": actor_identity,
+                    "revocation_id": revocation.revocation_id,
+                    "kind": revocation.kind,
+                    "target": target,
+                    "actor_identity": revocation.actor_identity,
                 })
                 con.execute("COMMIT")
             except AuthorityError:
@@ -697,21 +718,24 @@ class AuthorityDB:
                 _safe_rollback(con)
                 raise
 
-    def revocations(self, kind: str | None = None) -> list[dict]:
+    def revocations(self, kind: str | None = None) -> list[RevocationV1]:
+        """Committed signed revocations; undecodable rows fail closed."""
         if kind is not None:
             rows = self._conn().execute(
-                "SELECT digest, kind, reason, actor_identity, committed_at"
-                " FROM revocation WHERE kind=? ORDER BY digest",
+                "SELECT revocation_json FROM revocation WHERE kind=?"
+                " ORDER BY digest",
                 (kind,),
             ).fetchall()
         else:
             rows = self._conn().execute(
-                "SELECT digest, kind, reason, actor_identity, committed_at"
-                " FROM revocation ORDER BY digest"
+                "SELECT revocation_json FROM revocation ORDER BY digest"
             ).fetchall()
-        return [{"digest": d, "kind": k, "reason": r,
-                 "actor_identity": a, "committed_at": c}
-                for d, k, r, a, c in rows]
+        out = []
+        for (body,) in rows:
+            if not body:
+                raise AuthorityError("undecodable_revocation")
+            out.append(RevocationV1.from_dict(loads_json(body)))
+        return out
 
     def quarantined(self) -> list[dict]:
         rows = self._conn().execute(
@@ -917,6 +941,22 @@ class AuthorityDB:
                 grant_revision_digests.add(rev_digest)
             for d in grant_revision_digests - existing:
                 problems.append(f"grant_revision_missing:{d[:16]}")
+
+            for digest, kind, body in con.execute(
+                "SELECT digest, kind, revocation_json FROM revocation"
+            ).fetchall():
+                try:
+                    rev = RevocationV1.from_dict(loads_json(body))
+                except ContractError:
+                    problems.append(f"undecodable_revocation:{digest[:16]}")
+                    continue
+                if rev.kind != kind:
+                    problems.append(f"revocation_kind_mismatch:{digest[:16]}")
+                expected_target = (rev.target_digest
+                                   if rev.target_digest is not None
+                                   else rev.target_id)
+                if expected_target != digest:
+                    problems.append(f"revocation_target_mismatch:{digest[:16]}")
         except sqlite3.Error as exc:
             problems.append(f"sqlite_error:{exc}")
             prev_digest = None

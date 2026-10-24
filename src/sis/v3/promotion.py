@@ -30,6 +30,7 @@ from .contracts import (
     ProcedureRecordV1,
     PromotionDecisionV1,
     PromotionDecisionV2,
+    RevocationV1,
     canonical_digest,
     canonical_json,
 )
@@ -320,6 +321,51 @@ class PromotionController:
     def projected_statuses(self) -> dict[str, str]:
         """The decision-backed status map — the catalog's authority view."""
         return dict(self._projected)
+
+    def revoke(
+        self,
+        revocation: RevocationV1,
+        *,
+        actor_role: str,
+        actor_identity: str,
+        operator_token: str | None = None,
+        verifier=None,
+    ) -> list[str]:
+        """Commit a signed revocation and enforce it (PR-04).
+
+        The mandatory ``verifier`` (``RevocationAuthority.verify``) runs
+        inside the commit transaction — unsigned or forged revocations
+        never land. Effects by kind:
+
+        - ``record``/``grant`` — committed row is honored by the serving
+          boundary on the next request (denylist / grant stop).
+        - ``receipt`` — additionally cascades: every qualified record
+          citing the revoked evidence is suspended via a real signed
+          suspension decision, and grants citing it stop permitting.
+        - ``signer`` — the evaluator key id stops being trusted for new
+          decisions immediately.
+
+        Returns the suspension decision ids produced by the cascade.
+        """
+        require_permission(actor_role, "promotion:approve")
+        if verifier is None or not callable(verifier):
+            raise ContractError("revocation_verifier_required")
+        self.store.commit_revocation(
+            revocation=revocation, authority=self, verifier=verifier)
+        suspended: list[str] = []
+        if revocation.kind == "receipt":
+            from .catalog import Catalog
+            suspended = Catalog(self.store).cascade_suspend(
+                revocation.target_digest,
+                lambda pid: self.transition(
+                    pid, "suspended", actor_role=actor_role,
+                    actor_identity=actor_identity,
+                    operator_token=operator_token,
+                ).decision_id,
+            )
+        elif revocation.kind == "signer":
+            self._revoked_eval_keys.add(revocation.target_id)
+        return suspended
 
     def verify(self, *, check_projection: bool = True) -> dict:
         """Replay committed decisions: signatures, chain continuity, projection."""

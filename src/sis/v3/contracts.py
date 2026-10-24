@@ -502,6 +502,31 @@ class ScopeGrantV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class RevocationV1(V1Record):
+    """Signed revocation (v3.1-alpha, PR-04).
+
+    ``kind`` selects the target semantics: ``record``/``receipt``/``grant``
+    revoke by object digest; ``signer`` revokes a key id (identifier, not a
+    digest). Committed revocations are consulted on every serving request;
+    a revoked receipt also cascades: dependent qualified records are
+    suspended through signed decisions and grants citing it stop
+    permitting.
+    """
+
+    revocation_id: str
+    kind: str
+    target_digest: str | None
+    target_id: str | None
+    reason: str
+    actor_identity: str
+    issued_at: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "revocation"
+
+
+@dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
     repo_snapshot_digest: str
@@ -692,6 +717,22 @@ def _validate_record(record: V1Record) -> None:
         if d["expires_at"] is not None:
             _timestamp(d["expires_at"], "expires_at")
         _identifier(d["grant_nonce"], "grant_nonce")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, RevocationV1):
+        _identifier(d["revocation_id"], "revocation_id")
+        _enum(d["kind"], {"record", "receipt", "grant", "signer"}, "kind")
+        if d["kind"] == "signer":
+            _require(d["target_digest"] is None and d["target_id"] is not None,
+                     "signer revocation carries target_id only")
+            _identifier(d["target_id"], "target_id")
+        else:
+            _require(d["target_id"] is None and d["target_digest"] is not None,
+                     "digest revocation carries target_digest only")
+            _digest(d["target_digest"], "target_digest")
+        _text(d["reason"], "reason", maximum=512)
+        _identifier(d["actor_identity"], "actor_identity")
+        _timestamp(d["issued_at"], "issued_at")
         _identifier(d["signer_key_id"], "signer_key_id")
         _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
     elif isinstance(record, GuidanceRequestV1):

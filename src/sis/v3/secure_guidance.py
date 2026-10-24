@@ -84,22 +84,49 @@ class StrictGuidanceGateway:
         else:
             requester_id = repository_id
         try:
+            committed = self._committed_revocations()
             records = self._view.by_status("qualified")
+            # Revoked records are denied outright; records citing revoked
+            # evidence are denied immediately and suspended via cascade.
+            deny = set(self._revoked) | committed["record"]
+            for record in records:
+                if (set(record.evidence_refs) | set(record.counterexample_refs)) \
+                        & committed["receipt"]:
+                    deny.add(record.digest)
             allowed = []
             for record in records:
+                if record.digest in deny:
+                    continue
                 # Never infer authorization from untrusted task text.
                 owner = self._owners.get(record.procedure_id)
                 if owner is not None and owner == requester_id:
                     allowed.append(record.procedure_id)
-                elif self._grant_permits(record, owner, requester_id, now=now):
+                elif self._grant_permits(
+                        record, owner, requester_id, now=now,
+                        revoked=committed["grant"] | committed["receipt"],
+                        revoked_signers=committed["signer"]):
                     allowed.append(record.procedure_id)
             scoped = _ScopedCatalog(self._view, allowed)
             return sis_recommend(request, scoped, files_present=files_present,
-                                 symbols_extra=symbols_extra, revoked=self._revoked, now=now)
+                                 symbols_extra=symbols_extra, revoked=deny, now=now)
         except (AuthorityError, ValueError, TypeError):
             return _abstain("catalog_unavailable", ("Authoritative qualification evidence could not be verified.",))
 
-    def _grant_permits(self, record, owner, requester_id, now=None) -> bool:
+    def _committed_revocations(self) -> dict:
+        """Committed signed revocations, grouped by kind (PR-04)."""
+        out = {"record": set(), "receipt": set(), "grant": set(),
+               "signer": set()}
+        reader = getattr(self._store, "revocations", None)
+        if reader is None:
+            return out
+        for rev in reader():
+            target = (rev.target_digest if rev.target_digest is not None
+                      else rev.target_id)
+            out.setdefault(rev.kind, set()).add(target)
+        return out
+
+    def _grant_permits(self, record, owner, requester_id, now=None,
+                       revoked=frozenset(), revoked_signers=frozenset()) -> bool:
         if self._grants is None:
             return False
         reader = getattr(self._store, "scope_grants", None)
@@ -113,4 +140,6 @@ class StrictGuidanceGateway:
             grants=grants,
             receipts_for=lambda g: self._store.receipts_for_grant(g.grant_id),
             now=now,
+            revoked=revoked,
+            revoked_signers=revoked_signers,
         ))

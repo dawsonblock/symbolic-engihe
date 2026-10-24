@@ -185,13 +185,24 @@ class ScopeGrantAuthority:
         receipts=(),
         record=None,
         now: str | None = None,
+        revoked=frozenset(),
+        revoked_signers=frozenset(),
     ) -> list[str]:
-        """Return a list of problems; empty means the grant is valid."""
+        """Return a list of problems; empty means the grant is valid.
+
+        ``revoked`` carries committed revocation targets — grant digests
+        and receipt digests — so a committed revocation stops the grant
+        without touching this authority's in-memory sets. ``revoked_signers``
+        carries revoked signer key ids.
+        """
         problems: list[str] = []
-        if grant.grant_id in self._revoked_grants:
+        if grant.grant_id in self._revoked_grants or grant.digest in revoked:
             problems.append("grant_revoked")
-        if grant.signer_key_id in self._revoked_signers:
+        if grant.signer_key_id in self._revoked_signers or \
+                grant.signer_key_id in revoked_signers:
             problems.append("signer_revoked")
+        if set(grant.evidence_receipt_refs) & set(revoked):
+            problems.append("evidence_revoked")
         if not verify_grant_signature(grant, self._signers):
             problems.append("grant_signature_invalid")
         source = self.registry.resolve(grant.source_registry_id)
@@ -244,13 +255,17 @@ class ScopeGrantAuthority:
         grants,
         receipts_for=None,
         now: str | None = None,
+        revoked=frozenset(),
+        revoked_signers=frozenset(),
     ) -> bool:
         """True iff a committed, currently-valid grant allows ``requester``.
 
         ``grants`` is the committed grant list from the authority store;
         ``receipts_for`` optionally resolves evidence receipt digests to
-        receipt objects for transfer-evidence rechecks. Repository-local
-        access is handled by the caller and never requires a grant.
+        receipt objects for transfer-evidence rechecks. ``revoked`` /
+        ``revoked_signers`` carry committed revocation targets (grant and
+        receipt digests, signer key ids). Repository-local access is
+        handled by the caller and never requires a grant.
         """
         requester_id = self.registry.resolve(requester)
         if requester_id is None:
@@ -262,7 +277,8 @@ class ScopeGrantAuthority:
                     grant.source_registry_id != owner_identity:
                 continue
             receipts = receipts_for(grant) if receipts_for else ()
-            if self.verify(grant, receipts=receipts, record=record, now=now):
+            if self.verify(grant, receipts=receipts, record=record, now=now,
+                           revoked=revoked, revoked_signers=revoked_signers):
                 continue
             if grant.target_registry_id == requester_id.registry_id:
                 return True

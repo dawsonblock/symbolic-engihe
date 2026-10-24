@@ -527,6 +527,30 @@ class RevocationV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourceChangeV1(V1Record):
+    """Verified source-change capture (v3.1-alpha, PR-06).
+
+    Produced by ``source_change.capture_change`` — never by the agent.
+    ``before_tree_digest``/``after_tree_digest`` and the per-file byte
+    digests are computed by the capture path's own tree scans; the
+    ``diff_digest`` binds the diff bytes the capture itself generated.
+    ``file_changes`` entries: {path, kind: added|removed|modified,
+    before_digest?, after_digest?}.
+    """
+
+    change_id: str
+    attempt_id: str
+    before_tree_digest: str
+    after_tree_digest: str
+    diff_digest: str
+    file_changes: tuple[Mapping[str, Any], ...]
+    captured_at: str
+    worker_identity: str
+
+    RECORD_TYPE: ClassVar[str] = "source_change"
+
+
+@dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
     repo_snapshot_digest: str
@@ -735,6 +759,27 @@ def _validate_record(record: V1Record) -> None:
         _timestamp(d["issued_at"], "issued_at")
         _identifier(d["signer_key_id"], "signer_key_id")
         _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, SourceChangeV1):
+        for name in ("change_id", "attempt_id", "worker_identity"):
+            _identifier(d[name], name)
+        for name in ("before_tree_digest", "after_tree_digest", "diff_digest"):
+            _digest(d[name], name)
+        _require(isinstance(d["file_changes"], (tuple, list))
+                 and len(d["file_changes"]) <= 10_000,
+                 "file_changes must be a bounded sequence")
+        for change in d["file_changes"]:
+            _require(isinstance(change, Mapping)
+                     and set(change) <= {"path", "kind", "before_digest",
+                                         "after_digest"}
+                     and {"path", "kind"} <= set(change),
+                     "file_changes entries must carry path and kind")
+            _relative_path(change["path"], "file_changes.path")
+            _enum(change["kind"], {"added", "removed", "modified"},
+                  "file_changes.kind")
+            for key in ("before_digest", "after_digest"):
+                if change.get(key) is not None:
+                    _digest(change[key], f"file_changes.{key}")
+        _timestamp(d["captured_at"], "captured_at")
     elif isinstance(record, GuidanceRequestV1):
         _identifier(d["task_id"], "task_id")
         _digest(d["repo_snapshot_digest"], "repo_snapshot_digest")

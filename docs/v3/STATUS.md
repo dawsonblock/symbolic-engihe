@@ -546,3 +546,25 @@ remaining_unknowns:
   - "no semantic judgment: a captured change is evidence, not correctness"
 next_gate: "PR-07+: observe-learn-verify-reuse wiring + strategic/structural induction"
 ```
+
+## v3.1-alpha — evidence-bound induction (PR-07)
+
+```yaml
+phase_id: v31-learning-evidence-binding
+tickets: [PR-07]
+status: implemented_and_tested
+changed_files:
+  - src/sis/v3/learning/symbolic.py    # induce_from_source_change + source_change_digest lineage
+  - src/sis/v3/learning/strategies.py  # receipt_resolver independent verification
+  - tests/v3/test_learning_evidence.py # NEW: 8 tests
+observed_outcomes:
+  - "Full suite: 650 passed, 2 skipped"
+  - "induce_from_source_change requires a captured SourceChangeV1 + byte-exact file contents verified against file_changes digests; wrong bytes, multi-file changes, and non-operator edits are rejected"
+  - "induced candidates carry source_change_digest lineage to the capture artifact"
+  - "induce_strategies accepts an optional receipt_resolver; every episode receipt must resolve to committed evidence — unresolved/forged digests rejected"
+  - "all learned outputs remain status=candidate; no qualification, persistence, or serving path added"
+remaining_unknowns:
+  - "evidence binding is not causality: transfer requires repository-disjoint holdout + independent promotion (still pending, M6)"
+  - "structural induction remains single-operator-AST-only; multi-node and cross-language transforms unsupported by design"
+next_gate: "observe-learn-verify-reuse wiring; M5 independent candidate optimization"
+```

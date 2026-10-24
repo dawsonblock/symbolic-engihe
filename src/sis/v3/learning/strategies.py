@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Mapping, Sequence
 
 from ..contracts import canonical_json
 
@@ -38,6 +38,7 @@ class StrategyCandidate:
 def induce_strategies(
     episodes: Sequence[EpisodeEvidence], *, min_successes: int = 2,
     min_distinct_repositories: int = 2,
+    receipt_resolver: Callable[[str], Mapping | None] | None = None,
 ) -> tuple[StrategyCandidate, ...]:
     """Induce recurring *observed actions*, not ungrounded causal assertions.
 
@@ -45,6 +46,11 @@ def induce_strategies(
     be assigned by a trusted task registry, never guessed from patch digests.
     A lack of contrastive evidence may produce a candidate, but it cannot
     yield qualification. Verifier/provenance custody is deliberately external.
+
+    ``receipt_resolver`` — when given, each episode's ``receipt_digest``
+    must resolve to committed evidence (e.g. ``AuthorityDB`` row lookup);
+    unresolved digests are rejected. Without it, the caller's ``verified``
+    flag is trusted as before — a weaker input contract documented here.
     """
     if min_successes < 1 or min_distinct_repositories < 1:
         raise ValueError("qualification thresholds must be positive")
@@ -52,6 +58,9 @@ def induce_strategies(
     for episode in episodes:
         if not episode.verified:
             raise ValueError("unverified_episode")
+        if receipt_resolver is not None and \
+                receipt_resolver(episode.receipt_digest) is None:
+            raise ValueError("unresolved_receipt_digest")
         if episode.outcome not in {"pass", "fail"}:
             raise ValueError("invalid_outcome")
         if not episode.repository_id or not episode.receipt_digest or not episode.failure_signature:

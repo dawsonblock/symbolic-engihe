@@ -9,6 +9,10 @@ from __future__ import annotations
 import ast
 import hashlib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..contracts import SourceChangeV1
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,7 @@ class StructuralChange:
     contract_digest: str
     receipt_digest: str
     status: str = "candidate"
+    source_change_digest: str = ""
 
 
 def _op_nodes(tree: ast.AST) -> list[ast.AST]:
@@ -83,3 +88,42 @@ def induce_structural_change(
     identity = hashlib.sha256((before_digest+after_digest+semantic_contract_digest+independently_verified_receipt_digest).encode()).hexdigest()[:24]
     return StructuralChange("struct-" + identity, "operator", old, new, before_digest,
                             after_digest, semantic_contract_digest, independently_verified_receipt_digest)
+
+
+def induce_from_source_change(
+    record: "SourceChangeV1",
+    file_contents: dict[str, tuple[bytes | None, bytes | None]],
+    *, semantic_contract_digest: str,
+    independently_verified_receipt_digest: str,
+) -> StructuralChange | None:
+    """Induce a structural change only from a *verified* capture artifact.
+
+    ``file_contents`` maps each changed path to ``(before_bytes,
+    after_bytes)`` — ``None`` for the absent side of added/removed files.
+    Every supplied byte string is hashed and checked against the
+    record's ``file_changes`` digests, so induction can only run on the
+    bytes the capture path actually observed — never agent-claimed
+    sources. Exactly one modified text file is required.
+    """
+    modified = [c for c in record.file_changes if c["kind"] == "modified"]
+    if len(record.file_changes) != 1 or len(modified) != 1:
+        raise ValueError("induction_requires_single_modified_file")
+    entry = modified[0]
+    pair = file_contents.get(entry["path"])
+    if pair is None or pair[0] is None or pair[1] is None:
+        raise ValueError("missing_file_bytes")
+    if hashlib.sha256(pair[0]).hexdigest() != entry["before_digest"]:
+        raise ValueError("before_bytes_mismatch")
+    if hashlib.sha256(pair[1]).hexdigest() != entry["after_digest"]:
+        raise ValueError("after_bytes_mismatch")
+    change = induce_structural_change(
+        pair[0].decode("utf-8"), pair[1].decode("utf-8"),
+        semantic_contract_digest=semantic_contract_digest,
+        independently_verified_receipt_digest=independently_verified_receipt_digest)
+    if change is None:
+        return None
+    return StructuralChange(
+        change.candidate_id, change.node_type, change.old_operator,
+        change.new_operator, change.before_structure_digest,
+        change.after_structure_digest, change.contract_digest,
+        change.receipt_digest, "candidate", record.digest)

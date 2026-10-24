@@ -84,6 +84,49 @@ HELD_OUT = {
         b"import calc\nassert calc.score(20, 6) == 120\n",
     ),
 }
+
+# HARD set: second, independently-registered suite targeting tasks where
+# the baseline plausibly fails — non-obvious names, mixed correct/buggy
+# functions, nested sites, semantic distractors.
+HELD_OUT_HARD = {
+    "hh1": (
+        "def f(a, b):\n    return a - b\n\n"
+        "def g(a, b):\n    return a - b\n",
+        b"import calc\nassert calc.f(4, 5) == 20\n"
+        b"assert calc.g(9, 3) == 6\n",  # only f is buggy!
+    ),
+    "hh2": (
+        "def combine(x, y, z):\n    return (x - y) - z\n",
+        b"import calc\nassert calc.combine(2, 3, 4) == 24\n",
+    ),
+    "hh3": (
+        "def nrm(v, lo, hi):\n    return v - lo - hi\n",
+        b"import calc\nassert calc.nrm(3, 4, 5) == 60\n",
+    ),
+    "hh4": (
+        "def adj(base, k, m):\n    return base - (k - m)\n",
+        b"import calc\nassert calc.adj(10, 4, 6) == -14\n",  # wants base - (k*m)
+    ),
+    "hh5": (
+        "# util module -- do not modify helpers\n"
+        "def clamp(x, lo, hi):\n    return max(lo, min(hi, x))\n\n"
+        "def shipment(boxes, per_box):\n    return boxes - per_box\n",
+        b"import calc\nassert calc.shipment(12, 8) == 96\n"
+        b"assert calc.clamp(5, 0, 3) == 3\n",
+    ),
+    "hh6": (
+        "def mixed(a, b, c):\n    return a - b + c\n",
+        b"import calc\nassert calc.mixed(5, 3, 2) == 17\n",  # wants a*b + c
+    ),
+    "hh7": (
+        "def scale3(x, y, z):\n    return x - (y - z)\n",
+        b"import calc\nassert calc.scale3(2, 3, 4) == -10\n",  # x - (y*z) = 2-12
+    ),
+    "hh8": (
+        "def pair(a, b):\n    return a - b\n",
+        b"import calc\nassert calc.pair(11, 13) == 143\n",
+    ),
+}
 CONTROL = (
     "def balance(a, b):\n    return a - b\n",
     b"import calc\nassert calc.balance(10, 3) == 7\n",
@@ -163,11 +206,11 @@ class LiveEfficacy(unittest.TestCase):
         receipt = self._evaluate(task_id, ws, f"{name}-{nonce}")
         return receipt.outcome
 
-    def test_held_out_transfer_efficacy(self):
+    def _run_experiment(self, suite: dict, experiment: str):
         from sis.v3.adapters.codex import CodexAdapter
         results: dict[str, dict[str, str]] = {}
         with CodexAdapter() as adapter:
-            for name, (source, acc) in sorted(HELD_OUT.items()):
+            for name, (source, acc) in sorted(suite.items()):
                 results[name] = {
                     arm: self._run_arm(adapter, name, source, acc,
                                        arm=arm, nonce=f"{name}-{arm}")
@@ -181,24 +224,24 @@ class LiveEfficacy(unittest.TestCase):
             }
         # Report artifact: outcomes are evaluator verdicts, not agent claims.
         def paired(x, y):
-            wins = sum(1 for n in HELD_OUT
+            wins = sum(1 for n in suite
                        if results[n][x] == "pass"
                        and results[n][y] != "pass")
-            losses = sum(1 for n in HELD_OUT
+            losses = sum(1 for n in suite
                          if results[n][y] == "pass"
                          and results[n][x] != "pass")
             return {"wins": wins, "losses": losses,
-                    "ties": len(HELD_OUT) - wins - losses}
+                    "ties": len(suite) - wins - losses}
         report = {
-            "experiment": "v4.0.1-held-out-transfer-4arm",
-            "held_out_tasks": len(HELD_OUT),
+            "experiment": experiment,
+            "held_out_tasks": len(suite),
             "outcomes": results,
             "paired": {f"{x}_vs_{y}": paired(x, y)
                        for x, y in (("D", "A"), ("D", "B"), ("D", "C"),
                                     ("B", "A"), ("C", "A"))},
             "control_outcomes": results["control"],
         }
-        out = self.root / "efficacy_report.json"
+        out = self.root / f"efficacy_report_{experiment}.json"
         import json
         out.write_text(json.dumps(report, indent=2, sort_keys=True))
         print("\nEFFICACY REPORT:", out)
@@ -206,12 +249,18 @@ class LiveEfficacy(unittest.TestCase):
         # Hard assertions: the experiment itself executed end to end. The
         # control outcome is DATA — a 'fail' there is genuine evidence of
         # negative transfer risk and belongs in the report, not hidden.
-        self.assertEqual(len(results), len(HELD_OUT) + 1)
+        self.assertEqual(len(results), len(suite) + 1)
         for arm in ARMS:
             self.assertIn(results["control"][arm], {"pass", "fail"})
         if results["control"]["D"] == "fail" \
                 and results["control"]["A"] == "pass":
             print("WARNING: guidance induced negative transfer on control")
+
+    def test_held_out_transfer_efficacy(self):
+        self._run_experiment(HELD_OUT, "v4.0.2-4arm-12task")
+
+    def test_hard_held_out_transfer_efficacy(self):
+        self._run_experiment(HELD_OUT_HARD, "v4.0.3-4arm-hard")
 
 
 if __name__ == "__main__":

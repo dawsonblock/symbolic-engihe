@@ -1,12 +1,36 @@
 # v4.0.x — held-out transfer efficacy experiments (SIS3-501)
 
-**Status: three real runs executed against the live Codex backend.
-v4.0.2 (4 arms × 12 held-out tasks + control): D solved 12/12; A/B/C
-10/12 each; placebo/raw-context zero effect (0/0/12). Guidance rescues
-exactly the tasks the baseline misses — but baseline misses only 2/12
-on this bug class, so discordant pairs = 2 (exact McNemar p = 0.25).
-M5 stays OPEN: power requires a harder task distribution where the
-baseline genuinely fails, not more tasks of this class.**
+**Status: four real runs executed against the live Codex backend.
+v4.0.3 (hard distribution, 4 arms × 8 tasks + control, 36 turns):
+D 6/8 vs A 1/8, B 2/8, C 1/8 — paired D-vs-A **5 wins / 0 losses / 3
+ties** (exact McNemar p = 0.0625). Borderline at α=0.05 and replicated
+in direction across every run; M5 remains narrowly open but the
+evidence is now materially stronger.**
+
+## v4.0.3 — hard distribution (36 live turns)
+
+| Task | Shape | A | B | C | D |
+|------|-------|---|---|---|---|
+| hh1 (only `f` buggy, `g` correct sub) | distractor | fail | fail | fail | **pass** |
+| hh2 `(x-y)-z` → `x*y*z` | left spine | fail | fail | fail | **pass** |
+| hh3 `v-lo-hi` → `v*lo*hi` | left spine | fail | fail | fail | **pass** |
+| hh4 `a-(k-m)` → `a-(k*m)` | right nested | fail | fail | fail | fail |
+| hh5 helpers + `shipment` | distractor | pass | pass | pass | pass |
+| hh6 `a-b+c` → `a*b+c` | mixed spine | fail | pass | fail | **pass** |
+| hh7 `x-(y-z)` → `x-(y*z)` | right nested | fail | fail | fail | fail |
+| hh8 `a-b` → `a*b` | flat | fail | fail | fail | **pass** |
+| control `balance` | correct code | fail | fail | fail | fail |
+
+- D vs A: **5W / 0L / 3T**; vs B: 4/0/4; vs C: 5/0/3.
+- Exact McNemar (5:0 discordant): p = 0.0625 — just above α=0.05.
+- Notable: the two D-arm misses are BOTH right-nested repairs
+  (`x-(y-z)`, `a-(k-m)`); the agent fails to apply guidance at
+  parenthesized right-side sites — a real, documented limitation in the
+  serving path, not the induction mechanism (pattern apply handles them
+  deterministically in unit tests).
+- Control unchanged: all arms break correct code under fix-pressure.
+
+## v4.0.2 — four-arm run (52 live turns, independent scoring)
 
 ## v4.0.2 — four-arm run (52 live turns, independent scoring)
 

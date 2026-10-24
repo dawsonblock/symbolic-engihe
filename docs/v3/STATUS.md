@@ -283,3 +283,17 @@ remaining_unknowns:
   - "Subprocess custody shares one OS principal — a true split needs a separate service account/host"
   - "Passing live Codex episode still pending quota reset"
 ```
+
+## Live episode 002 — passing Codex task (M1 gate item met)
+
+```yaml
+phase_id: live-episode-002
+status: verified
+observed_outcomes:
+  - "codex exec --json (codex-cli 0.156.1) ran the buggy_calc fixture after the 8:36 PM quota reset: 16 chained events including a failed command (exit 128), one file_change edit (percentage fix), a verification command (exit 0), turn.completed with real token usage"
+  - "Independent evaluator injected hidden acceptance tests into a fresh workspace and signed outcome=pass; offline public-key verification passed"
+  - "Evidence preserved under docs/v3/episodes/live-002/ including the full signed OutcomeReceiptV1"
+remaining_unknowns:
+  - "One solved task is pipeline proof, not lift; no cross-task retrieval or efficacy evidence exists"
+next_gate: "Mine a candidate from this episode, qualify it via promotion on disjoint fixtures, then a scripted four-arm pilot"
+```

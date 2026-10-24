@@ -35,7 +35,7 @@ def _valid_manifest(document):
 
 def _included(relative):
     path = PurePosixPath(relative)
-    return (path.name != "SOURCE_SHA256.json"
+    return (path.name not in {"SOURCE_SHA256.json", "RELEASE_SHA256.json"}
             and not any(part in SKIP_DIRS or part.endswith(".egg-info") for part in path.parts)
             and path.suffix not in SKIP_EXTS)
 

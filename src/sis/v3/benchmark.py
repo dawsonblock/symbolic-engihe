@@ -13,6 +13,7 @@ changing the accounting.
 """
 from __future__ import annotations
 
+import math
 import secrets
 import shutil
 import tempfile
@@ -196,6 +197,11 @@ class BenchmarkHarness:
             per_task.append(entry)
 
         solved = {arm: sum(1 for t in results if t.arms[arm].outcome == "pass") for arm in arms}
+        solve_rates = {
+            arm: {"solved": solved[arm], "n": len(results),
+                  "wilson_ci95": [f"{x:.10f}" for x in wilson_ci(solved[arm], len(results))]}
+            for arm in arms
+        }
         pairs = {}
         for left, right in (("D", "A"), ("D", "B"), ("D", "C"), ("C", "A")):
             if left not in arms or right not in arms:
@@ -209,6 +215,7 @@ class BenchmarkHarness:
             pairs[f"{left}_vs_{right}"] = {
                 "wins": wins, "losses": losses, "ties": ties,
                 "solved_delta": wins - losses,
+                "mcnemar_exact_p": f"{mcnemar_p(wins, losses):.10f}",
             }
         return {
             "schema_version": 1,
@@ -217,6 +224,7 @@ class BenchmarkHarness:
                        "token_budget": budget.token_budget,
                        "tool_budget": budget.tool_budget},
             "solved_counts": solved,
+            "solve_rates": solve_rates,
             "budget_violations": sum(
                 1 for t in results for r in t.arms.values() if r.budget_exceeded
             ),
@@ -230,3 +238,32 @@ class BenchmarkHarness:
 def report_digest(report: Mapping) -> str:
     """Content-address a report for anchoring alongside episode evidence."""
     return canonical_digest("benchmark_report", 1, report)
+
+
+def wilson_ci(k: int, n: int, z: float = 1.959964) -> tuple[float, float]:
+    """Wilson score interval for a binomial rate (honest even at small n)."""
+    if type(k) is not int or type(n) is not int or not (0 <= k <= n) or n == 0:
+        raise ContractError("wilson_ci requires integers with 0 <= k <= n, n > 0")
+    p = k / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denom
+    lo, hi = max(0.0, center - half), min(1.0, center + half)
+    if k == 0:
+        lo = 0.0
+    if k == n:
+        hi = 1.0
+    return (lo, hi)
+
+
+def mcnemar_p(b: int, c: int) -> float:
+    """Exact two-sided McNemar (binomial sign) p-value on discordant pairs."""
+    if type(b) is not int or type(c) is not int or b < 0 or c < 0:
+        raise ContractError("mcnemar_p requires nonnegative integer counts")
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    # P(X <= k) under Binomial(n, 0.5), doubled and capped at 1.
+    cumulative = sum(math.comb(n, i) for i in range(k + 1)) / (2 ** n)
+    return min(1.0, 2.0 * cumulative)

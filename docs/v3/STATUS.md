@@ -297,3 +297,44 @@ remaining_unknowns:
   - "One solved task is pipeline proof, not lift; no cross-task retrieval or efficacy evidence exists"
 next_gate: "Mine a candidate from this episode, qualify it via promotion on disjoint fixtures, then a scripted four-arm pilot"
 ```
+
+## v3.1 roadmap slice — release integrity, projection, envelopes, semantic gates, catalog scopes, guidance phases, benchmark stats
+
+```yaml
+phase_id: v31-roadmap-slice-1
+tickets: [SIS3-101, SIS3-102, SIS3-122, SIS3-131, SIS3-141, SIS3-150(partial), SIS3-161, SIS3-170/171(partial)]
+status: implemented_and_tested
+changed_files:
+  - tools/build_release.py           # NEW: RELEASE_SHA256.json generation + drift check
+  - tools/verify_release.py          # ZIP-native verify() restored + RELEASE manifest + verify_tree + build_zip + compile
+  - tools/check_source_manifest.py   # both manifest names excluded from source inventory
+  - src/sis/registry.py              # close() + context manager
+  - src/sis/family_eval.py           # close() + context manager
+  - src/sis/skill_holdout.py         # close() + context manager
+  - src/sis/v3/episode_projection.py # NEW: deterministic projection + agent_view redaction
+  - src/sis/v3/outcome_v2.py         # NEW: OutcomeEnvelopeV2 issue/verify, key registry, revocation, nonce replay, expiry
+  - src/sis/v3/semantic_checks.py    # NEW: AST operator-class diff + metamorphic violation flags
+  - src/sis/v3/counterexamples.py    # NEW: cross-catalog negative-evidence index
+  - src/sis/v3/catalog.py            # NEW: namespace scopes + cascade_suspend
+  - src/sis/v3/guidance_gateway.py   # NEW: shadow/diagnostic/conditional phases + kill switch + acceptance log
+  - src/sis/v3/retrieval.py          # AblationFlags (benchmark-only gate removal)
+  - src/sis/v3/benchmark.py          # wilson_ci + mcnemar_p + per-arm solve-rate CIs in report
+  - src/sis/v3/contracts.py          # OutcomeEnvelopeV2 record (V1 serialization untouched)
+  - tests/v3/test_release_artifact.py
+  - tests/v3/test_roadmap_modules.py
+tests_added: 40
+observed_outcomes:
+  - "Full suite: 526 tests, 0 failures, 2 skips, run under -W error with zero warnings"
+  - "RELEASE_SHA256.json covers 220 files; build_zip + ZIP-native verify() round-trips; verify_tree on fresh extraction + --compile passes"
+  - "ZIP verifier rejects: missing manifest, extra/missing/tampered member, duplicate paths, symlinks, unsafe paths, oversized members — streaming, never extracts"
+  - "OutcomeEnvelopeV2 verifies offline; forgery, tampered payload, unknown/revoked/wrong-purpose keys, nonce replay, expiry, and validity windows all fail closed"
+  - "semantic_checks flags Sub->Add noncommutative->commutative swaps (remaining_balance class); commutative->commutative passes"
+  - "GuidanceGateway: shadow abstains but logs would_recommend; diagnostic reports reasons without procedure IDs; conditional serves; kill switch via file and SIS3_DISABLE env"
+  - "Cascade suspension converts a revoked evidence digest into governed suspension decisions on dependent qualified records"
+remaining_unknowns:
+  - "Cross-repository scope promotion has no repository-disjoint evidence requirement enforced in code yet — scope is metadata, gate is procedural"
+  - "OutcomeEnvelopeV2 is defined and tested but not yet wired into the benchmark/evaluator issuance path"
+  - "mcnemar/wilson are correct statistics but zero real held-out tasks have been run; M5 efficacy gate untouched"
+  - "SQLite close() exists everywhere; WAL databases still leave -wal/-shm files by design until final checkpoint"
+next_gate: "Wire envelope issuance into verifier path; enforce cross-repo evidence count in promotion; pre-register held-out suite"
+```

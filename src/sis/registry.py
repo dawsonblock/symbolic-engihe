@@ -111,6 +111,12 @@ class Registry:
         with self.lock:
             self.conn.close()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
     def _snapshot(self, rule_id):
         row = self.conn.execute('SELECT ' + ','.join(COLUMNS) + ' FROM rules WHERE id=?', (rule_id,)).fetchone()
         if row is None:

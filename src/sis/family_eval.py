@@ -346,6 +346,8 @@ class FamilyExperimentVault:
         self.con.execute('CREATE TABLE IF NOT EXISTS uses (experiment_id TEXT PRIMARY KEY, protocol_hash TEXT NOT NULL, status TEXT NOT NULL, report_hash TEXT)')
 
     def close(self): self.con.close()
+    def __enter__(self): return self
+    def __exit__(self,*args): self.close()
 
     def run(self,private_dataset,protocol,bundle,baseline_client,adapted_client,*,key):
         validate_protocol(protocol,private_dataset,bundle,key=key)

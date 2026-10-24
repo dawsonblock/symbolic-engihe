@@ -83,6 +83,15 @@ class Rejection:
 
 
 @dataclass(frozen=True)
+class AblationFlags:
+    """Benchmark-only gates removal (SIS3-171); never default-on."""
+
+    skip_preconditions: bool = False
+    skip_contraindications: bool = False
+    include_unqualified: bool = False
+
+
+@dataclass(frozen=True)
 class RetrievalResult:
     candidates: tuple[Candidate, ...]
     rejections: tuple[Rejection, ...]
@@ -95,22 +104,28 @@ def retrieve(
     files_present=(),
     symbols_extra=(),
     limit: int = 3,
+    ablations: AblationFlags = AblationFlags(),
 ) -> RetrievalResult:
     """Apply hard gates then rank surviving qualified procedures."""
     if type(limit) is not int or not 1 <= limit <= 3:
         raise ContractError("retrieval limit must be in [1,3]")
+    if not isinstance(ablations, AblationFlags):
+        raise ContractError("ablations must be an AblationFlags value")
     context = RetrievalContext.from_request(
         request, files_present=files_present, symbols_extra=symbols_extra
     )
     candidates: list[Candidate] = []
     rejections: list[Rejection] = []
 
-    for record in store.by_status("qualified"):
+    pool = store.by_status("qualified")
+    if ablations.include_unqualified:
+        pool = list(store.all_latest())
+    for record in pool:
         contraindicated = [
             cond for cond in record.contraindications
             if _contradiction_matches(cond, context)
         ]
-        if contraindicated:
+        if contraindicated and not ablations.skip_contraindications:
             rejections.append(Rejection(
                 procedure_id=record.procedure_id,
                 reason_code="prior_negative_transfer",
@@ -121,7 +136,7 @@ def retrieve(
             cond for cond in record.preconditions
             if not precondition_holds(cond, context)
         ]
-        if missing:
+        if missing and not ablations.skip_preconditions:
             rejections.append(Rejection(
                 procedure_id=record.procedure_id,
                 reason_code="precondition_failed",

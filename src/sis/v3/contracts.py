@@ -358,6 +358,32 @@ class OutcomeReceiptV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class OutcomeEnvelopeV2(V1Record):
+    """V2 outcome envelope: binds attempt, environment, execution receipt,
+    nonce and expiry without altering the V1 receipt serialization."""
+
+    envelope_id: str
+    evaluator_identity: str
+    task_id: str
+    attempt_id: str
+    evaluated_repo_digest: str
+    environment_digest: str
+    test_suite_commitment: str
+    execution_receipt_digest: str
+    criterion_version: str
+    outcome: str
+    regression_evidence: tuple[str, ...]
+    nonce: str
+    issued_at: str
+    expires_at: str | None
+    key_purpose: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "outcome_envelope"
+
+
+@dataclass(frozen=True, kw_only=True)
 class ProcedureRecordV1(V1Record):
     procedure_id: str
     revision: int
@@ -499,6 +525,21 @@ def _validate_record(record: V1Record) -> None:
         _enum(d["outcome"], _OUTCOMES, "outcome")
         for ref in _sequence(d["regression_evidence"], "regression_evidence"):
             _digest(ref, "regression_evidence[]")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, OutcomeEnvelopeV2):
+        for name in ("envelope_id", "evaluator_identity", "task_id", "attempt_id", "nonce"):
+            _identifier(d[name], name)
+        for name in ("evaluated_repo_digest", "environment_digest",
+                     "test_suite_commitment", "execution_receipt_digest"):
+            _digest(d[name], name)
+        _text(d["criterion_version"], "criterion_version", maximum=128)
+        _enum(d["outcome"], _OUTCOMES, "outcome")
+        for ref in _sequence(d["regression_evidence"], "regression_evidence"):
+            _digest(ref, "regression_evidence[]")
+        _timestamp(d["issued_at"], "issued_at")
+        _timestamp(d["expires_at"], "expires_at") if d["expires_at"] is not None else None
+        _enum(d["key_purpose"], {"outcome_signing"}, "key_purpose")
         _identifier(d["signer_key_id"], "signer_key_id")
         _require(isinstance(d["signature"], str) and bool(re.fullmatch(r"[0-9a-f]{128}", d["signature"])), "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
     elif isinstance(record, ProcedureRecordV1):

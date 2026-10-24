@@ -109,8 +109,9 @@ class SkillHoldoutVault:
         self.conn.execute('''CREATE TABLE IF NOT EXISTS sis_skill_holdout (
             id TEXT PRIMARY KEY, public TEXT NOT NULL, private TEXT NOT NULL,
             used INTEGER NOT NULL DEFAULT 0, receipt TEXT)''')
+    def close(self): self.conn.close()
     def __enter__(self): return self
-    def __exit__(self,*args): self.conn.close()
+    def __exit__(self,*args): self.close()
     def _mac(self,value):
         return hmac.new(self.key,canonical(value).encode('utf8'),hashlib.sha256).hexdigest()
     def _signed(self,body):

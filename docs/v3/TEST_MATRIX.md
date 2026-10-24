@@ -33,7 +33,14 @@ regenerated during development.
 | Guidance (SIS3-010) | Abstain-only | Recommend path with procedures+evidence+matched gates; remaining_balance fixture abstains prior_negative_transfer |
 | Promotion (SIS3-011) | Not present in baseline | Full lifecycle; operator token + evaluator signature for evidence transitions; chained decision log; checkpoint/restore |
 | Anchors (audit) | head export only | AnchorChain in separate-custody dir; grew/corrupt/missing divergence detection |
-| Benchmark (SIS3-012) | Not present in baseline | Paired A/B/C/D harness, fresh workspaces, independent scoring, wins/losses/ties |
+| Benchmark (SIS3-012) | Not present in baseline | Paired A/B/C/D harness, fresh workspaces, independent scoring, wins/losses/ties; Wilson CI95 per arm + exact McNemar p per pair |
+| Release artifact (SIS3-101/102) | SOURCE manifest Git-pinned only | `RELEASE_SHA256.json` (220 files) + ZIP-native `verify()` (streaming, no extraction) + `verify_tree` on fresh extraction; tamper/extra/missing/duplicate/symlink/manifest-self-coverage rejected; `close()`/ctx-manager on all SQLite owners |
+| Episode projection (SIS3-122) | Not present in baseline | Deterministic replay projection; `agent_view` excludes evaluator payloads and artifact bytes |
+| OutcomeEnvelopeV2 (SIS3-131) | V1 receipts only | Attempt/env/exec-receipt binding, nonce + expiry, pinned key registry w/ validity windows, revocation + replay rejected; V1 serialization unchanged |
+| Semantic checks (SIS3-141) | Text-level negative transfer only | AST operator-class diff; noncommutative↔commutative swaps flagged (`remaining_balance` class protected); counterexample index surfaces corpus negatives |
+| Catalog scopes (SIS3-150) | Single flat catalog | repository/family/cross_repository scopes persisted + scoped qualified head; `cascade_suspend` suspends all qualified records citing a revoked evidence digest via governed decisions |
+| Guidance phases (SIS3-161) | Single abstain/recommend path | shadow (logs would-recommend, agent sees abstain), diagnostic (reasons only), conditional (full serve); kill switch via file + `SIS3_DISABLE`; acceptance telemetry logged, never a success label |
+| Ablations (SIS3-171) | Not present in baseline | `AblationFlags` removes precondition/contraindication/qualification gates for benchmark arms; never default-on |
 
 ## Runtime matrix
 

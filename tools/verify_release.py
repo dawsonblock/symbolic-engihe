@@ -140,9 +140,17 @@ def verify_tree(root: Path) -> dict:
 
     actual: dict[str, Path] = {}
     for path in root.rglob("*"):
-        if path.is_symlink() or not path.is_file():
-            continue
         relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            if _included(relative):
+                raise ValueError("release tree contains a symlink: " + relative)
+            continue
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            if _included(relative):
+                raise ValueError("release tree contains a non-regular entry: " + relative)
+            continue
         if _included(relative):
             actual[relative] = path
     if set(actual) != set(manifest):
@@ -155,18 +163,82 @@ def verify_tree(root: Path) -> dict:
     return {"files": len(manifest)}
 
 
+# Canonical member metadata: identical input bytes must produce identical
+# archive bytes on every host, so timestamps, permission bits, and the
+# creating system are pinned rather than inherited from the filesystem.
+_CANONICAL_DATE = (1980, 1, 1, 0, 0, 0)
+_CANONICAL_MODE = (0o100644 << 16)
+
+
+def _canonical_info(name: str) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(name, date_time=_CANONICAL_DATE)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.create_system = 0
+    info.external_attr = _CANONICAL_MODE
+    return info
+
+
 def build_zip(root: Path, target: Path) -> Path:
-    """Package ``root`` into ``target`` as ``<name>/<files>`` for verify()."""
+    """Package ``root`` into ``target`` as ``<name>/<files>`` for verify().
+
+    Deterministic: canonical path ordering, pinned 1980-01-01 timestamps,
+    uniform 0o100644 modes, create_system=0, UTF-8 names. Two builds of the
+    same manifest content are byte-identical.
+    """
     manifest = json.loads((root / "RELEASE_SHA256.json").read_text(encoding="utf-8"))
     _valid_manifest(manifest)
     prefix = root.name + "/"
-    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(target, "w") as archive:
         for relative in sorted(manifest["files"]):
-            archive.write(root / relative, prefix + relative)
-        archive.writestr(prefix + "RELEASE_SHA256.json",
-                         json.dumps(manifest, sort_keys=True,
-                                    separators=(",", ":")) + "\n")
+            data = (root / relative).read_bytes()
+            archive.writestr(_canonical_info(prefix + relative), data)
+        archive.writestr(
+            _canonical_info(prefix + "RELEASE_SHA256.json"),
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+        )
     return target
+
+
+def release_attestation(zip_path: Path, root: Path) -> dict:
+    """Build-metadata document kept OUTSIDE the archive.
+
+    Records the verified archive hash, source identity, and build tool
+    versions so a release can be audited without hashing its own metadata
+    into the artifact. Determinism is not claimed for this document — only
+    for the ZIP it describes.
+    """
+    import platform
+    import subprocess
+    import sys
+    from datetime import datetime, timezone
+
+    zip_path = Path(zip_path)
+    result = verify(zip_path)
+    manifest_sha = hashlib.sha256(
+        (root / "RELEASE_SHA256.json").read_bytes()
+    ).hexdigest() if (root / "RELEASE_SHA256.json").exists() else None
+    git_sha = None
+    try:
+        git_sha = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    return {
+        "schema": 1,
+        "artifact": zip_path.name,
+        "zip_sha256": result["zip_sha256"],
+        "source_files": result["source_files"],
+        "project": result["project"],
+        "manifest": result["manifest"],
+        "manifest_sha256": manifest_sha,
+        "git_sha": git_sha,
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 def main(argv=None) -> int:

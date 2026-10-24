@@ -56,6 +56,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true",
                         help="fail if RELEASE_SHA256.json is missing or stale")
+    parser.add_argument("--zip", metavar="PATH",
+                        help="also build the canonical deterministic release ZIP at PATH")
+    parser.add_argument("--attest", metavar="PATH",
+                        help="with --zip: write the release attestation JSON to PATH")
     args = parser.parse_args(argv)
     current = manifest_document(ROOT)
     if args.check:
@@ -68,9 +72,26 @@ def main(argv=None) -> int:
             print("release manifest is stale; run tools/build_release.py", file=sys.stderr)
             return 1
         print(f"release manifest covers {len(current['files'])} files and is current")
-        return 0
-    target = write_manifest(ROOT)
-    print(f"wrote {MANIFEST_NAME} covering {len(current['files'])} files")
+        if not args.zip:
+            return 0
+    else:
+        target = write_manifest(ROOT)
+        print(f"wrote {MANIFEST_NAME} covering {len(current['files'])} files")
+    if args.zip:
+        import verify_release
+        zip_path = verify_release.build_zip(ROOT, Path(args.zip))
+        report = verify_release.verify(zip_path)
+        print(f"canonical ZIP verified: {zip_path} sha256={report['zip_sha256']} "
+              f"files={report['source_files']}")
+        if args.attest:
+            attest = verify_release.release_attestation(zip_path, ROOT)
+            attest_path = Path(args.attest)
+            attest_path.parent.mkdir(parents=True, exist_ok=True)
+            attest_path.write_text(
+                json.dumps(attest, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            print(f"release attestation written: {attest_path}")
     return 0
 
 

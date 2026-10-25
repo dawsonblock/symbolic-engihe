@@ -2,14 +2,14 @@
   "schema_version": 1,
   "kind": "qualification_run",
   "branch": "codex/sis-v3.3-governed-learning",
-  "generated_at": "2026-10-25T23:03:41Z",
-  "commit_at_generation": "98c2455f48631f5672b1c101b0283ffb1dbcfb8b",
-  "note": "the suite, deterministic campaign, smoke, ingestion smoke and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
+  "generated_at": "2026-10-25T23:43:40Z",
+  "commit_at_generation": "c6bad7df64310cd9cd57a18546bd9a3e89b86f22",
+  "note": "the suite, deterministic campaign, smoke, ingestion smoke, skill-holdout and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
   "commands": [
     {
       "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
       "result": {
-        "passed": 793,
+        "passed": 796,
         "skipped": 2,
         "failed": 0
       }
@@ -42,7 +42,7 @@
           "E": 2
         },
         "qualified_candidates": 5,
-        "verdict": "full lifecycle authentic; null efficacy contrast — fixture ceiling hit unaided",
+        "verdict": "full lifecycle authentic; null efficacy contrast \u2014 fixture ceiling hit unaided",
         "carried_over_from": "980dd34e945821e2d46f748d4f1b2fa8adaa5608"
       }
     },
@@ -69,6 +69,22 @@
       }
     },
     {
+      "command": "PYTHONPATH=src python3 tools/skill_holdout.py --skills-root ../skills/skills-main/skills --skills-root \"../skills/vskill-main 2/plugins\" -o evidence/skills/holdout.json",
+      "result": {
+        "exit_code": 0,
+        "qualified": [
+          "write-skills",
+          "php2shell-check"
+        ],
+        "solved": {
+          "A": 0,
+          "E": 1
+        },
+        "served_skill_steps": true,
+        "verdict": "worked template with a deterministic scripted agent and test-custody keys; machinery evidence only"
+      }
+    },
+    {
       "command": "security failure injection (13 scenarios)",
       "result": {
         "scenarios_failing": 0,
@@ -78,10 +94,10 @@
       }
     },
     {
-      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 793 --skipped 2 --failed 0",
+      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 796 --skipped 2 --failed 0",
       "result": "see release/release_manifest.json and release/verification.json"
     }
   ],
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
-  "efficacy": "EFFICACY_NOT_QUALIFIED — no powered preregistered live holdout has been run"
+  "efficacy": "EFFICACY_NOT_QUALIFIED \u2014 no powered preregistered live holdout has been run"
 }

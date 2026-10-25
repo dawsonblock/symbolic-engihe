@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,8 @@ from sis.v3.contracts import GuidanceRequestV1, ProcedureRecordV1, TaskEnvelopeV
 from sis.v3.evaluation import assert_repository_disjoint, paired_summary
 from sis.v3.promotion import PromotionController, operator_token_digest
 from sis.v3.runner import LocalSubprocessExecutor, tree_digest
+from sis.v3.source_change import capture_change
+from sis.v3.contracts import ContractError
 from sis.v3.secure_guidance import StrictGuidanceGateway
 from sis.v3.verifier import OutcomeVerifier
 from tests.v3.authority_testkit import (TEST_TOKEN, drive, evaluator_keypair,
@@ -119,6 +122,12 @@ def codex_agent(ctx, *, statements):
         parts.append("\nProject conventions (advisory):\n" + hints)
     # Enforceable termination (v3.2 PR-06): own process group; on timeout
     # kill the whole group so the codex child cannot outlive the budget.
+    # Capture before/after trees for a verified SourceChangeV1 (v3.2):
+    # snapshot the workspace, run the agent, then capture_change binds the
+    # immutable before state to whatever the agent actually wrote.
+    before = Path(tempfile.mkdtemp(prefix="before-",
+                                   dir=ctx.workspace.parent))
+    shutil.copytree(ctx.workspace, before, dirs_exist_ok=True)
     proc = subprocess.Popen(
         ["codex", "exec", "-C", str(ctx.workspace),
          "-s", "workspace-write", "--skip-git-repo-check",
@@ -133,6 +142,19 @@ def codex_agent(ctx, *, statements):
         out, err = proc.communicate()
     (ctx.workspace / ".codex_exec.log").write_text(
         (out or "") + "\n" + (err or ""))
+    try:
+        change, diff = capture_change(
+            before, ctx.workspace,
+            attempt_id=f"{ctx.task.task_id}-{ctx.arm}",
+            worker_identity="codex-exec",
+            expected_before_digest=ctx.task.repo_snapshot_digest)
+        (ctx.workspace.parent /
+         f"change-{ctx.task.task_id}-{ctx.arm}.json").write_text(
+            json.dumps({"record": change.to_dict(),
+                        "diff_hex": diff.hex()}, default=str))
+    except ContractError:
+        pass  # no change or base moved — nothing to learn from
+    shutil.rmtree(before, ignore_errors=True)
     # Verified accounting: codex prints 'tokens used\nN' on stdout.
     usage = {}
     for line in (out or "").splitlines():

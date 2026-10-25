@@ -1,0 +1,50 @@
+{
+  "branch": "codex/sis-v3.3-governed-learning",
+  "commands": [
+    {
+      "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
+      "result": {
+        "failed": 0,
+        "passed": 709,
+        "skipped": 2,
+        "skips": [
+          "tests/test_v240_review.py (Windows ACL \u2014 platform)",
+          "tests/v3/test_source_manifest.py::SourceManifestModeTests::test_pinned_baseline_verification_reports_dev_delta_separately (pinned v2-era baseline commit not in this repo history)"
+        ]
+      }
+    },
+    {
+      "command": "python3 tools/governed_campaign.py -o evidence/integration",
+      "result": {
+        "contrast_E_vs_A": {
+          "losses": 0,
+          "mcnemar_exact_p": "0.5000000000",
+          "solved_delta": 2,
+          "ties": 0,
+          "wins": 2
+        },
+        "exit_code": 0,
+        "qualified_candidates": 5,
+        "solved": {
+          "A": 0,
+          "B": 2,
+          "C": 2,
+          "D": 0,
+          "E": 2
+        }
+      }
+    },
+    {
+      "command": "python3 tools/verify_release.py release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
+      "result": "see release/verification.json (post-build)"
+    }
+  ],
+  "commit": "73534e5fa2579168da4bbe08fcb10f30c1ce994b",
+  "generated_at": "2026-10-25T06:21:14Z",
+  "kind": "qualification_run",
+  "platform": "macOS-26.2-arm64-arm-64bit",
+  "python": "3.12.0",
+  "schema_version": 1,
+  "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
+  "status_basis": "all security/correctness gates pass deterministically; learning efficacy requires a live-model powered holdout campaign, which has not been run on this branch"
+}

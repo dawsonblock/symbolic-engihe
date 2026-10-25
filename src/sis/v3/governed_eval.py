@@ -190,8 +190,29 @@ def compute_metrics(report: Mapping, *, served: Mapping | None = None,
             "mean_tool_calls_per_task": (
                 round(sum(tools) / len(tools), 2) if tools else None),
             "mean_wall_seconds_per_task": round(sum(walls) / n, 3),
+            "mean_cost_per_verified_solve": None,
             "evaluation_integrity_failures": integrity_failures,
         }
+    # Paired win/loss rates against the baseline arm, computed with the
+    # same valid-solve rule as solved_task_rate (pass, in-budget).
+    baseline = "A" if "A" in metrics else None
+    for arm in metrics:
+        if baseline is None:
+            metrics[arm]["paired_win_rate"] = None
+            metrics[arm]["paired_loss_rate"] = None
+            continue
+        wins = losses = 0
+        for results in per_task.values():
+            a = results.get(baseline, {})
+            r = results.get(arm, {})
+            a_ok = (a.get("outcome") == "pass"
+                    and not a.get("budget_exceeded"))
+            r_ok = (r.get("outcome") == "pass"
+                    and not r.get("budget_exceeded"))
+            wins += r_ok and not a_ok
+            losses += a_ok and not r_ok
+        metrics[arm]["paired_win_rate"] = round(wins / n, 6)
+        metrics[arm]["paired_loss_rate"] = round(losses / n, 6)
     return metrics
 
 

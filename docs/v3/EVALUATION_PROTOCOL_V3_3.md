@@ -36,9 +36,12 @@ Same agent, same `BudgetCaps`, paired per task. Arm is opt-in via
 
 `solved_task_rate`, `verified_regression_rate`, `abstention_rate`,
 `negative_transfer_rate` (served×failed on misleading tasks),
+`paired_win_rate` / `paired_loss_rate` (vs baseline arm A),
 `mean_tokens_per_task`, `mean_tool_calls_per_task`,
-`mean_wall_seconds_per_task`, `evaluation_integrity_failures`.
-Missing usage stays `None`/`unverified` — never fabricated.
+`mean_wall_seconds_per_task`, `mean_cost_per_verified_solve`,
+`evaluation_integrity_failures`.
+Missing usage stays `None`/`unverified` — never fabricated; cost is
+not metered, so `mean_cost_per_verified_solve` reports `None`.
 
 `served_map[(task_id, arm)]` records whether guidance was actually
 served, so abstention and negative transfer are *measured*, not

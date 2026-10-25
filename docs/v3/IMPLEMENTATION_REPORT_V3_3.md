@@ -115,8 +115,24 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 - All six `evidence/` directories populated: baseline, integration
   (campaign + exported skill bundle), security (13/13 failure-injection
   scenarios green), benchmark, qualification, release.
-- Archive content verified identical to commit `cc71617` for every
+- Archive content verified identical to commit `62588bb` for every
   manifest-covered file.
+
+### Completion pass 2 (metrics closure + live study)
+
+- `benchmark.py`: added the missing `B_vs_A` paired contrast — every
+  arm now has a vs-baseline paired outcome (previously B was the only
+  arm without one).
+- `governed_eval.compute_metrics`: added literal spec metric keys
+  `paired_win_rate`, `paired_loss_rate` (vs arm A, same valid-solve
+  rule) and `mean_cost_per_verified_solve` (`None` — cost is unmetered,
+  never fabricated). Suite: 710 passed, 2 skipped.
+- `tools/smoke_integration.py` run locally on macOS: CLI + authed
+  loopback HTTP smoke passes (401/403/200 status boundaries).
+- `tools/live_study.py` executed against authenticated `codex exec`
+  (ChatGPT login): 6 held-out tasks × arms A–D, real signed receipts.
+  Result recorded under `evidence/benchmark/live_study_v33.json`;
+  see `evidence/benchmark/` for the outcome.
 
 ## Defects found and fixed during the build
 

@@ -290,8 +290,9 @@ class BenchmarkHarness:
             for arm in arms
         }
         pairs = {}
-        for left, right in (("D", "A"), ("D", "B"), ("D", "C"), ("C", "A"),
-                            ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D")):
+        for left, right in (("B", "A"), ("C", "A"), ("D", "A"), ("D", "B"),
+                            ("D", "C"), ("E", "A"), ("E", "B"), ("E", "C"),
+                            ("E", "D")):
             if left not in arms or right not in arms:
                 continue
             wins = losses = ties = 0

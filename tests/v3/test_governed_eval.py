@@ -94,6 +94,19 @@ class MetricsTests(unittest.TestCase):
         self.assertIsNone(m["E"]["mean_tokens_per_task"])  # not fabricated
         self.assertEqual(m["A"]["evaluation_integrity_failures"], 0)
 
+    def test_paired_rates_and_cost_keys_present(self):
+        m = compute_metrics(self._report())
+        # t1: both pass -> tie; t2: both fail -> tie. No wins or losses.
+        self.assertEqual(m["E"]["paired_win_rate"], 0.0)
+        self.assertEqual(m["E"]["paired_loss_rate"], 0.0)
+        self.assertIsNone(m["E"]["mean_cost_per_verified_solve"])
+        report = self._report()
+        report["per_task"][1]["arms"]["E"]["outcome"] = "pass"
+        m = compute_metrics(report)
+        self.assertEqual(m["E"]["paired_win_rate"], 0.5)
+        self.assertEqual(m["E"]["paired_loss_rate"], 0.0)
+        self.assertEqual(m["A"]["paired_win_rate"], 0.0)
+
     def test_negative_transfer_measured(self):
         m = compute_metrics(
             self._report(),

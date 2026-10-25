@@ -13,6 +13,7 @@ changing the accounting.
 """
 from __future__ import annotations
 
+import json
 import math
 import secrets
 import shutil
@@ -29,6 +30,9 @@ from .runner import tree_digest
 from .verifier import OutcomeVerifier
 
 ARMS = ("A", "B", "C", "D")
+# v3.3 governed evaluation adds a fifth optional arm (full integration).
+# It is opt-in via arms= — the four-arm default is unchanged.
+ALL_ARMS = ("A", "B", "C", "D", "E")
 
 
 class BenchmarkError(RuntimeError):
@@ -147,7 +151,7 @@ class BenchmarkHarness:
         arms: tuple[str, ...] = ARMS,
     ) -> dict:
         """Execute every arm per task; return an auditable paired report."""
-        unknown = [a for a in arms if a not in ARMS]
+        unknown = [a for a in arms if a not in ALL_ARMS]
         if unknown:
             raise ContractError(f"unknown arms: {unknown}")
         results: list[TaskResult] = []
@@ -286,7 +290,8 @@ class BenchmarkHarness:
             for arm in arms
         }
         pairs = {}
-        for left, right in (("D", "A"), ("D", "B"), ("D", "C"), ("C", "A")):
+        for left, right in (("D", "A"), ("D", "B"), ("D", "C"), ("C", "A"),
+                            ("E", "A"), ("E", "B"), ("E", "C"), ("E", "D")):
             if left not in arms or right not in arms:
                 continue
             wins = losses = ties = 0
@@ -320,7 +325,9 @@ class BenchmarkHarness:
 
 def report_digest(report: Mapping) -> str:
     """Content-address a report for anchoring alongside episode evidence."""
-    return canonical_digest("benchmark_report", 1, report)
+    normalized = json.loads(
+        json.dumps(report, sort_keys=True), parse_float=lambda v: f"float:{v}")
+    return canonical_digest("benchmark_report", 1, normalized)
 
 
 def wilson_ci(k: int, n: int, z: float = 1.959964) -> tuple[float, float]:

@@ -32,6 +32,15 @@ _EVENT_TYPES = {
 _ACTORS = {"agent", "runner", "learner", "evaluator", "operator", "system"}
 _OUTCOMES = {"pass", "fail", "partial", "error"}
 _PROCEDURE_STATES = {"draft", "candidate", "evaluated", "qualified", "suspended", "retired"}
+_CANDIDATE_TYPES = {
+    "symbolic_procedure", "diagnostic_strategy", "experience_memory",
+    "skill_instruction", "skill_bundle", "prompt_variant",
+}
+_CANDIDATE_SCOPE_KINDS = {"registry_id", "family_id", "global"}
+_CANDIDATE_STATES = {
+    "proposed", "validated", "evaluating", "rejected", "inconclusive",
+    "qualified", "revoked",
+}
 _DECISIONS = {"recommend", "abstain"}
 _REASONS = {
     "unverified_task_intent", "precondition_failed", "no_reproducible_failure",
@@ -551,6 +560,69 @@ class SourceChangeV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CandidateV1(V1Record):
+    """Typed learning candidate (v3.3 governed learning).
+
+    One immutable, content-addressed record for every learnable artifact
+    type. ``content_digest`` binds the typed ``payload`` under a
+    domain-separated digest; ``digest`` binds the whole record. Mutable
+    evaluation/qualification status deliberately lives in the
+    ``CandidateRegistry`` — a signed immutable record cannot carry state.
+
+    ``repository_scope``: {"kind": "registry_id"|"family_id"|"global",
+    "value": str} — registry_id/family_id scopes resolve through the
+    trusted RepositoryRegistry at serving time; "global" is never
+    sufficient for production serving without an explicit grant path.
+    """
+
+    candidate_id: str
+    candidate_type: str
+    content_digest: str
+    parent_candidate_ids: tuple[str, ...]
+    source_episode_ids: tuple[str, ...]
+    generator_identity: str
+    target_agent: str
+    target_task_family: str
+    repository_scope: Mapping[str, Any]
+    applicability_predicate: tuple[Mapping[str, Any], ...]
+    known_counterexamples: tuple[str, ...]
+    payload: Mapping[str, Any]
+    created_at: str
+
+    RECORD_TYPE: ClassVar[str] = "candidate"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExperienceRecordV1(V1Record):
+    """Verified experience episode (v3.3 memory plane).
+
+    Only digest references to large artifacts (trace, outcome receipt) are
+    embedded; ``facts`` are observed, ``hypotheses`` are model-inferred and
+    must never be promoted to accepted causal truth without evaluation.
+    """
+
+    experience_id: str
+    episode_id: str
+    repository_registry_id: str
+    task_fingerprint: str
+    task_category: str
+    agent_config_digest: str
+    trace_digest: str
+    outcome_receipt_digest: str
+    outcome: str
+    failure_category: str | None
+    lesson: str
+    facts: tuple[str, ...]
+    hypotheses: tuple[str, ...]
+    applicability: tuple[Mapping[str, Any], ...]
+    counterexamples: tuple[str, ...]
+    provenance: Mapping[str, Any]
+    captured_at: str
+
+    RECORD_TYPE: ClassVar[str] = "experience_record"
+
+
+@dataclass(frozen=True, kw_only=True)
 class GuidanceRequestV1(V1Record):
     task_id: str
     repo_snapshot_digest: str
@@ -779,6 +851,57 @@ def _validate_record(record: V1Record) -> None:
             for key in ("before_digest", "after_digest"):
                 if change.get(key) is not None:
                     _digest(change[key], f"file_changes.{key}")
+        _timestamp(d["captured_at"], "captured_at")
+    elif isinstance(record, CandidateV1):
+        _identifier(d["candidate_id"], "candidate_id")
+        _enum(d["candidate_type"], _CANDIDATE_TYPES, "candidate_type")
+        _digest(d["content_digest"], "content_digest")
+        _require(d["content_digest"] == canonical_digest(
+            "candidate_content", 1,
+            {"type": d["candidate_type"], "payload": d["payload"]}),
+            "content_digest does not bind the typed payload")
+        for name in ("parent_candidate_ids", "source_episode_ids"):
+            items = _sequence(d[name], name)
+            _require(all(isinstance(x, str) and bool(_IDENTIFIER.fullmatch(x)) for x in items),
+                     f"invalid {name} entry")
+        for name in ("generator_identity", "target_agent", "target_task_family"):
+            _identifier(d[name], name)
+        scope = d["repository_scope"]
+        _require(isinstance(scope, Mapping) and set(scope) == {"kind", "value"},
+                 "repository_scope must be {kind, value}")
+        _enum(scope["kind"], _CANDIDATE_SCOPE_KINDS, "repository_scope.kind")
+        if scope["kind"] == "global":
+            _require(scope["value"] == "", "global scope carries an empty value")
+        else:
+            _identifier(scope["value"], "repository_scope.value")
+        for condition in _sequence(d["applicability_predicate"], "applicability_predicate"):
+            _precondition(condition, "applicability_predicate[]")
+        for item in _sequence(d["known_counterexamples"], "known_counterexamples"):
+            _text(item, "known_counterexamples[]", maximum=512)
+        _require(isinstance(d["payload"], Mapping) and bool(d["payload"]),
+                 "payload must be a nonempty object")
+        _timestamp(d["created_at"], "created_at")
+    elif isinstance(record, ExperienceRecordV1):
+        for name in ("experience_id", "episode_id", "repository_registry_id"):
+            _identifier(d[name], name)
+        for name in ("task_fingerprint", "agent_config_digest", "trace_digest",
+                     "outcome_receipt_digest"):
+            _digest(d[name], name)
+        _text(d["task_category"], "task_category", maximum=128)
+        _enum(d["outcome"], _OUTCOMES, "outcome")
+        _text(d["failure_category"], "failure_category", maximum=128) \
+            if d["failure_category"] is not None else None
+        _text(d["lesson"], "lesson", maximum=MAX_TEXT_CHARS)
+        for name in ("facts", "hypotheses", "counterexamples"):
+            for item in _sequence(d[name], name, maximum=64):
+                _text(item, f"{name}[]", maximum=1024)
+        for condition in _sequence(d["applicability"], "applicability"):
+            _precondition(condition, "applicability[]")
+        prov = d["provenance"]
+        _require(isinstance(prov, Mapping) and set(prov) <= {"generator", "method", "source"},
+                 "provenance has unsupported fields")
+        for key, value in prov.items():
+            _text(value, f"provenance.{key}", maximum=256)
         _timestamp(d["captured_at"], "captured_at")
     elif isinstance(record, GuidanceRequestV1):
         _identifier(d["task_id"], "task_id")

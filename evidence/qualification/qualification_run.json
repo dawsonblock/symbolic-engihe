@@ -2,8 +2,8 @@
   "schema_version": 1,
   "kind": "qualification_run",
   "branch": "codex/sis-v3.3-governed-learning",
-  "generated_at": "2026-10-25T23:43:40Z",
-  "commit_at_generation": "c6bad7df64310cd9cd57a18546bd9a3e89b86f22",
+  "generated_at": "2026-10-25T23:45:27Z",
+  "commit_at_generation": "73509708bd11358a2a83c501d50519930996a3b3",
   "note": "the suite, deterministic campaign, smoke, ingestion smoke, skill-holdout and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
   "commands": [
     {

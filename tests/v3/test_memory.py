@@ -6,7 +6,8 @@ from pathlib import Path
 
 from sis.v3.contracts import ContractError, ExperienceRecordV1
 from sis.v3.memory import (DuplicateEpisode, MemoryError, MemoryStore,
-                           induce_candidate, retrieve_memories)
+                           induce_candidate, retrieve_memories,
+                           verify_experience_evidence)
 from sis.v3.retrieval import RetrievalContext
 
 NOW = "2026-10-24T12:00:00Z"
@@ -76,6 +77,43 @@ class IngestTests(StoreFixture):
         # Records only load through bounded JSON + schema validation.
         with self.assertRaises(ContractError):
             ExperienceRecordV1.from_dict({"schema_version": 1})
+
+    def test_ingest_rejects_failed_evidence_check(self):
+        with self.assertRaisesRegex(MemoryError, "evidence_rejected"):
+            self.store.ingest(make_experience(), evidence_check=lambda r: False)
+        self.assertEqual(self.store.by_outcome("fail"), [])
+
+
+class ExperienceEvidenceTests(unittest.TestCase):
+    class _Verifier:
+        def __init__(self, receipt, *, valid=True):
+            self.receipt = receipt
+            self.valid = valid
+
+        def load_receipt(self, digest):
+            if self.receipt is None:
+                raise MemoryError("receipt_missing")
+            return self.receipt
+
+        def verify_receipt(self, receipt):
+            return self.valid
+
+    class _Receipt:
+        def __init__(self, outcome):
+            self.outcome = outcome
+
+    def test_authenticated_receipt_must_match_outcome(self):
+        rec = make_experience(outcome="fail")
+        self.assertTrue(verify_experience_evidence(
+            rec, self._Verifier(self._Receipt("fail"))))
+        with self.assertRaisesRegex(MemoryError, "outcome_mismatch"):
+            verify_experience_evidence(
+                rec, self._Verifier(self._Receipt("pass")))
+        with self.assertRaisesRegex(MemoryError, "unauthenticated"):
+            verify_experience_evidence(
+                rec, self._Verifier(self._Receipt("fail"), valid=False))
+        with self.assertRaisesRegex(MemoryError, "receipt_missing"):
+            verify_experience_evidence(rec, self._Verifier(None))
 
 
 class InductionTests(unittest.TestCase):

@@ -28,6 +28,7 @@ Isolation invariants:
 """
 from __future__ import annotations
 
+import re
 from typing import Callable, Mapping
 
 from .candidates import CandidateRegistry
@@ -36,6 +37,9 @@ from .contracts import CandidateV1, ContractError, GuidanceRequestV1, GuidanceV1
 from .guidance import _abstain
 from .retrieval import (RetrievalContext, precondition_holds,
                         suppression_match)
+
+_HEX = re.compile(r"^[0-9a-f]{64}$")
+_OUTCOMES = frozenset({"pass", "fail", "partial", "error"})
 
 _POLICY = {
     "schema_version": 1,
@@ -80,6 +84,9 @@ class GovernedServingGateway:
         self._max_steps = max_steps
         self._token_budget = token_budget
         self._audit = audit_sink
+        # task_id -> digest of the guidance actually served, so an outcome
+        # can only be attached to guidance this gateway delivered.
+        self._served: dict[str, str] = {}
 
     # ------------------------------------------------------------------ #
     def serve(
@@ -95,10 +102,11 @@ class GovernedServingGateway:
         now=None,
     ) -> GuidanceV1:
         served_map = {"candidates": [], "rejections": [],
-                      "repository_id": None}
+                      "repository_id": None, "task_id": None}
         try:
             if not isinstance(request, GuidanceRequestV1):
                 request = GuidanceRequestV1.from_dict(request)
+            served_map["task_id"] = request.task_id
             resolved = self._resolve_repository(repository_id)
             served_map["repository_id"] = resolved
             if resolved is None:
@@ -259,12 +267,42 @@ class GovernedServingGateway:
             isinstance(cx, str) and suppression_match(haystack, cx)
             for cx in cand.known_counterexamples)
 
+    def record_outcome(self, *, task_id: str, served_digest: str,
+                       receipt_digest: str, outcome: str) -> None:
+        """Bind the outcome that followed to the guidance that was served.
+
+        The digest must be the guidance this gateway actually delivered
+        for ``task_id``; an outcome cannot be attached to guidance that
+        was never served, and the receipt reference must be a real
+        SHA-256 handle. Durable correlation lives in the audit sink.
+        """
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task_id must be a nonempty string")
+        if not (isinstance(served_digest, str) and _HEX.fullmatch(served_digest)):
+            raise ValueError("served_digest must be a lowercase SHA-256 digest")
+        if not (isinstance(receipt_digest, str) and _HEX.fullmatch(receipt_digest)):
+            raise ValueError("receipt_digest must be a lowercase SHA-256 digest")
+        if outcome not in _OUTCOMES:
+            raise ValueError("unknown outcome: " + repr(outcome))
+        if self._served.get(task_id) != served_digest:
+            raise ValueError("served_guidance_unknown")
+        self._audit_record({
+            "schema_version": 1,
+            "kind": "serving_outcome",
+            "task_id": task_id,
+            "served_digest": served_digest,
+            "receipt_digest": receipt_digest,
+            "outcome": outcome,
+        })
+
     def _emit(self, served_map: dict, guidance: GuidanceV1) -> None:
-        if self._audit is None:
-            return
-        self._audit({
+        task_id = served_map.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            self._served[task_id] = guidance.digest
+        self._audit_record({
             "schema_version": 1,
             "kind": "served_guidance",
+            "task_id": task_id,
             "repository_id": served_map.get("repository_id"),
             "decision": guidance.decision,
             "candidate_digests": served_map.get("candidates", []),
@@ -272,3 +310,7 @@ class GovernedServingGateway:
             "resolutions": served_map.get("resolutions", []),
             "served_digest": guidance.digest,
         })
+
+    def _audit_record(self, record: dict) -> None:
+        if self._audit is not None:
+            self._audit(record)

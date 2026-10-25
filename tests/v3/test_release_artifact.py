@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[2] / "tools"
@@ -122,6 +123,72 @@ class SqliteLifecycleTests(unittest.TestCase):
         v.close()
         with self.assertRaises(sqlite3.ProgrammingError):
             v.con.execute("SELECT 1")
+
+
+class CanonicalArchiveBindingTests(unittest.TestCase):
+    """The release archive must not embed release/ and must match its source."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / "proj"
+        _copy_subset(self.root, {
+            "src/pkg/a.py": b"print(1)\n",
+            "docs/readme.md": b"hi\n",
+            "release/notes.json": b'{"old": true}\n',
+            "release/SIS-old.zip": b"PK-not-really-a-zip",
+        })
+        self.target = self.base / "out" / "SIS.zip"
+
+    def _build(self):
+        import build_canonical_zip
+        return build_canonical_zip.build(self.root, self.target, require_clean=False)
+
+    def test_release_dir_is_never_archived(self):
+        report = self._build()
+        self.assertEqual(report["source_files"], 2)
+        self.assertEqual(report["source_binding"]["files"], 2)
+        with zipfile.ZipFile(self.target) as z:
+            names = z.namelist()
+        self.assertFalse([n for n in names if "/release/" in n])
+        self.assertFalse([n for n in names if n.endswith(".zip")])
+        manifest = json.loads((self.root / "RELEASE_SHA256.json").read_text())
+        self.assertFalse([r for r in manifest["files"] if r.startswith("release/")])
+
+    def test_archive_is_bound_to_source_tree(self):
+        self._build()
+        import verify_release
+        self.assertTrue(verify_release.verify_against_tree(self.target, self.root)["source_bound"])
+
+    def test_stale_archive_fails_source_binding(self):
+        self._build()
+        (self.root / "src/pkg/a.py").write_bytes(b"print('changed')\n")
+        import verify_release
+        with self.assertRaisesRegex(ValueError, "source binding hash mismatch"):
+            verify_release.verify_against_tree(self.target, self.root)
+
+    def test_verify_rejects_embedded_provenance(self):
+        import verify_release
+        manifest = {"schema": 1, "files": {"release/old.zip": "0" * 64}}
+        self.target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(self.target, "w") as z:
+            z.writestr("proj/RELEASE_SHA256.json", json.dumps(manifest))
+            z.writestr("proj/release/old.zip", b"PK")
+        with self.assertRaisesRegex(ValueError, "out-of-band"):
+            verify_release.verify(self.target)
+
+    def test_build_refuses_dirty_source(self):
+        import subprocess
+        import build_canonical_zip
+        repo = self.root
+        subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@e",
+                        "commit", "-qm", "init"], check=True)
+        (repo / "src/pkg/a.py").write_bytes(b"print(2)\n")
+        with self.assertRaisesRegex(ValueError, "uncommitted changes"):
+            build_canonical_zip.build(repo, self.target)
 
 
 if __name__ == "__main__":

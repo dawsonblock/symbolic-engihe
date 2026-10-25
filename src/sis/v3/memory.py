@@ -99,15 +99,23 @@ class MemoryStore:
             raise MemoryError("memory_store_closed")
         return self._con
 
-    def ingest(self, record: ExperienceRecordV1) -> str:
+    def ingest(self, record: ExperienceRecordV1, *,
+               evidence_check=None) -> str:
         """Store a verified experience; identical re-ingest is idempotent.
 
         A different record for the same ``(episode_id, task_fingerprint)``
         is a conflict — repeated or mutated copies of an episode cannot
         masquerade as independent evidence.
+
+        ``evidence_check(record)`` is the trust-boundary hook: production
+        ingestion must pass ``verify_experience_evidence`` bound to the
+        evaluator, so a record cannot claim a receipt it does not have.
+        It runs before any write and fails closed.
         """
         if not isinstance(record, ExperienceRecordV1):
             record = ExperienceRecordV1.from_dict(record)
+        if evidence_check is not None and not evidence_check(record):
+            raise MemoryError("experience_evidence_rejected")
         with self._lock:
             con = self._conn()
             row = con.execute(
@@ -167,6 +175,24 @@ class MemoryStore:
                 raise MemoryError("experience_tampered")
             out.append(record)
         return out
+
+
+def verify_experience_evidence(record: ExperienceRecordV1, verifier) -> bool:
+    """Authenticate the receipt an experience record points at.
+
+    Resolves ``outcome_receipt_digest`` through the evaluator's own
+    receipt journal and verifies its signature against the trusted key
+    registry. The record's claimed outcome must match the signed receipt;
+    anything else is rejected rather than stored as "verified" experience.
+    """
+    if not isinstance(record, ExperienceRecordV1):
+        raise ContractError("evidence check requires an ExperienceRecordV1")
+    receipt = verifier.load_receipt(record.outcome_receipt_digest)
+    if not verifier.verify_receipt(receipt):
+        raise MemoryError("experience_receipt_unauthenticated")
+    if receipt.outcome != record.outcome:
+        raise MemoryError("experience_outcome_mismatch")
+    return True
 
 
 def induce_candidate(record: ExperienceRecordV1, *,

@@ -54,6 +54,13 @@
   covers only candidates whose steps actually shipped in
   `helpful_next_checks` (post-budget, post-truncation), not every
   catalog item considered; each rejection is recorded with a reason.
+  Every `served_guidance` audit row carries the `task_id` and the
+  guidance digest.
+- **Outcomes bind to delivered guidance** — `record_outcome` attaches a
+  signed receipt digest and outcome to the exact guidance digest this
+  gateway served for that task; unknown tasks, mismatched digests, and
+  malformed receipt references raise instead of writing an uncorrelated
+  audit row.
 - **Malformed serving input abstains audited** — a request that fails
   contract parsing returns `abstain/catalog_unavailable` inside the
   audited path rather than propagating an unlogged exception.

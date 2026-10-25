@@ -34,12 +34,21 @@ Same agent, same `BudgetCaps`, paired per task. Arm is opt-in via
 
 ## Metrics (per arm, from `compute_metrics`)
 
-`solved_task_rate`, `verified_regression_rate`, `abstention_rate`,
-`negative_transfer_rate` (served×failed on misleading tasks),
-`paired_win_rate` / `paired_loss_rate` (vs baseline arm A),
+`solved_task_rate`, `failure_rate`, `verified_regression_rate`,
+`abstention_rate`, `negative_transfer_rate` (served×failed on misleading
+tasks), `paired_win_rate` / `paired_loss_rate` (vs baseline arm A),
 `mean_tokens_per_task`, `mean_tool_calls_per_task`,
 `mean_wall_seconds_per_task`, `mean_cost_per_verified_solve`,
 `evaluation_integrity_failures`.
+
+`failure_rate` is the absolute fraction of tasks the arm failed.
+`verified_regression_rate` is relative to the baseline: the fraction of
+tasks **arm A verified as solved** that this arm no longer solves (a
+budget-exceeded or errored result counts as not solved). Arm A therefore
+reports `0.0` against itself, and `None` when the baseline solved
+nothing. A task both arms fail is not a regression; it is a shared
+failure and appears in `failure_rate`.
+
 Missing usage stays `None`/`unverified` — never fabricated; cost is
 not metered, so `mean_cost_per_verified_solve` reports `None`.
 

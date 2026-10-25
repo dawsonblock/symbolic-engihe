@@ -188,9 +188,12 @@ def compute_metrics(report: Mapping, *, served: Mapping | None = None,
             "solved_task_rate": round(solved / n, 6),
             "served": served_n,
             "abstention_rate": round(abstained / n, 6),
-            "verified_regression_rate": round(
+            # Failure rate is absolute; verified_regression_rate (below) is
+            # relative to the baseline arm and is filled in after the loop.
+            "failure_rate": round(
                 sum(1 for t in per_task.values()
                     if t.get(arm, {}).get("outcome") == "fail") / n, 6),
+            "verified_regression_rate": None,
             "negative_transfer_rate": (
                 round(neg_applied_failed / neg_served, 6)
                 if neg_served else None),
@@ -205,6 +208,11 @@ def compute_metrics(report: Mapping, *, served: Mapping | None = None,
     # Paired win/loss rates against the baseline arm, computed with the
     # same valid-solve rule as solved_task_rate (pass, in-budget).
     baseline = "A" if "A" in metrics else None
+    baseline_passes = [
+        task_id for task_id, results in per_task.items()
+        if (results.get(baseline, {}).get("outcome") == "pass"
+            and not results.get(baseline, {}).get("budget_exceeded"))
+    ] if baseline else []
     for arm in metrics:
         if baseline is None:
             metrics[arm]["paired_win_rate"] = None
@@ -222,6 +230,16 @@ def compute_metrics(report: Mapping, *, served: Mapping | None = None,
             losses += a_ok and not r_ok
         metrics[arm]["paired_win_rate"] = round(wins / n, 6)
         metrics[arm]["paired_loss_rate"] = round(losses / n, 6)
+        # A regression is a task the baseline verified as solved that this
+        # arm no longer solves. An arm that merely fails where the baseline
+        # also failed is not a regression; that is captured by failure_rate.
+        regressions = sum(
+            1 for task_id in baseline_passes
+            if not (per_task[task_id].get(arm, {}).get("outcome") == "pass"
+                    and not per_task[task_id].get(arm, {}).get("budget_exceeded")))
+        metrics[arm]["verified_regression_rate"] = (
+            round(regressions / len(baseline_passes), 6)
+            if baseline_passes else None)
     return metrics
 
 

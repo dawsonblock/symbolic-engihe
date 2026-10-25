@@ -155,13 +155,27 @@ class MetricsTests(unittest.TestCase):
             self._report(),
             served={("t1", "E"): True, ("t2", "E"): False})
         self.assertEqual(m["A"]["solved_task_rate"], 0.5)
-        self.assertEqual(m["A"]["verified_regression_rate"], 0.5)
+        self.assertEqual(m["A"]["failure_rate"], 0.5)
+        # The baseline cannot regress against itself.
+        self.assertEqual(m["A"]["verified_regression_rate"], 0.0)
+        self.assertEqual(m["E"]["verified_regression_rate"], 0.0)
         self.assertEqual(m["A"]["abstention_rate"], 1.0)  # never served
         self.assertEqual(m["E"]["abstention_rate"], 0.5)
         self.assertIsNone(m["E"]["negative_transfer_rate"])
         self.assertEqual(m["A"]["mean_tokens_per_task"], 10.0)
         self.assertIsNone(m["E"]["mean_tokens_per_task"])  # not fabricated
         self.assertEqual(m["A"]["evaluation_integrity_failures"], 0)
+
+    def test_regression_is_relative_to_baseline_solves(self):
+        report = self._report()
+        report["per_task"][0]["arms"]["E"]["outcome"] = "fail"
+        m = compute_metrics(report)
+        # t1 was a baseline solve that E lost; t2 was never a baseline solve.
+        self.assertEqual(m["E"]["verified_regression_rate"], 1.0)
+        self.assertEqual(m["A"]["verified_regression_rate"], 0.0)
+        report["per_task"][0]["arms"]["A"]["outcome"] = "fail"
+        m = compute_metrics(report)
+        self.assertIsNone(m["A"]["verified_regression_rate"])
 
     def test_paired_rates_and_cost_keys_present(self):
         m = compute_metrics(self._report())

@@ -34,6 +34,12 @@ never embedded.
   `(episode_id, task_fingerprint)` with different content raises
   `DuplicateEpisode` — a replayed episode cannot masquerade as a second
   independent attempt.
+- `ingest(record, evidence_check=...)` is the trust-boundary hook.
+  Production ingestion passes `verify_experience_evidence(record,
+  verifier)`, which resolves `outcome_receipt_digest` in the evaluator's
+  own journal, verifies the signature, and requires the signed outcome
+  to equal the record's claimed outcome. A record that names a receipt
+  it does not have is rejected before any write.
 - `get`/`by_outcome` re-verify the stored digest on every read; tampered
   rows raise `experience_tampered` and fail closed.
 

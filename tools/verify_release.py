@@ -111,6 +111,8 @@ def verify(path):
             if (not relative or pure.is_absolute() or '\\' in relative
                     or any(part in ('', '.', '..') for part in relative.split('/'))):
                 raise ValueError('unsafe source path: ' + relative)
+            if relative.startswith('release/') or relative.endswith('.zip'):
+                raise ValueError('archive embeds out-of-band provenance: ' + relative)
             limit = min(MAX_MEMBER, MAX_TOTAL - streamed_total)
             if limit < 0:
                 raise ValueError('archive exceeds total uncompressed size limit')
@@ -137,6 +139,8 @@ def verify_tree(root: Path) -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError("RELEASE_SHA256.json is not valid JSON") from exc
     manifest = _valid_manifest(document)
+    if any(rel.startswith("release/") or rel.endswith(".zip") for rel in manifest):
+        raise ValueError("release manifest covers out-of-band provenance")
 
     actual: dict[str, Path] = {}
     for path in root.rglob("*"):
@@ -155,6 +159,50 @@ def verify_tree(root: Path) -> dict:
         if hashlib.sha256(actual[relative].read_bytes()).hexdigest() != expected:
             raise ValueError("release hash mismatch: " + relative)
     return {"files": len(manifest)}
+
+
+def verify_against_tree(path: Path, root: Path) -> dict:
+    """Bind an archive to the source tree it was built from.
+
+    Internal manifest/archive agreement (``verify``) proves only that the
+    archive is self-consistent. This check proves the archive contains
+    exactly the manifest-covered files currently on disk, so a stale ZIP
+    cannot pass just because it still matches its own embedded manifest.
+    """
+    root = Path(root).resolve()
+    with zipfile.ZipFile(path) as z:
+        infos = [info for info in z.infolist() if not info.is_dir()]
+        prefixes = {info.filename.split("/", 1)[0] for info in infos}
+        if len(prefixes) != 1:
+            raise ValueError("expected one project directory")
+        prefix = next(iter(prefixes)) + "/"
+        archived: dict[str, str] = {}
+        for info in infos:
+            relative = info.filename[len(prefix):]
+            if relative in MANIFEST_NAMES:
+                continue
+            if relative.startswith("release/") or relative.endswith(".zip"):
+                raise ValueError("archive embeds out-of-band provenance: " + relative)
+            archived[relative] = _hash_member(z, info, limit=MAX_MEMBER)[0]
+
+    current: dict[str, str] = {}
+    for candidate in root.rglob("*"):
+        if candidate.is_symlink():
+            raise ValueError("source tree contains symlink: " + str(candidate))
+        if not candidate.is_file():
+            continue
+        relative = candidate.relative_to(root).as_posix()
+        if _included(relative):
+            current[relative] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+
+    if set(archived) != set(current):
+        extra = sorted(set(archived) - set(current))
+        missing = sorted(set(current) - set(archived))
+        raise ValueError(f"source binding inventory mismatch; stale={extra[:8]!r} unshipped={missing[:8]!r}")
+    stale = sorted(rel for rel in archived if archived[rel] != current[rel])
+    if stale:
+        raise ValueError("source binding hash mismatch: " + ", ".join(stale[:8]))
+    return {"files": len(archived), "project": prefix[:-1], "source_bound": True}
 
 
 def build_zip(root: Path, target: Path) -> Path:

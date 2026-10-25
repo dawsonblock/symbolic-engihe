@@ -41,7 +41,8 @@ from sis.v3.governed_eval import (EvaluationPartition,
                                   assert_partition_disjoint,
                                   preregister, run_governed_evaluation,
                                   required_sample_size)
-from sis.v3.memory import MemoryStore, induce_candidate, retrieve_memories
+from sis.v3.memory import (MemoryStore, induce_candidate, retrieve_memories,
+                           verify_experience_evidence)
 from sis.v3.promotion import PromotionController, operator_token_digest
 from sis.v3.retrieval import RetrievalContext
 from sis.v3.runner import LocalSubprocessExecutor, tree_digest
@@ -259,7 +260,8 @@ def main() -> int:
             provenance={"generator": "campaign-induction",
                         "method": "deterministic"},
             captured_at=_utcnow())
-        memory.ingest(rec)
+        memory.ingest(
+            rec, evidence_check=lambda r: verify_experience_evidence(r, verifier))
         episodes.append(rec)
 
     # ---- phase 2: candidates (memory + evolved skills + procedure) ----- #
@@ -438,8 +440,17 @@ def main() -> int:
             present_symbols=(), semantic_contract_digest="c" * 64)
         g = gateway.serve(req, repository_id="eval-" +
                           env.task_id.split("-", 1)[1])
+        entry = next((e for e in eval_report["per_task"]
+                      if e["task_id"] == env.task_id), {})
+        arm_e = (entry.get("arms") or {}).get("E") or {}
+        if arm_e.get("receipt_digest") and arm_e.get("outcome"):
+            gateway.record_outcome(
+                task_id=env.task_id, served_digest=g.digest,
+                receipt_digest=arm_e["receipt_digest"],
+                outcome=arm_e["outcome"])
         served.append({"task_id": env.task_id, "decision": g.decision,
-                       "checks": list(g.helpful_next_checks)})
+                       "checks": list(g.helpful_next_checks),
+                       "outcome_receipt": arm_e.get("receipt_digest")})
     revoked = qualified[0] if qualified else None
     if revoked:
         candidates.revoke(revoked, actor_role="operator",
@@ -487,6 +498,7 @@ def main() -> int:
         },
         "served": served,
         "served_after_revocation": served_post,
+        "serving_audit": audit_log,
         "skill_bundle": str(bundle_dir) if bundle_dir else None,
         "status_note": ("deterministic scripted agent — machinery "
                         "evidence only, not live efficacy"),

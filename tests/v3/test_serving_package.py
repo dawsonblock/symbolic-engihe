@@ -138,6 +138,39 @@ class ServingTests(ServingFixture):
         served = self.gateway.serve(
             _request(), repository_id="repo-a", task_family="fam")
         self.assertIn("do the thing", served.helpful_next_checks)
+
+    def test_audit_binds_task_and_outcome_to_served_guidance(self):
+        cand = make_candidate(scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)
+        served = self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertEqual(self.audit[-1]["task_id"], "t1")
+        self.assertEqual(self.audit[-1]["served_digest"], served.digest)
+        self.gateway.record_outcome(
+            task_id="t1", served_digest=served.digest,
+            receipt_digest="b" * 64, outcome="pass")
+        outcome = self.audit[-1]
+        self.assertEqual(outcome["kind"], "serving_outcome")
+        self.assertEqual(outcome["task_id"], "t1")
+        self.assertEqual(outcome["served_digest"], served.digest)
+        self.assertEqual(outcome["receipt_digest"], "b" * 64)
+        self.assertEqual(outcome["outcome"], "pass")
+
+    def test_outcome_cannot_attach_to_unserved_guidance(self):
+        cand = make_candidate(scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)
+        served = self.gateway.serve(_request(), repository_id="repo-a")
+        with self.assertRaisesRegex(ValueError, "served_guidance_unknown"):
+            self.gateway.record_outcome(
+                task_id="other-task", served_digest=served.digest,
+                receipt_digest="b" * 64, outcome="pass")
+        with self.assertRaisesRegex(ValueError, "receipt_digest"):
+            self.gateway.record_outcome(
+                task_id="t1", served_digest=served.digest,
+                receipt_digest="not-a-digest", outcome="pass")
+        with self.assertRaisesRegex(ValueError, "unknown outcome"):
+            self.gateway.record_outcome(
+                task_id="t1", served_digest=served.digest,
+                receipt_digest="b" * 64, outcome="great")
         gated = self.gateway.serve(
             _request(), repository_id="repo-a", task_family="other-fam")
         self.assertTrue(all("do the thing" != s

@@ -1,0 +1,35 @@
+{
+  "branch": "codex/sis-v3.3-governed-learning",
+  "campaign": {
+    "deterministic_solved": {
+      "A": 0,
+      "B": 2,
+      "C": 2,
+      "D": 0,
+      "E": 2
+    },
+    "note": "scripted-agent machinery evidence, not live efficacy",
+    "tool": "tools/governed_campaign.py"
+  },
+  "docs": [
+    "docs/v3/ARCHITECTURE_V3_3.md",
+    "docs/v3/SECURITY_BOUNDARIES_V3_3.md",
+    "docs/v3/MEMORY_DESIGN.md",
+    "docs/v3/EVOLUTION_DESIGN.md",
+    "docs/v3/EVALUATION_PROTOCOL_V3_3.md",
+    "docs/v3/V33_LIMITATIONS.md",
+    "docs/v3/IMPLEMENTATION_REPORT_V3_3.md",
+    "docs/v3/RELEASE_NOTES_V3_3.md",
+    "docs/audits/BASELINE_INTEGRITY.md"
+  ],
+  "release": "SIS-v3.3.0-GOVERNED-LEARNING",
+  "schema_version": 1,
+  "source_commit": "b456770596e522c8c4feb013a45e343c6ac28666",
+  "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
+  "test_result": {
+    "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
+    "failed": 0,
+    "passed": 709,
+    "skipped": 2
+  }
+}

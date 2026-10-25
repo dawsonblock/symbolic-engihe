@@ -1,0 +1,557 @@
+{
+  "agent": "codex-exec (authenticated ChatGPT login)",
+  "baseline_report_digest": "291e9bc1d40a5f8846af6f73e843228667207861820738966eb99258dbdebe4e",
+  "baseline_solved": {
+    "A": 2
+  },
+  "evaluation": {
+    "governed_metrics": {
+      "A": {
+        "abstention_rate": 1.0,
+        "evaluation_integrity_failures": 0,
+        "mean_cost_per_verified_solve": null,
+        "mean_tokens_per_task": null,
+        "mean_tool_calls_per_task": null,
+        "mean_wall_seconds_per_task": 34.0,
+        "negative_transfer_rate": null,
+        "paired_loss_rate": 0.0,
+        "paired_win_rate": 0.0,
+        "served": 0,
+        "solved_task_rate": 1.0,
+        "verified_regression_rate": 0.0
+      },
+      "B": {
+        "abstention_rate": 0.0,
+        "evaluation_integrity_failures": 0,
+        "mean_cost_per_verified_solve": null,
+        "mean_tokens_per_task": null,
+        "mean_tool_calls_per_task": null,
+        "mean_wall_seconds_per_task": 27.0,
+        "negative_transfer_rate": null,
+        "paired_loss_rate": 0.0,
+        "paired_win_rate": 0.0,
+        "served": 2,
+        "solved_task_rate": 1.0,
+        "verified_regression_rate": 0.0
+      },
+      "C": {
+        "abstention_rate": 0.0,
+        "evaluation_integrity_failures": 0,
+        "mean_cost_per_verified_solve": null,
+        "mean_tokens_per_task": null,
+        "mean_tool_calls_per_task": null,
+        "mean_wall_seconds_per_task": 30.0,
+        "negative_transfer_rate": null,
+        "paired_loss_rate": 0.0,
+        "paired_win_rate": 0.0,
+        "served": 2,
+        "solved_task_rate": 1.0,
+        "verified_regression_rate": 0.0
+      },
+      "D": {
+        "abstention_rate": 1.0,
+        "evaluation_integrity_failures": 0,
+        "mean_cost_per_verified_solve": null,
+        "mean_tokens_per_task": null,
+        "mean_tool_calls_per_task": null,
+        "mean_wall_seconds_per_task": 38.0,
+        "negative_transfer_rate": null,
+        "paired_loss_rate": 0.0,
+        "paired_win_rate": 0.0,
+        "served": 0,
+        "solved_task_rate": 1.0,
+        "verified_regression_rate": 0.0
+      },
+      "E": {
+        "abstention_rate": 0.0,
+        "evaluation_integrity_failures": 0,
+        "mean_cost_per_verified_solve": null,
+        "mean_tokens_per_task": null,
+        "mean_tool_calls_per_task": null,
+        "mean_wall_seconds_per_task": 27.5,
+        "negative_transfer_rate": null,
+        "paired_loss_rate": 0.0,
+        "paired_win_rate": 0.0,
+        "served": 2,
+        "solved_task_rate": 1.0,
+        "verified_regression_rate": 0.0
+      }
+    },
+    "paired": {
+      "B_vs_A": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "C_vs_A": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "D_vs_A": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "D_vs_B": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "D_vs_C": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "E_vs_A": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "E_vs_B": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "E_vs_C": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      },
+      "E_vs_D": {
+        "losses": 0,
+        "mcnemar_exact_p": "1.0000000000",
+        "solved_delta": 0,
+        "ties": 2,
+        "wins": 0
+      }
+    },
+    "report_digest": "11eb67411ea5ae905547f654ca7722d48652e3efd09f5a9d1496f202cefb5563",
+    "solved_counts": {
+      "A": 2,
+      "B": 2,
+      "C": 2,
+      "D": 2,
+      "E": 2
+    }
+  },
+  "generated_at": "2026-10-25T06:49:22Z",
+  "kind": "governed_live_campaign",
+  "protocol": {
+    "alpha": 0.05,
+    "arms": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "E"
+    ],
+    "budget": {
+      "token_budget": 1000000,
+      "tool_budget": 10000,
+      "wall_seconds": 120
+    },
+    "method": "mcnemar_exact",
+    "min_effect": 1.0,
+    "notes": "",
+    "primary_metric": "paired solved_delta E vs A",
+    "protocol_digest": "afc72c88fbbef7729e78637551ce32fbf5a874dd733e0df4d094a5f1cad1fc73",
+    "sample_size": 29,
+    "schema_version": 1
+  },
+  "registry": {
+    "audit": [
+      {
+        "actor_identity": "learner",
+        "candidate_id": "mem-exp-money",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 1,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "mem-exp-money",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "proposed",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 2,
+        "to_state": "validated"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "mem-exp-slug",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 3,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "mem-exp-slug",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "proposed",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 4,
+        "to_state": "validated"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-353939eb5e47fc78",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 5,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-6a1496f59be22cfb",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 6,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-79b4721458064327",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 7,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-6f6cdc1baf643835",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 8,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-4c351b0fa0d1cd9d",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 9,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-28939e35d093aab1",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 10,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-2857f47683dc7424",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 11,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-c65840fb16fc66e7",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 12,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-7c5bb767df6b8f5e",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 13,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-bc9b4b4f7752af30",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 14,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-730464287d93b941",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 15,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-1bdd283cd7ec542e",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 16,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-d0c9b4a1f1051633",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "",
+        "note": "submitted",
+        "receipt_refs": [],
+        "seq": 17,
+        "to_state": "proposed"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-c65840fb16fc66e7",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "proposed",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 18,
+        "to_state": "validated"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-4c351b0fa0d1cd9d",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "proposed",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 19,
+        "to_state": "validated"
+      },
+      {
+        "actor_identity": "learner",
+        "candidate_id": "skill-730464287d93b941",
+        "committed_at": "2026-10-25T06:43:59Z",
+        "from_state": "proposed",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 20,
+        "to_state": "validated"
+      },
+      {
+        "actor_identity": "evaluator",
+        "candidate_id": "mem-exp-money",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "validated",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 21,
+        "to_state": "evaluating"
+      },
+      {
+        "actor_identity": "evaluator",
+        "candidate_id": "mem-exp-slug",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "validated",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 22,
+        "to_state": "evaluating"
+      },
+      {
+        "actor_identity": "evaluator",
+        "candidate_id": "skill-c65840fb16fc66e7",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "validated",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 23,
+        "to_state": "evaluating"
+      },
+      {
+        "actor_identity": "evaluator",
+        "candidate_id": "skill-4c351b0fa0d1cd9d",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "validated",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 24,
+        "to_state": "evaluating"
+      },
+      {
+        "actor_identity": "evaluator",
+        "candidate_id": "skill-730464287d93b941",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "validated",
+        "note": "",
+        "receipt_refs": [],
+        "seq": 25,
+        "to_state": "evaluating"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "mem-exp-money",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "evaluating",
+        "note": "holdout-qualified",
+        "receipt_refs": [
+          "25bf3359a126f2382c7fd5de4944c68b5858436e6d77a15c20e61201eb8b9978"
+        ],
+        "seq": 26,
+        "to_state": "qualified"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "mem-exp-slug",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "evaluating",
+        "note": "holdout-qualified",
+        "receipt_refs": [
+          "25bf3359a126f2382c7fd5de4944c68b5858436e6d77a15c20e61201eb8b9978"
+        ],
+        "seq": 27,
+        "to_state": "qualified"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "skill-c65840fb16fc66e7",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "evaluating",
+        "note": "holdout-qualified",
+        "receipt_refs": [
+          "25bf3359a126f2382c7fd5de4944c68b5858436e6d77a15c20e61201eb8b9978"
+        ],
+        "seq": 28,
+        "to_state": "qualified"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "skill-4c351b0fa0d1cd9d",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "evaluating",
+        "note": "holdout-qualified",
+        "receipt_refs": [
+          "25bf3359a126f2382c7fd5de4944c68b5858436e6d77a15c20e61201eb8b9978"
+        ],
+        "seq": 29,
+        "to_state": "qualified"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "skill-730464287d93b941",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "evaluating",
+        "note": "holdout-qualified",
+        "receipt_refs": [
+          "25bf3359a126f2382c7fd5de4944c68b5858436e6d77a15c20e61201eb8b9978"
+        ],
+        "seq": 30,
+        "to_state": "qualified"
+      },
+      {
+        "actor_identity": "live-campaign-operator",
+        "candidate_id": "mem-exp-money",
+        "committed_at": "2026-10-25T06:49:22Z",
+        "from_state": "qualified",
+        "note": "demonstration revocation",
+        "receipt_refs": [],
+        "seq": 31,
+        "to_state": "revoked"
+      }
+    ],
+    "qualified": [
+      "mem-exp-money",
+      "mem-exp-slug",
+      "skill-c65840fb16fc66e7",
+      "skill-4c351b0fa0d1cd9d",
+      "skill-730464287d93b941"
+    ],
+    "revoked": [
+      "mem-exp-money"
+    ]
+  },
+  "schema_version": 1,
+  "served": [
+    {
+      "checks": [
+        "Follow project conventions.",
+        "Preserve first occurrence order when deduplicating.",
+        "Use decimal rounding conventions (ROUND_HALF_UP).",
+        "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+        "Project convention for money: round_money must use ROUND_HALF_UP decimal rounding and return the cents string",
+        "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
+        "Advisory from qualified learned candidates; verify against task tests before relying on it."
+      ],
+      "decision": "abstain",
+      "task_id": "task-money2"
+    },
+    {
+      "checks": [
+        "Follow project conventions.",
+        "Preserve first occurrence order when deduplicating.",
+        "Use decimal rounding conventions (ROUND_HALF_UP).",
+        "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+        "Project convention for money: round_money must use ROUND_HALF_UP decimal rounding and return the cents string",
+        "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
+        "Advisory from qualified learned candidates; verify against task tests before relying on it."
+      ],
+      "decision": "abstain",
+      "task_id": "task-slug2"
+    }
+  ],
+  "served_after_revocation": {
+    "checks": [
+      "Follow project conventions.",
+      "Preserve first occurrence order when deduplicating.",
+      "Use decimal rounding conventions (ROUND_HALF_UP).",
+      "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+      "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
+      "Advisory from qualified learned candidates; verify against task tests before relying on it."
+    ],
+    "decision": "abstain",
+    "task_id": "task-money2"
+  },
+  "skill_bundle": "evidence/benchmark/live-campaign/skill-bundle",
+  "status_note": "real codex-exec agent, 2-task unseen-repo holdout \u2014 authentic machinery evidence; a 2-task sample cannot establish statistical efficacy",
+  "study_root": "/var/folders/xt/jh84t2kj6hl26tk5qx3m_28h0000gn/T/sis-live-campaign-m6hd34se",
+  "wall_budget_per_arm": 120
+}

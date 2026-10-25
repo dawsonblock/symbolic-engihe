@@ -1,13 +1,16 @@
 {
-  "generated_at": "2026-10-25T06:20:40Z",
+  "generated_at": "2026-10-25T06:28:58Z",
   "governed_metrics": {
     "A": {
       "abstention_rate": 1.0,
       "evaluation_integrity_failures": 0,
+      "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 120.0,
       "mean_tool_calls_per_task": 3.0,
       "mean_wall_seconds_per_task": 1.0,
       "negative_transfer_rate": null,
+      "paired_loss_rate": 0.0,
+      "paired_win_rate": 0.0,
       "served": 0,
       "solved_task_rate": 0.0,
       "verified_regression_rate": 1.0
@@ -15,10 +18,13 @@
     "B": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 140.0,
       "mean_tool_calls_per_task": 3.0,
       "mean_wall_seconds_per_task": 1.0,
       "negative_transfer_rate": null,
+      "paired_loss_rate": 0.0,
+      "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
       "verified_regression_rate": 0.0
@@ -26,10 +32,13 @@
     "C": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 143.0,
       "mean_tool_calls_per_task": 3.0,
       "mean_wall_seconds_per_task": 1.0,
       "negative_transfer_rate": null,
+      "paired_loss_rate": 0.0,
+      "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
       "verified_regression_rate": 0.0
@@ -37,10 +46,13 @@
     "D": {
       "abstention_rate": 1.0,
       "evaluation_integrity_failures": 0,
+      "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 136.0,
       "mean_tool_calls_per_task": 3.0,
       "mean_wall_seconds_per_task": 1.0,
       "negative_transfer_rate": null,
+      "paired_loss_rate": 0.0,
+      "paired_win_rate": 0.0,
       "served": 0,
       "solved_task_rate": 0.0,
       "verified_regression_rate": 1.0
@@ -48,10 +60,13 @@
     "E": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 163.0,
       "mean_tool_calls_per_task": 3.0,
       "mean_wall_seconds_per_task": 1.0,
       "negative_transfer_rate": null,
+      "paired_loss_rate": 0.0,
+      "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
       "verified_regression_rate": 0.0
@@ -60,6 +75,13 @@
   "kind": "governed_evaluation_evidence",
   "note": "deterministic scripted-agent run \u2014 machinery evidence only, NOT live-model efficacy",
   "paired": {
+    "B_vs_A": {
+      "losses": 0,
+      "mcnemar_exact_p": "0.5000000000",
+      "solved_delta": 2,
+      "ties": 0,
+      "wins": 2
+    },
     "C_vs_A": {
       "losses": 0,
       "mcnemar_exact_p": "0.5000000000",
@@ -139,7 +161,7 @@
     "sample_size": 29,
     "schema_version": 1
   },
-  "report_digest": "248613c83db981d8f39abfdb291bc214d905109763c17511825416c5faa553b3",
+  "report_digest": "834e427836a2f177164924eab710dd36ebc079769946c782c66a1760c9031046",
   "schema_version": 1,
   "solved_counts": {
     "A": 0,

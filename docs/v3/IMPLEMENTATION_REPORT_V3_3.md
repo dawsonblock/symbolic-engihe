@@ -130,9 +130,17 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 - `tools/smoke_integration.py` run locally on macOS: CLI + authed
   loopback HTTP smoke passes (401/403/200 status boundaries).
 - `tools/live_study.py` executed against authenticated `codex exec`
-  (ChatGPT login): 6 held-out tasks × arms A–D, real signed receipts.
-  Result recorded under `evidence/benchmark/live_study_v33.json`;
-  see `evidence/benchmark/` for the outcome.
+  (ChatGPT login): 6 held-out tasks × arms A–D. Real result:
+  A=4, B=3, C=3, **D=5** — served procedures were the best arm and
+  D-vs-A is 1W/0L, but p=1.0: positive direction, underpowered,
+  gate not met (`evidence/benchmark/live_study_v33.json`).
+- `tools/governed_live_campaign.py` (new) ran the complete v3.3
+  lifecycle with real `codex exec`: baseline dev episodes (A=2/2),
+  induction, evolution, 5-arm sealed holdout. Result: **all arms
+  2/2** — codex hit the fixture ceiling unaided, null efficacy
+  contrast, but the full governed loop (episodes → receipts →
+  qualification → serving → revocation) executed authentically with
+  a real agent (`evidence/benchmark/live-campaign/`).
 
 ## Defects found and fixed during the build
 

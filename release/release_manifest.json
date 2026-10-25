@@ -2,20 +2,43 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
-    "sha256": "8bd53fd4347c829f4fc292e4dc42ccc457d3f06b682f4a089beb2b1c0496520e",
-    "source_files": 297
+    "sha256": "0686f7dc96cb506f0ea93e3fbec9e60baaf9f7ac8eb794ab0823cb3d733bddf2",
+    "source_files": 306
   },
   "branch": "codex/sis-v3.3-governed-learning",
-  "campaign": {
-    "deterministic_solved": {
-      "A": 0,
-      "B": 2,
-      "C": 2,
-      "D": 0,
-      "E": 2
+  "campaigns": {
+    "deterministic": {
+      "note": "machinery evidence",
+      "solved": {
+        "A": 0,
+        "B": 2,
+        "C": 2,
+        "D": 0,
+        "E": 2
+      },
+      "tool": "tools/governed_campaign.py"
     },
-    "note": "scripted-agent machinery evidence, not live efficacy",
-    "tool": "tools/governed_campaign.py"
+    "live_governed": {
+      "note": "real codex-exec full lifecycle; null efficacy \u2014 ceiling hit",
+      "solved_holdout": {
+        "A": 2,
+        "B": 2,
+        "C": 2,
+        "D": 2,
+        "E": 2
+      },
+      "tool": "tools/governed_live_campaign.py --wall 120"
+    },
+    "live_study": {
+      "note": "real codex-exec; positive direction, underpowered",
+      "solved": {
+        "A": 4,
+        "B": 3,
+        "C": 3,
+        "D": 5
+      },
+      "tool": "tools/live_study.py --wall 120"
+    }
   },
   "docs": [
     "docs/v3/ARCHITECTURE_V3_3.md",
@@ -39,13 +62,13 @@
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "62588bb",
+  "source_commit": "10c2aa8",
   "source_commit_note": "manifest-covered files identical to this commit; the release commit itself touches only out-of-band release/ provenance and the root manifest",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
     "failed": 0,
-    "passed": 709,
+    "passed": 711,
     "skipped": 2
   },
   "verification": "release/verification.json \u2014 verify() + fresh-extraction verify_tree + compileall + extracted-test smoke, all pass"

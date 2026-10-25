@@ -11,7 +11,9 @@ Grading is independent: private tests are injected only at evaluation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -115,14 +117,28 @@ def codex_agent(ctx, *, statements):
     if ctx.guidance is not None and ctx.guidance.decision == "recommend":
         hints = "\n".join("- " + h for h in ctx.guidance.helpful_next_checks)
         parts.append("\nProject conventions (advisory):\n" + hints)
-    proc = subprocess.run(
+    # Enforceable termination (v3.2 PR-06): own process group; on timeout
+    # kill the whole group so the codex child cannot outlive the budget.
+    proc = subprocess.Popen(
         ["codex", "exec", "-C", str(ctx.workspace),
          "-s", "workspace-write", "--skip-git-repo-check",
          "".join(parts)],
-        capture_output=True, text=True,
-        timeout=max(60, int(ctx.budget.wall_seconds) - 15))
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True)
+    try:
+        out, err = proc.communicate(
+            timeout=max(60, int(ctx.budget.wall_seconds) - 15))
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        out, err = proc.communicate()
     (ctx.workspace / ".codex_exec.log").write_text(
-        (proc.stdout or "") + "\n" + (proc.stderr or ""))
+        (out or "") + "\n" + (err or ""))
+    # Verified accounting: codex prints 'tokens used\nN' on stdout.
+    usage = {}
+    for line in (out or "").splitlines():
+        if line.strip().isdigit():
+            usage["tokens_used"] = int(line.strip())
+    return usage or None
 
 
 def main() -> int:
@@ -200,7 +216,9 @@ def main() -> int:
         env = TaskEnvelopeV1(
             schema_version=1, task_id=task_id,
             repo_snapshot_digest=repo_tree, base_commit="a1b2c3d",
-            task_statement_digest="d" * 64, permitted_commands=("codex",),
+            task_statement_digest=hashlib.sha256(
+                statement.encode()).hexdigest(),
+            permitted_commands=("codex",),
             isolation_profile="unverified_local",
             time_budget_seconds=int(args.wall), token_budget=1_000_000,
             tool_budget=10_000, actor_id="study-operator",

@@ -163,9 +163,9 @@ class TestVault(unittest.TestCase):
 
     def test_public_does_not_reveal_private_labels(self):
         public=self.vault.seal(self.dataset)
-        text=json.dumps(public)
-        self.assertNotIn('1000',text)
-        self.assertNotIn('\"output\": 999',text)
+        text=json.dumps(public,sort_keys=True)
+        for case in self.dataset['test'] + self.dataset['shifted_test']:
+            self.assertNotIn(json.dumps(case,sort_keys=True),text)
         self.assertEqual(len(public['test_commitment']),64)
         self.assertNotEqual(public['test_commitment'],digest(self.dataset['test']))
 

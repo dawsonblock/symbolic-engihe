@@ -101,6 +101,23 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 - Efficacy requires a live-model campaign on a powered sample; the
   deterministic run proves machinery, not effect size.
 
+### Post-build release verification (repair pass)
+
+- The first shipped archive failed `tools/verify_release.py` twice:
+  flat layout (no single project directory) and an embedded manifest
+  that did not match the archive contents. Rebuilt with
+  `verify_release.build_zip`: single project dir, 297 covered files,
+  `verify()` + fresh-extraction `verify_tree` + `compileall` +
+  extracted-test smoke all pass (`release/verification.json`).
+- `RELEASE_SHA256.json` regenerated for the v3.3 tree; the prior file
+  was a stale v2-era manifest. `release/` provenance is intentionally
+  out-of-band: an archive cannot contain its own checksum.
+- All six `evidence/` directories populated: baseline, integration
+  (campaign + exported skill bundle), security (13/13 failure-injection
+  scenarios green), benchmark, qualification, release.
+- Archive content verified identical to commit `cc71617` for every
+  manifest-covered file.
+
 ## Defects found and fixed during the build
 
 | defect | fix |

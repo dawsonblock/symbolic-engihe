@@ -36,6 +36,12 @@
   for this release.
 - Hypotheses inside memory payloads are carried for evaluation only;
   nothing upgrades them to causal truth automatically.
+- Ingest-time evidence checking is opt-in: `MemoryStore.ingest` accepts
+  an `evidence_check` hook and both campaigns pass
+  `verify_experience_evidence`, but a caller that omits it can store a
+  record whose receipt is not authenticated. Qualification is still the
+  hard serving gate — such a record cannot reach trusted guidance
+  without a signed pass receipt.
 
 ## Evolution
 
@@ -65,6 +71,10 @@
 - `security_scan` is a string heuristic for advisory triage only; a
   clean scan never implies qualification and a flagged bundle is not
   proof of malice.
+- `record_outcome` correlates an outcome to served guidance within the
+  gateway process; the durable correlation is the audit sink. A restart
+  between serving and outcome recording loses the in-memory link, so
+  deployments must persist and reconcile the audit stream.
 - Bundle format is vskill-*style* (manifest + payload + SHA256SUMS);
   wire compatibility with an external vskill registry is not claimed.
 

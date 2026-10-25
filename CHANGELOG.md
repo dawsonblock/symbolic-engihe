@@ -1,3 +1,30 @@
+## v3.3.0 — Governed learning (2026-10-25)
+
+- Added a typed candidate registry (`CandidateV1`, six artifact types) with
+  role-gated transitions, hash-chained audit, and receipt-authenticated
+  qualification.
+- Added ReasoningBank-style experience memory with JSON-only ingest,
+  episode-replay rejection, evidence-bound verification, and gated retrieval
+  with abstention.
+- Added EvoSkill-style bounded skill evolution: pure-payload mutators,
+  injected dev evaluator, hard budgets, ranked frontier, intake-only output.
+- Added the five-arm governed evaluation plane (A–E) with sealed holdout
+  partitions, preregistered protocol digests, sample sizing, and honest
+  abstention/negative-transfer metrics.
+- Added strict governed serving with registry-resolved repository identity,
+  scope/revocation/applicability/counterexample gates, and audited delivery.
+- Added vskill-style skill bundle export/verify/import; imports land at
+  PROPOSED regardless of claimed status.
+- Added deterministic and authenticated live campaigns exercising the full
+  lifecycle, plus 13 failure-injection scenarios.
+- Hardening: qualification requires a signature-authenticated pass receipt;
+  the release archive is source-bound and cannot embed itself; regression
+  rate is relative to baseline solves; memory ingest and serving outcomes are
+  evidence-bound.
+- Status: **IMPLEMENTED_NOT_EFFICACY_QUALIFIED** — security/correctness gates
+  pass; learning efficacy on unseen repositories is not established. See
+  `docs/v3/QUALIFICATION_REPORT.md` and `docs/v3/V33_LIMITATIONS.md`.
+
 ## 2026-10-24 — Signed decision recovery and authority hardening (development release)
 
 - Write-ahead, signed promotion decisions and deterministic catalog materialization recovery.

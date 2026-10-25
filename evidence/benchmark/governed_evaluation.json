@@ -78,6 +78,12 @@
     }
   },
   "kind": "governed_evaluation_evidence",
+  "negative_transfer": {
+    "fixture": "examples/v3/negative_transfer/remaining_balance.json",
+    "live_campaign": "the 2-task live holdout contains no deliberately misleading task, so negative_transfer_rate is null rather than measured live",
+    "observed": "abstain / prior_negative_transfer; procedure_ids empty",
+    "test": "tests/v3/test_retrieval.py (test_negative_transfer_fixture_abstains)"
+  },
   "note": "deterministic scripted-agent run \u2014 machinery evidence only, NOT live-model efficacy",
   "paired": {
     "B_vs_A": {

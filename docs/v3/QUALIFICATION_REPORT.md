@@ -51,6 +51,11 @@ planned.
   procedures (D=5 vs A=4) but p=1.0 and n=6. It cannot support a claim.
 - No preregistered powered holdout has been run. A claim of improved
   coding outcomes would be unsupported.
+- Negative transfer is unit-tested against the audited
+  `remaining_balance` false-transfer fixture (abstains with
+  `prior_negative_transfer`, no procedure IDs). The live campaigns
+  contain no deliberately misleading holdout, so
+  `negative_transfer_rate` is `null` rather than measured live.
 
 ## What is proven
 

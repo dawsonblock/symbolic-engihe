@@ -1,9 +1,9 @@
 {
-  "base_commit": "df80944cc5376b6c97c7748d760be2ddb02116fe",
+  "base_commit": "b6935406867dfa9dd899cfc73e803f2dbbe814ef",
   "branch": "codex/sis-v3.3-governed-learning",
   "builder": "tools/package_release.py -> tools/build_canonical_zip.py",
   "commit_binding": "every archive member is re-hashed against the working tree at build time (verify_against_tree); the source commit and dirty state are recorded in release/verification.json",
-  "generated_at": "2026-10-25T22:44:19Z",
+  "generated_at": "2026-10-25T22:44:41Z",
   "kind": "release_build_record",
   "manifest_scope": "all _included() source/evidence files; release/ and evidence/release/build_record.json are out-of-band and never inventoried into the archive",
   "post_build_verification": "release/verification.json \u2014 outside the archive by construction",

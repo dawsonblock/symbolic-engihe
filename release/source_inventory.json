@@ -225,8 +225,8 @@
       "sha256": "664b533c8f9174ae2b2855e03e5d871237d9fa5cd97084c9590a0da63176dfd1"
     },
     "docs/v3/IMPLEMENTATION_REPORT_V3_3.md": {
-      "bytes": 17708,
-      "sha256": "79d60ae81d198080c639eaed1e115aaed7e81df01352410cde49801a5f756743"
+      "bytes": 17935,
+      "sha256": "c898eb53ea95964748003f8b2f62abca7cfc134730b902a54bc9fff119e6c20b"
     },
     "docs/v3/MEMORY_DESIGN.md": {
       "bytes": 3406,
@@ -1271,5 +1271,5 @@
   },
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "df80944cc5376b6c97c7748d760be2ddb02116fe"
+  "source_commit": "b6935406867dfa9dd899cfc73e803f2dbbe814ef"
 }

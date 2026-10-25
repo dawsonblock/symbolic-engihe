@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,6 +40,11 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
 
 
 def _git(root: Path, *args: str) -> str:
@@ -64,6 +70,32 @@ def package(root: Path, release: str, *, status: str, passed: int,
     out = root / "release"
     out.mkdir(parents=True, exist_ok=True)
     archive = out / f"{release}.zip"
+
+    binding = source_binding(root)
+    build_record = {
+        "schema_version": 1,
+        "kind": "release_build_record",
+        "release": release,
+        "branch": _git(root, "rev-parse", "--abbrev-ref", "HEAD"),
+        "base_commit": binding["commit"],
+        "builder": "tools/package_release.py -> tools/build_canonical_zip.py",
+        "commit_binding": (
+            "every archive member is re-hashed against the working tree at "
+            "build time (verify_against_tree); the source commit and dirty "
+            "state are recorded in release/verification.json"
+        ),
+        "manifest_scope": (
+            "all _included() source/evidence files; release/ is out-of-band "
+            "and never inventoried into the archive"
+        ),
+        "post_build_verification": (
+            "release/verification.json — outside the archive by construction"
+        ),
+        "generated_at": _utcnow(),
+    }
+    (root / "evidence" / "release").mkdir(parents=True, exist_ok=True)
+    (root / "evidence" / "release" / "build_record.json").write_text(
+        json.dumps(build_record, indent=2, sort_keys=True) + "\n")
 
     report = build(root, archive, require_clean=not allow_dirty)
     manifest = json.loads((root / "RELEASE_SHA256.json").read_text())

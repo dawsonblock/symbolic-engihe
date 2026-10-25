@@ -22,7 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from verify_release import verify, verify_against_tree
 from build_release import write_manifest
 
-GENERATED_PATHS = {"RELEASE_SHA256.json"}
+GENERATED_PATHS = {"RELEASE_SHA256.json",
+                   "evidence/release/build_record.json"}
 
 
 def source_binding(root: Path) -> dict:

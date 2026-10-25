@@ -81,9 +81,12 @@ def sis_recommend(
         )[:32],
         policy_digest=_POLICY_DIGEST,
         helpful_next_checks=(
+            # Serve the winning procedure's steps — they ARE the guidance.
+            # Capped at the contract bound; generic checks follow.
+            *top[0].record.steps,
             "Confirm each listed precondition holds in the target repository before acting.",
             "Run the procedure's required verification and the project's own tests.",
-        ),
+        )[:32],
         reason_code=None,
         approximate_tokens=min(2_000, 200 + 40 * len(top)),
     )

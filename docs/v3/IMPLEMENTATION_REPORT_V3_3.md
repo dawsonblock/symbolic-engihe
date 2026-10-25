@@ -93,7 +93,7 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 
 ## M10 — Release qualification: IMPLEMENTED_NOT_EFFICACY_QUALIFIED
 
-- Suite: **737 passed, 2 skipped** (`PYTHONPATH=src pytest tests/`).
+- Suite: **741 passed, 2 skipped** (`PYTHONPATH=src pytest tests/`).
 - Docs: ARCHITECTURE_V3_3, SECURITY_BOUNDARIES_V3_3, MEMORY_DESIGN,
   EVOLUTION_DESIGN, EVALUATION_PROTOCOL_V3_3, V33_LIMITATIONS, this
   report.
@@ -160,7 +160,7 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   (journal resolution + signature + outcome match); serving audit rows
   carry `task_id`, and `record_outcome` binds a receipt digest/outcome
   to the exact served guidance digest.
-- Suite: **737 passed, 2 skipped**. Deterministic campaign unchanged
+- Suite: **741 passed, 2 skipped**. Deterministic campaign unchanged
   (A=0/B=2/C=2/D=0/E=2); live governed campaign re-run at this tree:
   all arms 2/2 (ceiling), authentic lifecycle.
 - `tools/smoke_integration.py` run locally on macOS: CLI + authed
@@ -178,6 +178,22 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   qualification → serving → revocation) executed authentically with
   a real agent (`evidence/benchmark/live-campaign/`).
 
+### Completion pass 4 (fail-closed extraction gate)
+
+- **The release build recorded its extraction checks instead of
+  enforcing them.** `package_release` ran `compileall` and the extracted
+  `tests/v3/test_candidates.py` smoke test, then wrote their results into
+  `release/verification.json` — but never inspected either result, so an
+  archive whose extracted tree failed to compile or failed its smoke test
+  could still be packaged under a green manifest. `fresh_extraction_checks`
+  now raises on both, and records the smoke return code alongside its
+  tail. Four regression tests cover the gate (passing extraction, failing
+  smoke, missing smoke, uncompilable source).
+- Suite: **741 passed, 2 skipped** (737 + the four gate tests).
+  Artifacts rebuilt and bound to the fix commit: archive, embedded
+  manifest, source inventory and `SHA256SUMS` all re-verified, with
+  `verify_against_tree` reporting `source_bound: true`.
+
 ## Defects found and fixed during the build
 
 | defect | fix |
@@ -189,3 +205,4 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 | campaign: raw step concat starved real steps behind an 8-item cap | merge via `compose_guidance` |
 | campaign: buggy `clamp` fixture passed its own test; `dedup`/`clamp` holdouts untransferable by design | holdouts redesigned as unseen-repo variants `money2`/`slug2` of the dev conventions |
 | campaign: `scripted_agent` wrote `<task>.py` not the fixture's module | write the declared module name |
+| release build: extracted-tree compile/smoke results were recorded but never enforced | both fail the build; smoke return code recorded; 4 regression tests |

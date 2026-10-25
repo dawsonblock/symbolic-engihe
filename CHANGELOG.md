@@ -18,9 +18,10 @@
 - Added deterministic and authenticated live campaigns exercising the full
   lifecycle, plus 13 failure-injection scenarios.
 - Hardening: qualification requires a signature-authenticated pass receipt;
-  the release archive is source-bound and cannot embed itself; regression
-  rate is relative to baseline solves; memory ingest and serving outcomes are
-  evidence-bound.
+  the release archive is source-bound and cannot embed itself; the release
+  build fails closed when the extracted tree does not compile or fails its
+  smoke test; regression rate is relative to baseline solves; memory ingest
+  and serving outcomes are evidence-bound.
 - Status: **IMPLEMENTED_NOT_EFFICACY_QUALIFIED** — security/correctness gates
   pass; learning efficacy on unseen repositories is not established. See
   `docs/v3/QUALIFICATION_REPORT.md` and `docs/v3/V33_LIMITATIONS.md`.

@@ -42,10 +42,9 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 ## Verification
 
 - `PYTHONPATH=src python3 -m pytest tests/ -q`
-- **737 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
+- **741 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
   composition, serving, packaging, governed-eval, campaign and
-  release-binding tests).
-- Every module compiles (`python3 -m py_compile`).
+  release-binding tests).- Every module compiles (`python3 -m py_compile`).
 - `python3 tools/verify_release.py release/SIS-v3.3.0-GOVERNED-LEARNING.zip`
   verifies the archive against its embedded manifest; the build also
   re-hashes every member against the source tree it came from
@@ -75,6 +74,11 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 - **Serving audit.** Served guidance rows carry `task_id`;
   `record_outcome` binds a receipt digest and outcome to the exact
   guidance digest the gateway served.
+- **Fresh-extraction gate.** `package_release` recorded the extracted
+  tree's compile and smoke results but never checked them, so a broken
+  archive could ship under a green manifest. Both now fail the build,
+  and `verification.json` records the smoke return code. Four
+  regression tests cover the gate.
 
 ## Upgrade notes
 

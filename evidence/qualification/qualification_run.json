@@ -2,14 +2,14 @@
   "schema_version": 1,
   "kind": "qualification_run",
   "branch": "codex/sis-v3.3-governed-learning",
-  "generated_at": "2026-10-25T08:45:00Z",
-  "commit_at_generation": "0f5ae9118f280f5d146bfdc9517bdaa1526d4f84",
-  "note": "the exact source commit of the packaged archive is recorded in release/release_manifest.json; this file records the qualification commands and their observed results",
+  "generated_at": "2026-10-25T08:55:00Z",
+  "commit_at_generation": "980dd34e945821e2d46f748d4f1b2fa8adaa5608",
+  "note": "the suite and packaging rows were re-run at commit_at_generation; the campaign, smoke and failure-injection rows record the M9 execution pass. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
   "commands": [
     {
       "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
       "result": {
-        "passed": 737,
+        "passed": 741,
         "skipped": 2,
         "failed": 0
       }
@@ -61,7 +61,7 @@
       }
     },
     {
-      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 737 --skipped 2 --failed 0",
+      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 741 --skipped 2 --failed 0",
       "result": "see release/release_manifest.json and release/verification.json"
     }
   ],

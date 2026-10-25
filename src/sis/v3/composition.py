@@ -82,13 +82,20 @@ def _conflicts(a: str, b: str) -> bool:
 
 @dataclass(frozen=True)
 class ComposedGuidance:
-    """The merged advisory payload plus its audit trail."""
+    """The merged advisory payload plus its audit trail.
+
+    ``source_digests`` covers every artifact that contributed a delivered
+    step; ``step_sources`` maps each delivered step to its artifact
+    digest, so a caller can audit what actually shipped rather than what
+    merely composed.
+    """
 
     steps: tuple[str, ...]
     source_digests: tuple[str, ...]
     abstained: bool
     reason: str | None
     resolutions: tuple[str, ...] = field(default_factory=tuple)
+    step_sources: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 def compose_guidance(
@@ -140,12 +147,14 @@ def compose_guidance(
 
     steps: list[str] = []
     sources: list[str] = []
+    step_sources: list[tuple[str, str]] = []
     spent = 0
     for normalized, digest, _rankv in chosen:
         cost = max(1, len(normalized) // 4)
         if len(steps) >= max_steps or spent + cost > token_budget:
             continue
         steps.append(normalized)
+        step_sources.append((normalized, digest))
         spent += cost
         if digest not in sources:
             sources.append(digest)
@@ -157,4 +166,5 @@ def compose_guidance(
     return ComposedGuidance(
         steps=tuple(steps), source_digests=tuple(sources),
         abstained=False, reason=None,
-        resolutions=tuple(resolutions))
+        resolutions=tuple(resolutions),
+        step_sources=tuple(step_sources))

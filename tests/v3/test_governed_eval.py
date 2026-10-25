@@ -11,7 +11,8 @@ from sis.v3.contracts import ContractError, TaskEnvelopeV1
 from sis.v3.governed_eval import (EvaluationPartition,
                                   assert_partition_disjoint,
                                   compute_metrics, preregister,
-                                  required_sample_size)
+                                  required_sample_size,
+                                  run_governed_evaluation)
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -48,6 +49,11 @@ class PartitionTests(unittest.TestCase):
             development=(_task("d", "b" * 64),),
             holdout=(_task("h", "c" * 64),)))
 
+    def test_unknown_partition_name_rejected(self):
+        p = EvaluationPartition(holdout=(_task("h", "c" * 64),))
+        with self.assertRaises(ContractError):
+            p.by_name("bogus")
+
 
 class ProtocolTests(unittest.TestCase):
     def test_preregistration_freezes_digest(self):
@@ -67,6 +73,69 @@ class ProtocolTests(unittest.TestCase):
         self.assertGreaterEqual(n, 4)
         with self.assertRaises(ContractError):
             required_sample_size(0.3, 0.7)
+
+    def test_sample_size_respects_alpha_and_power(self):
+        # No silent z substitution: stricter alpha and higher power both
+        # increase the required sample.
+        base = required_sample_size(0.7, 0.3)
+        stricter = required_sample_size(0.7, 0.3, alpha=0.01)
+        powered = required_sample_size(0.7, 0.3, power=0.9)
+        self.assertGreater(stricter, base)
+        self.assertGreater(powered, base)
+        for bad in (dict(alpha=0.0), dict(alpha=0.5), dict(alpha=1.0),
+                    dict(power=0.0), dict(power=1.0)):
+            with self.assertRaises(ContractError):
+                required_sample_size(0.7, 0.3, **bad)
+
+
+class _StubHarness:
+    """Minimal harness double: returns a fixed report, records the call."""
+
+    def __init__(self, report):
+        self._report = report
+
+    def run(self, tasks, agent, *, budget, context_provider, arms):
+        return dict(self._report)
+
+
+class ConformanceTests(unittest.TestCase):
+    def _report(self):
+        return {"per_task": [], "budget": {"wall_seconds": 60,
+                                           "token_budget": 1000,
+                                           "tool_budget": 10},
+                "solved_counts": {}}
+
+    def _run(self, protocol):
+        task = _task("h", "c" * 64)
+        return run_governed_evaluation(
+            _StubHarness(self._report()),
+            [(task, Path("/nonexistent"))],
+            object(),
+            budget=type("B", (), {"wall_seconds": 60})(),
+            context_provider=None,
+            protocol=protocol,
+            learned_repo_digests=["a" * 64],
+            arms=("A", "E"))
+
+    def test_conforming_run_records_conforms_true(self):
+        report = self._run(preregister(
+            primary_metric="x", method="m", alpha=0.05, min_effect=1.0,
+            sample_size=1, arms=("A", "E"),
+            budget={"wall_seconds": 60, "token_budget": 1000}))
+        conf = report["governed"]["conformance"]
+        self.assertTrue(conf["conforms"], conf["mismatches"])
+
+    def test_off_plan_run_is_flagged_not_hidden(self):
+        report = self._run(preregister(
+            primary_metric="x", method="m", alpha=0.05, min_effect=1.0,
+            sample_size=99, arms=("A", "E"),
+            budget={"wall_seconds": 30}))
+        conf = report["governed"]["conformance"]
+        self.assertFalse(conf["conforms"])
+        self.assertTrue(any("budget.wall_seconds" in m
+                            for m in conf["mismatches"]))
+        self.assertTrue(any("sample_size" in m
+                            for m in conf["mismatches"]))
 
 
 class MetricsTests(unittest.TestCase):

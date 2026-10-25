@@ -176,6 +176,76 @@ class RegistryLifecycleTests(RegistryFixture):
         self.assertEqual(reg2.state_of(cand.candidate_id), "proposed")
         reg2.close()
 
+    def test_audit_chain_detects_row_tamper(self):
+        cand = make_candidate()
+        self.reg.submit(cand, actor_role="learner")
+        self.reg.transition(cand.candidate_id, "validated",
+                            actor_role="learner")
+        audit = self.reg.audit()
+        self.assertEqual(len(audit), 2)
+        self.assertTrue(all(len(e["entry_digest"]) == 64
+                            for e in audit))
+        # rewrite history: change the recorded actor of a transition
+        self.reg._conn().execute(
+            "UPDATE candidate_transition SET actor_identity='mallory'"
+            " WHERE seq=2")
+        self.reg._conn().commit()
+        with self.assertRaisesRegex(CandidateError,
+                                    "audit_chain_tampered"):
+            self.reg.audit()
+        # filtered reads must not bypass verification either
+        with self.assertRaisesRegex(CandidateError,
+                                    "audit_chain_tampered"):
+            self.reg.audit(cand.candidate_id)
+
+    def test_audit_chain_detects_deleted_row(self):
+        cand = make_candidate()
+        self.reg.submit(cand, actor_role="learner")
+        self.reg.transition(cand.candidate_id, "validated",
+                            actor_role="learner")
+        self.reg._conn().execute(
+            "DELETE FROM candidate_transition WHERE seq=1")
+        self.reg._conn().commit()
+        with self.assertRaisesRegex(CandidateError,
+                                    "audit_chain_tampered"):
+            self.reg.audit()
+
+    def test_legacy_audit_rows_backfilled_on_open(self):
+        # A pre-chain database is sealed in place at open: entries gain
+        # digests, and reads then verify the chain normally.
+        import sqlite3
+        path = Path(self.temp.name) / "legacy.db"
+        con = sqlite3.connect(str(path))
+        con.executescript("""
+            CREATE TABLE candidate (
+                candidate_id TEXT PRIMARY KEY,
+                candidate_digest TEXT NOT NULL UNIQUE,
+                candidate_json TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_at TEXT NOT NULL);
+            CREATE TABLE candidate_transition (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id TEXT NOT NULL,
+                from_state TEXT NOT NULL,
+                to_state TEXT NOT NULL,
+                actor_identity TEXT NOT NULL,
+                receipt_refs_json TEXT NOT NULL,
+                note TEXT NOT NULL,
+                committed_at TEXT NOT NULL);""")
+        con.execute(
+            "INSERT INTO candidate_transition"
+            " (candidate_id, from_state, to_state, actor_identity,"
+            "  receipt_refs_json, note, committed_at)"
+            " VALUES ('c-1', '', 'proposed', 'learner', '[]',"
+            "         'submitted', '2026-10-24T00:00:00Z')")
+        con.commit()
+        con.close()
+        reg = CandidateRegistry(path)
+        self.addCleanup(reg.close)
+        audit = reg.audit()  # verifies the backfilled chain
+        self.assertEqual(len(audit), 1)
+        self.assertEqual(len(audit[0]["entry_digest"]), 64)
+
 
 if __name__ == "__main__":
     unittest.main()

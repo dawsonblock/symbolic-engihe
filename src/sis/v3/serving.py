@@ -15,12 +15,16 @@ Isolation invariants:
   permission, alter sandbox/policy, or touch authority.
 - Serving requires a resolvable repository identity. A self-declared
   ``repository_id`` that the trusted registry cannot resolve abstains.
-- Revoked, tampered, malformed, out-of-scope or inapplicable candidates
-  are excluded individually (each rejection is counted and auditable);
-  nothing silently degrades to permissive.
+- Revoked, tampered, malformed, out-of-scope, family-mismatched (when
+  ``task_family`` is declared) or inapplicable candidates are excluded
+  individually (each rejection is counted and auditable); nothing
+  silently degrades to permissive.
 - ``decision`` remains honest: ``recommend`` only when the strict
   procedure path qualifies; candidate-only advice rides along as
   advisory checks under an abstention decision with a reason.
+- ``target_task_family``/``target_agent`` are provenance fields; the
+  optional ``task_family`` argument turns the family field into an
+  enforced gate for deployments that want it.
 """
 from __future__ import annotations
 
@@ -30,7 +34,8 @@ from .candidates import CandidateRegistry
 from .composition import compose_guidance
 from .contracts import CandidateV1, ContractError, GuidanceRequestV1, GuidanceV1, canonical_digest
 from .guidance import _abstain
-from .retrieval import RetrievalContext, precondition_holds
+from .retrieval import (RetrievalContext, precondition_holds,
+                        suppression_match)
 
 _POLICY = {
     "schema_version": 1,
@@ -39,6 +44,17 @@ _POLICY = {
                 "no_qualified_procedure", "catalog_unavailable"],
 }
 _POLICY_DIGEST = canonical_digest("guidance_policy", 1, _POLICY)
+
+
+def _unique_digests(digests) -> list[str]:
+    """Ordered de-dup: one audit entry per delivered candidate."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for d in digests:
+        if d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out
 
 
 class GovernedServingGateway:
@@ -75,14 +91,16 @@ class GovernedServingGateway:
         context: RetrievalContext | None = None,
         files_present=(),
         symbols_extra=(),
+        task_family: str | None = None,
         now=None,
     ) -> GuidanceV1:
-        if not isinstance(request, GuidanceRequestV1):
-            request = GuidanceRequestV1.from_dict(request)
-        resolved = self._resolve_repository(repository_id)
         served_map = {"candidates": [], "rejections": [],
-                      "repository_id": resolved}
+                      "repository_id": None}
         try:
+            if not isinstance(request, GuidanceRequestV1):
+                request = GuidanceRequestV1.from_dict(request)
+            resolved = self._resolve_repository(repository_id)
+            served_map["repository_id"] = resolved
             if resolved is None:
                 out = _abstain("insufficient_support", (
                     "Repository identity is not in the trusted registry.",))
@@ -93,11 +111,11 @@ class GovernedServingGateway:
                 request, files_present=files_present,
                 symbols_extra=symbols_extra)
             eligible = self._eligible(
-                resolved, request, ctx, revoked_digests, served_map)
+                resolved, request, ctx, revoked_digests, served_map,
+                task_family=task_family)
             composed = compose_guidance(
                 eligible, conflict_policy=self._conflict_policy,
                 max_steps=self._max_steps, token_budget=self._token_budget)
-            served_map["candidates"] = list(composed.source_digests)
             served_map["resolutions"] = list(composed.resolutions)
 
             strict = self._strict.recommend(
@@ -108,9 +126,17 @@ class GovernedServingGateway:
 
             if strict is not None and strict.decision == "recommend":
                 steps = list(strict.helpful_next_checks)
+                added = 0
                 for step in composed.steps:
                     if step not in steps:
                         steps.append(step)
+                        added += max(1, len(step) // 4)
+                merged = tuple(steps)[:8]
+                merged_set = set(merged)
+                delivered = _unique_digests(
+                    d for s, d in composed.step_sources
+                    if s in merged_set)
+                served_map["candidates"] = delivered
                 out = GuidanceV1(
                     schema_version=1, decision="recommend",
                     procedure_ids=strict.procedure_ids,
@@ -119,12 +145,13 @@ class GovernedServingGateway:
                     contraindications=strict.contraindications,
                     evidence_ids=tuple(
                         list(strict.evidence_ids)
-                        + [d for d in composed.source_digests
+                        + [d for d in delivered
                            if d not in strict.evidence_ids])[:32],
                     policy_digest=_POLICY_DIGEST,
-                    helpful_next_checks=tuple(steps)[:8],
+                    helpful_next_checks=merged,
                     reason_code=None,
-                    approximate_tokens=strict.approximate_tokens)
+                    approximate_tokens=min(
+                        2_000, strict.approximate_tokens + added))
                 self._emit(served_map, out)
                 return out
 
@@ -146,7 +173,12 @@ class GovernedServingGateway:
             # Candidate-only advice: advisory steps under an honest
             # abstention decision — memories/skills never claim procedure
             # authority, but the qualified advisory text is still served.
-            checks = tuple(composed.steps)[:7] + (
+            delivered_steps = tuple(composed.steps)[:7]
+            delivered = _unique_digests(
+                d for s, d in composed.step_sources
+                if s in set(delivered_steps))
+            served_map["candidates"] = delivered
+            checks = delivered_steps + (
                 "Advisory from qualified learned candidates; verify "
                 "against task tests before relying on it.",)
             out = GuidanceV1(
@@ -176,6 +208,7 @@ class GovernedServingGateway:
     def _eligible(
         self, requester_id: str, request, ctx,
         revoked: frozenset | set, served_map: dict,
+        task_family: str | None = None,
     ) -> list[CandidateV1]:
         out: list[CandidateV1] = []
         requester = self._registry.resolve(requester_id)
@@ -187,6 +220,12 @@ class GovernedServingGateway:
                 reject = "revoked"
             elif not self._scope_covers(cand, requester_id, family):
                 reject = "out_of_scope"
+            elif task_family is not None and \
+                    cand.target_task_family != task_family:
+                # Opt-in hard gate: when the caller declares the task's
+                # family, candidates trained for another family are
+                # rejected instead of serving off-target advisory text.
+                reject = "family_mismatch"
             elif any(not precondition_holds(c, ctx)
                      for c in cand.applicability_predicate):
                 reject = "inapplicable"
@@ -217,7 +256,7 @@ class GovernedServingGateway:
             ctx.failure_signatures | ctx.symbols_present
             | ctx.files_present)).lower()
         return any(
-            isinstance(cx, str) and cx.lower() in haystack
+            isinstance(cx, str) and suppression_match(haystack, cx)
             for cx in cand.known_counterexamples)
 
     def _emit(self, served_map: dict, guidance: GuidanceV1) -> None:

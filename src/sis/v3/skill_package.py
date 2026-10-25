@@ -152,20 +152,26 @@ def verify_install(bundle: str | Path) -> dict:
         "manifest.json", "payload.json", "SHA256SUMS"}
     if extra:
         problems.append(f"unexpected_files:{sorted(extra)[:4]}")
+    manifest = None
+    manifest_ok = False
     try:
         manifest = loads_json((bundle / "manifest.json").read_bytes())
         if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_KEYS:
             problems.append("manifest_schema_mismatch")
         elif manifest.get("format") != _FORMAT:
             problems.append("manifest_format_unsupported")
+        else:
+            manifest_ok = True
     except (ContractError, OSError):
         problems.append("manifest_unreadable")
     try:
         candidate = CandidateV1.from_dict(
             loads_json((bundle / "payload.json").read_bytes()))
-        if isinstance(manifest, dict) and \
-                manifest.get("candidate_digest") != candidate.digest:
-            problems.append("candidate_digest_mismatch")
+        if manifest_ok:
+            if manifest.get("candidate_digest") != candidate.digest:
+                problems.append("candidate_digest_mismatch")
+            if manifest.get("candidate_id") != candidate.candidate_id:
+                problems.append("candidate_id_mismatch")
     except (ContractError, OSError):
         problems.append("payload_unreadable")
     return {"ok": not problems, "problems": problems}

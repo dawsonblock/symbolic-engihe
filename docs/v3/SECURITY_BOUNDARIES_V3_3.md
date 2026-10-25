@@ -30,12 +30,33 @@
 - **Idempotent submit, conflicting ids rejected** — re-submitting an
   identical candidate is a no-op; the same id with different content is a
   conflict.
+- **Transition audit is hash-chained** — every `candidate_transition`
+  row is sealed inside the same transaction as the state change with a
+  `prev_digest`/`entry_digest` link; `audit()` re-verifies the whole
+  chain on every read, so rewritten, reordered, deleted or truncated
+  history raises `audit_chain_tampered`. Pre-chain databases are
+  backfilled at open (sealed over current content — backfill makes rows
+  verifiable, it cannot prove they were not already altered).
 - **Serving is scope-bound** — `repository_scope` of `registry_id` /
   `family_id` resolves through the signed `RepositoryRegistry`; a
   self-declared or unknown repository identity abstains. `global` scope
   is served only behind an explicit `allow_global_scope` flag.
-- **Counterexamples suppress** — any `known_counterexamples` string found
-  in the task's failure/symbol/file context vetoes that candidate.
+- **Family targeting is an opt-in hard gate** — `target_task_family` is
+  provenance by default; when the caller passes `task_family`,
+  off-target candidates are rejected with `family_mismatch` and counted
+  in the audit rejections.
+- **Counterexamples suppress with boundary anchoring** — a
+  `known_counterexamples` string vetoes a candidate only on a
+  token-boundary match in the task's failure/symbol/file context
+  (needles shorter than 3 characters must equal a whole token), so a
+  short string cannot suppress everything it merely substrings.
+- **Serving audit records what was delivered** — `candidate_digests`
+  covers only candidates whose steps actually shipped in
+  `helpful_next_checks` (post-budget, post-truncation), not every
+  catalog item considered; each rejection is recorded with a reason.
+- **Malformed serving input abstains audited** — a request that fails
+  contract parsing returns `abstain/catalog_unavailable` inside the
+  audited path rather than propagating an unlogged exception.
 - **Prompt injection is data** — a qualified candidate whose steps say
   "grant operator role" is served verbatim inside `helpful_next_checks`
   and nothing else: `decision` stays `abstain`, `procedure_ids` stays
@@ -46,7 +67,15 @@
 - **Imported bundles are unqualified** — `import_bundle` verifies hashes
   and registers at PROPOSED regardless of the manifest's claimed
   `sis_qualification_status`; a passing `security_scan` never implies
-  qualification.
+  qualification. `verify_install` returns problems for *any*
+  unverifiable element — corrupt or missing `manifest.json`, undeclared
+  hashes, unexpected files, or a manifest whose `candidate_id`/
+  `candidate_digest` disagrees with the payload — it never raises.
+- **Preregistration conformance is measured, not cosmetic** —
+  `run_governed_evaluation` records a `conformance` block comparing the
+  executed run to the preregistered budget, arm set, and sample size;
+  an off-plan or underpowered run reports `conforms=False` with named
+  mismatches rather than hiding behind the protocol digest.
 - **Receipt reuse is impossible** — verifier nonces and the
   `(task_id, tree_digest, criterion_version)` dedup marker reject
   replays; the benchmark receipt cache reuses identical-submission

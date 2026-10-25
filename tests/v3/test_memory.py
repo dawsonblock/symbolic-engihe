@@ -124,6 +124,18 @@ class RetrievalTests(unittest.TestCase):
         picked = retrieve_memories([cand], self.ctx(failures=("legacy-sig",)))
         self.assertEqual(picked, ())
 
+    def test_short_counterexample_requires_token_match(self):
+        # "ai" must not suppress on contexts containing "airflow" —
+        # substrings inside longer tokens are not counterexamples.
+        cand = induce_candidate(
+            make_experience(counterexamples=("ai",)))
+        picked = retrieve_memories(
+            [cand], self.ctx(failures=("airflow timeout",)))
+        self.assertEqual(len(picked), 1)
+        picked = retrieve_memories(
+            [cand], self.ctx(failures=("ai",)))
+        self.assertEqual(picked, ())
+
     def test_dedup_by_content_digest(self):
         a = induce_candidate(make_experience())
         b = induce_candidate(make_experience(eid="exp-9", episode="ep-9"))

@@ -1,4 +1,5 @@
 """Governed serving + skill packaging (v3.3 M7/M8) incl. injection."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -130,6 +131,51 @@ class ServingTests(ServingFixture):
         self.assertEqual(out.decision, "abstain")
         self.assertEqual(out.procedure_ids, ())  # grants nothing
 
+    def test_task_family_gate_rejects_off_target_candidates(self):
+        cand = make_candidate(
+            scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)  # target_task_family="fam" by default
+        served = self.gateway.serve(
+            _request(), repository_id="repo-a", task_family="fam")
+        self.assertIn("do the thing", served.helpful_next_checks)
+        gated = self.gateway.serve(
+            _request(), repository_id="repo-a", task_family="other-fam")
+        self.assertTrue(all("do the thing" != s
+                            for s in gated.helpful_next_checks))
+        self.assertEqual(
+            self.audit[-1]["rejections"][0]["reason"], "family_mismatch")
+
+    def test_malformed_request_abstains_and_audits(self):
+        out = self.gateway.serve({"schema_version": 1}, repository_id="repo-a")
+        self.assertEqual(out.decision, "abstain")
+        self.assertEqual(out.reason_code, "catalog_unavailable")
+        self.assertEqual(self.audit[-1]["kind"], "served_guidance")
+
+    def test_audit_records_only_delivered_candidate_digests(self):
+        # Steps beyond the 7-step advisory cap are composed but not
+        # delivered; their digests must not appear as served.
+        steps = [f"step-{i} fill space enough to count" for i in range(10)]
+        first = make_candidate(
+            cid="many", scope={"kind": "family_id", "value": "fam-a"},
+            payload={"steps": steps})
+        self._qualified(first)
+        out = self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertEqual(len([s for s in out.helpful_next_checks
+                              if s.startswith("step-")]), 7)
+        self.assertEqual(self.audit[-1]["candidate_digests"],
+                         [first.digest])
+        # A lower-precedence candidate composes (12-step cap) but its
+        # step lands past the 7-step advisory cap -> not delivered ->
+        # its digest is not recorded as served.
+        late = make_candidate(
+            cid="late", scope={"kind": "family_id", "value": "fam-a"},
+            ctype="prompt_variant",
+            payload={"steps": ["late-step that will be cut"]})
+        self._qualified(late)
+        self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertNotIn(late.digest,
+                         self.audit[-1]["candidate_digests"])
+
 
 class PackageTests(unittest.TestCase):
     def setUp(self):
@@ -170,6 +216,32 @@ class PackageTests(unittest.TestCase):
         bundle = export_bundle(cand, self.root / "b3")
         import_bundle(bundle, self.reg, actor_role="learner")
         self.assertEqual(self.reg.state_of(cand.candidate_id), "proposed")
+
+    def test_unreadable_or_missing_manifest_fails_closed(self):
+        # Regression: verify_install must return problems, never raise.
+        bundle = export_bundle(self.cand, self.root / "b4")
+        (bundle / "manifest.json").write_text("{not json")
+        result = verify_install(bundle)
+        self.assertFalse(result["ok"])
+        self.assertIn("manifest_unreadable", result["problems"])
+        with self.assertRaises(PackageError):
+            import_bundle(bundle, self.reg, actor_role="learner")
+        bundle2 = export_bundle(self.cand, self.root / "b5")
+        (bundle2 / "manifest.json").unlink()
+        result = verify_install(bundle2)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["problems"])
+
+    def test_candidate_id_mismatch_detected(self):
+        bundle = export_bundle(self.cand, self.root / "b6")
+        manifest = json.loads((bundle / "manifest.json").read_text())
+        manifest["candidate_id"] = "forged-id"
+        (bundle / "manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True))
+        # manifest file changed -> SHA256SUMS no longer binds it
+        result = verify_install(bundle)
+        self.assertFalse(result["ok"])
+        self.assertIn("hash_mismatch:manifest.json", result["problems"])
 
 
 if __name__ == "__main__":

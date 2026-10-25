@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
@@ -54,6 +55,8 @@ class EvaluationPartition:
     monitoring: tuple[TaskEnvelopeV1, ...] = ()
 
     def by_name(self, name: str) -> tuple[TaskEnvelopeV1, ...]:
+        if name not in PARTITIONS:
+            raise ContractError(f"unknown partition: {name}")
         return getattr(self, name)
 
 
@@ -122,12 +125,18 @@ def required_sample_size(p1: float = 0.6, p2: float = 0.4, *,
     """Approximate paired-binary sample size (McNemar-normal approx).
 
     For discordant-pair share q = p1 - p2 > 0 with discordant rate d:
-    n ≈ d * ((z_1-α/2 + z_power) / q)². Deliberately conservative.
+    n ≈ d * ((z_1-α/2 + z_power) / q)². Z-scores are computed exactly for
+    the requested alpha/power — no silent lookup substitution.
     """
     if not (0 < p2 < p1 < 1):
         raise ContractError("expected 0 < p2 < p1 < 1")
-    z_a = 1.959964 if abs(alpha - 0.05) < 1e-9 else 2.575829
-    z_p = 0.841621 if abs(power - 0.8) < 1e-9 else 1.281552
+    if not (0 < alpha < 0.5):
+        raise ContractError("alpha must be in (0, 0.5)")
+    if not (0 < power < 1):
+        raise ContractError("power must be in (0, 1)")
+    normal = statistics.NormalDist()
+    z_a = normal.inv_cdf(1 - alpha / 2)
+    z_p = normal.inv_cdf(power)
     d = p1 * (1 - p2) + p2 * (1 - p1)
     q = p1 - p2
     return max(4, math.ceil(d * ((z_a + z_p) / q) ** 2))
@@ -249,5 +258,37 @@ def run_governed_evaluation(
         "analysis_mode": "confirmatory",
         "metrics": metrics,
         "arms": list(arms),
+        "conformance": _protocol_conformance(
+            protocol, report, arms=arms, n_tasks=len(tasks)),
     }
     return report
+
+
+def _protocol_conformance(protocol: Mapping, report: Mapping, *,
+                          arms: Sequence[str], n_tasks: int) -> dict:
+    """Check the executed run against the preregistered plan.
+
+    The protocol digest proves a plan existed; this block records whether
+    *this* run honored it — budget, arm set, and the declared sample
+    size. ``conforms=False`` is reported, never hidden: an underpowered
+    or off-plan run is still honest evidence.
+    """
+    mismatches: list[str] = []
+    declared_budget = protocol.get("budget") or {}
+    actual_budget = report.get("budget") or {}
+    for key, expected in sorted(declared_budget.items()):
+        if key not in actual_budget:
+            mismatches.append(f"budget.{key}_not_measured")
+        elif actual_budget[key] != expected:
+            mismatches.append(
+                f"budget.{key}:expected={expected} actual={actual_budget[key]}")
+    declared_arms = protocol.get("arms")
+    if declared_arms is not None and list(declared_arms) != list(arms):
+        mismatches.append(
+            f"arms:expected={list(declared_arms)} actual={list(arms)}")
+    declared_n = protocol.get("sample_size")
+    if type(declared_n) is int and n_tasks < declared_n:
+        mismatches.append(
+            f"sample_size:preregistered={declared_n} ran={n_tasks}"
+            " (underpowered)")
+    return {"conforms": not mismatches, "mismatches": mismatches}

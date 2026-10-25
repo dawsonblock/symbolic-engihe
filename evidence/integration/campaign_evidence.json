@@ -1,5 +1,5 @@
 {
-  "baseline_report_digest": "1555962040a832391ee09e4b3fb0fe6bc47cc4fa61410457adb1fcc5d980c6a0",
+  "baseline_report_digest": "a92ca49bd4530348e66fdb4a3c15dccdd39ce3d59179ba678fa3b2cb279e22fe",
   "evaluation": {
     "governed_metrics": {
       "A": {
@@ -138,7 +138,7 @@
         "wins": 2
       }
     },
-    "report_digest": "834e427836a2f177164924eab710dd36ebc079769946c782c66a1760c9031046",
+    "report_digest": "d70ddf0bedde0d79ad20929c2e2e001a799087d9a8f9dfc20a42eb5688996d73",
     "solved_counts": {
       "A": 0,
       "B": 2,
@@ -147,7 +147,7 @@
       "E": 2
     }
   },
-  "generated_at": "2026-10-25T06:28:52Z",
+  "generated_at": "2026-10-25T07:13:20Z",
   "kind": "governed_campaign",
   "protocol": {
     "alpha": 0.05,
@@ -176,7 +176,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "mem-exp-money",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "f687cd0606dcb2f94d851db1a6816b5e401850dde782c6f2b3d9105322ee113b",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -186,7 +187,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "mem-exp-money",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "68794a1733c5dbe075a46239807afa8edb72f920df39f6bbec112fff29425c02",
         "from_state": "proposed",
         "note": "",
         "receipt_refs": [],
@@ -196,7 +198,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "mem-exp-slug",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "e374a91507fcca221e15afbd276708849825723fcdb76a59131509ef55143ee1",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -206,7 +209,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "mem-exp-slug",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "83a4214a10a3b5f8140c12e4ccf8ffed2dec5976ec6bea5319193fc847d42a5c",
         "from_state": "proposed",
         "note": "",
         "receipt_refs": [],
@@ -216,7 +220,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-353939eb5e47fc78",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "7e31f60bdd774c2bc233dd425bbb400d1c98b08c28b911d34283cf6f2dc913e8",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -226,7 +231,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-6a1496f59be22cfb",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "2740bbabcf0b1929d1418ce786a56022012f629ea4c54445cbeb5651451f95b5",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -236,7 +242,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-79b4721458064327",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "792caa93c9a430f2bfbd946da9ec18781ffcfda2de97f998c00741a9b4353220",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -246,7 +253,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-6f6cdc1baf643835",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "9479d4271c8a0abb5c4bb27d68ed70a09e87f552e2bffa63a031e078bd0749fb",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -256,7 +264,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-4c351b0fa0d1cd9d",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "aaf7b5f11543552aa4cdaf871fffcc83e44ad8ac2b5a911ace32deed35826772",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -266,7 +275,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-28939e35d093aab1",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "b11fbed045edcdaa5e8bd20659ff3c3237d65ab5b84e0aff6c029964ef961f3a",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -276,7 +286,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-2857f47683dc7424",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "81f75111983225c2306838f91e34114728c3b4a9bffff19a0581eaaec6ef2603",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -286,7 +297,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-c65840fb16fc66e7",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "f906078a5c938615aa294891ebf4b876f5198931b3e14b3a1a360346364c43e9",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -296,7 +308,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-7c5bb767df6b8f5e",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "6051d17946c950179b909ca5cee4d18bc9be83d365447626ffbe0a29863e3da9",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -306,7 +319,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-bc9b4b4f7752af30",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "c61b3a00759b6c8f06dd33541440b9d8a33456e5b88db04f65d51364982da106",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -316,7 +330,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-730464287d93b941",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "4d445dfbd4ff5270cb79a3686c292e211f7765fc1d01f6a72e3b127333b3e49c",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -326,7 +341,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-1bdd283cd7ec542e",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "3b57ad705b703fd980981bf8744e3f24aa240b162ec2c722e764cab6cba605e9",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -336,7 +352,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-d0c9b4a1f1051633",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "5071e39803f974d21242c64fc15c1c44a5597af6cee2102304d09801153a1066",
         "from_state": "",
         "note": "submitted",
         "receipt_refs": [],
@@ -346,7 +363,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-4c351b0fa0d1cd9d",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "1b6f05ddaf9a12398ff5b64525553312405776af42675d27220f6f290da0b143",
         "from_state": "proposed",
         "note": "",
         "receipt_refs": [],
@@ -356,7 +374,8 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-c65840fb16fc66e7",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "335fd18689cbb9c4e73e2b329f8b9636cd64dc01affdd91a8d4078abd2f54b8a",
         "from_state": "proposed",
         "note": "",
         "receipt_refs": [],
@@ -365,8 +384,9 @@
       },
       {
         "actor_identity": "learner",
-        "candidate_id": "skill-28939e35d093aab1",
-        "committed_at": "2026-10-25T06:28:48Z",
+        "candidate_id": "skill-1bdd283cd7ec542e",
+        "committed_at": "2026-10-25T07:13:16Z",
+        "entry_digest": "20cbcf3be65c4f7bb3f616cb399c0d6ea540fc3bd7d3ec77113bd40a591bc68b",
         "from_state": "proposed",
         "note": "",
         "receipt_refs": [],
@@ -376,7 +396,8 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "mem-exp-money",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "f2fb38eb318020120ab962a5617797be0f0a283726b282b16a8660bc053c777f",
         "from_state": "validated",
         "note": "",
         "receipt_refs": [],
@@ -386,7 +407,8 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "mem-exp-slug",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "63b52a5ef7afb2f0a8a79e1ee5a2a5c1bbaf73380c5d8992621664e599f85920",
         "from_state": "validated",
         "note": "",
         "receipt_refs": [],
@@ -396,7 +418,8 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "skill-4c351b0fa0d1cd9d",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "b85102e134d2d64d683614f5c24b91730daeb6ccbe66feedd84127c65e7824e5",
         "from_state": "validated",
         "note": "",
         "receipt_refs": [],
@@ -406,7 +429,8 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "skill-c65840fb16fc66e7",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "cfd4eb7ec4f36f60c4239950d7ec743f08a7b2463c7cae99467b1f3701a4d70d",
         "from_state": "validated",
         "note": "",
         "receipt_refs": [],
@@ -415,8 +439,9 @@
       },
       {
         "actor_identity": "evaluator",
-        "candidate_id": "skill-28939e35d093aab1",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "candidate_id": "skill-1bdd283cd7ec542e",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "7b7fef3f66d1846c73466ba16a5dff3fb272213e298b51d722764ea87e15af60",
         "from_state": "validated",
         "note": "",
         "receipt_refs": [],
@@ -426,11 +451,12 @@
       {
         "actor_identity": "campaign-operator",
         "candidate_id": "mem-exp-money",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "11f1adac02fc996e3294c7efa1d1729b2a42156f13fb3ad4149dcc4543227d41",
         "from_state": "evaluating",
         "note": "holdout-qualified",
         "receipt_refs": [
-          "7541bf4e68e4a32d1e5eb656dae9c8755cc712927fb1fa618d80501f9d1d89cc"
+          "369d3a65b90b938e320799af8f2cbabef2536f13c2f0c874217a80a711d55e97"
         ],
         "seq": 26,
         "to_state": "qualified"
@@ -438,11 +464,12 @@
       {
         "actor_identity": "campaign-operator",
         "candidate_id": "mem-exp-slug",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "9ab6390443e40398af77beb43fe9a0d379c6d1bc06f70c0aa46540f2dd9999c1",
         "from_state": "evaluating",
         "note": "holdout-qualified",
         "receipt_refs": [
-          "7541bf4e68e4a32d1e5eb656dae9c8755cc712927fb1fa618d80501f9d1d89cc"
+          "369d3a65b90b938e320799af8f2cbabef2536f13c2f0c874217a80a711d55e97"
         ],
         "seq": 27,
         "to_state": "qualified"
@@ -450,11 +477,12 @@
       {
         "actor_identity": "campaign-operator",
         "candidate_id": "skill-4c351b0fa0d1cd9d",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "e84c789529d1a1ca405997f998142bb5dc9ec6c000bb103572f956948acb71b5",
         "from_state": "evaluating",
         "note": "holdout-qualified",
         "receipt_refs": [
-          "7541bf4e68e4a32d1e5eb656dae9c8755cc712927fb1fa618d80501f9d1d89cc"
+          "369d3a65b90b938e320799af8f2cbabef2536f13c2f0c874217a80a711d55e97"
         ],
         "seq": 28,
         "to_state": "qualified"
@@ -462,23 +490,25 @@
       {
         "actor_identity": "campaign-operator",
         "candidate_id": "skill-c65840fb16fc66e7",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "72d7e75a3dd6a5a3856a14c013b781c07704db04dd6ac9ffc9ce94149376804f",
         "from_state": "evaluating",
         "note": "holdout-qualified",
         "receipt_refs": [
-          "7541bf4e68e4a32d1e5eb656dae9c8755cc712927fb1fa618d80501f9d1d89cc"
+          "369d3a65b90b938e320799af8f2cbabef2536f13c2f0c874217a80a711d55e97"
         ],
         "seq": 29,
         "to_state": "qualified"
       },
       {
         "actor_identity": "campaign-operator",
-        "candidate_id": "skill-28939e35d093aab1",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "candidate_id": "skill-1bdd283cd7ec542e",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "7aa6f965615919ec84fe61459e24a061a3060b8ec28412764e51883ac3f81926",
         "from_state": "evaluating",
         "note": "holdout-qualified",
         "receipt_refs": [
-          "7541bf4e68e4a32d1e5eb656dae9c8755cc712927fb1fa618d80501f9d1d89cc"
+          "369d3a65b90b938e320799af8f2cbabef2536f13c2f0c874217a80a711d55e97"
         ],
         "seq": 30,
         "to_state": "qualified"
@@ -486,7 +516,8 @@
       {
         "actor_identity": "campaign-operator",
         "candidate_id": "mem-exp-money",
-        "committed_at": "2026-10-25T06:28:52Z",
+        "committed_at": "2026-10-25T07:13:20Z",
+        "entry_digest": "1ad4ef9d1279b66491ef24d8bda8ddfe784d7df7b3d64cd3ad8c8e49b4725d4f",
         "from_state": "qualified",
         "note": "demonstration revocation",
         "receipt_refs": [],
@@ -499,7 +530,7 @@
       "mem-exp-slug",
       "skill-4c351b0fa0d1cd9d",
       "skill-c65840fb16fc66e7",
-      "skill-28939e35d093aab1"
+      "skill-1bdd283cd7ec542e"
     ],
     "revoked": [
       "mem-exp-money"
@@ -510,9 +541,9 @@
     {
       "checks": [
         "Follow project conventions.",
-        "Use decimal rounding conventions (ROUND_HALF_UP).",
         "Preserve first occurrence order when deduplicating.",
         "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+        "Use decimal rounding conventions (ROUND_HALF_UP).",
         "Project convention for money: round_money must use ROUND_HALF_UP decimal rounding",
         "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
         "Advisory from qualified learned candidates; verify against task tests before relying on it."
@@ -523,9 +554,9 @@
     {
       "checks": [
         "Follow project conventions.",
-        "Use decimal rounding conventions (ROUND_HALF_UP).",
         "Preserve first occurrence order when deduplicating.",
         "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+        "Use decimal rounding conventions (ROUND_HALF_UP).",
         "Project convention for money: round_money must use ROUND_HALF_UP decimal rounding",
         "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
         "Advisory from qualified learned candidates; verify against task tests before relying on it."
@@ -537,9 +568,9 @@
   "served_after_revocation": {
     "checks": [
       "Follow project conventions.",
-      "Use decimal rounding conventions (ROUND_HALF_UP).",
       "Preserve first occurrence order when deduplicating.",
       "Slugify: lowercase, strip non-alphanumeric, hyphenate.",
+      "Use decimal rounding conventions (ROUND_HALF_UP).",
       "Project convention for slug: slugify must strip non-alphanumerics and hyphenate",
       "Advisory from qualified learned candidates; verify against task tests before relying on it."
     ],

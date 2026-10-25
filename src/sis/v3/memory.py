@@ -29,7 +29,8 @@ from pathlib import Path
 from .candidates import content_digest
 from .contracts import (CandidateV1, ContractError, ExperienceRecordV1,
                         loads_json)
-from .retrieval import RetrievalContext, precondition_holds
+from .retrieval import (RetrievalContext, precondition_holds,
+                        suppression_match)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS experience (
@@ -257,7 +258,7 @@ def retrieve_memories(
                for cond in cand.applicability_predicate):
             continue
         suppressed = any(
-            isinstance(cx, str) and cx.lower() in context_text
+            isinstance(cx, str) and suppression_match(context_text, cx)
             for cx in cand.known_counterexamples)
         if suppressed:
             continue

@@ -91,11 +91,59 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(reg.by_state("qualified"), [])
         self.assertTrue(reg.by_state("proposed"))
 
+    def test_frontier_tiebreak_is_content_not_wallclock(self):
+        # Equal-fitness entries must rank by content_digest, not by
+        # candidate.digest (which covers created_at and varies with time).
+        from sis.v3.contracts import CandidateV1
+        def _cand(steps, at, cid):
+            d = make_candidate(cid=cid, payload={"steps": steps}).to_dict()
+            d["created_at"] = at
+            return CandidateV1.from_dict(d)
+        early = _cand(["aaa"], "2026-10-24T00:00:00Z", "e")
+        late = _cand(["zzz"], "2026-10-25T00:00:00Z", "l")
+        frontier = Frontier(2)
+        frontier.insert(FrontierEntry(late, 1.0))
+        frontier.insert(FrontierEntry(early, 1.0))
+        expected = min(early, late, key=lambda c: c.content_digest)
+        self.assertIs(frontier.best().candidate, expected)
+
     def test_fitness_penalizes_regressions(self):
         good = fitness(_res(solved=2, tasks=2))
         bad = fitness(_res(solved=0, tasks=2, regressions=2))
         self.assertGreater(good, 0)
         self.assertLess(bad, 0)
+
+    def test_per_child_failures_are_isolated_and_recorded(self):
+        class _Flaky:
+            def evaluate(self, candidate, dev_tasks):
+                if "boom" in " ".join(candidate.payload.get("steps", ())):
+                    raise RuntimeError("evaluator exploded")
+                return _res()
+
+        opt = SkillOptimizer(
+            evaluator=_Flaky(),
+            mutators=(append_step("boom"), append_step("safe")),
+            budget=EvolutionBudget(max_iterations=1, max_evaluations=8))
+        entries = opt.optimize(
+            [{"title": "s", "steps": ["x"]}], ["t"],
+            target_task_family="f",
+            repository_scope={"kind": "global", "value": ""})
+        # the exploding child neither aborts the run nor enters frontier
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(opt.failures), 1)
+        self.assertEqual(opt.failures[0]["stage"], "evaluate")
+
+        # a failing registry submit is likewise recorded, not fatal
+        def bad_submit(_c):
+            raise RuntimeError("registry down")
+        opt2 = SkillOptimizer(
+            evaluator=_Eval("safe"), mutators=(append_step("safe"),),
+            budget=EvolutionBudget(max_iterations=1, max_evaluations=4),
+            registry_submit=bad_submit)
+        opt2.optimize([{"title": "s", "steps": ["x"]}], ["t"],
+                      target_task_family="f",
+                      repository_scope={"kind": "global", "value": ""})
+        self.assertEqual(opt2.failures[0]["stage"], "submit")
 
 
 class CompositionTests(unittest.TestCase):

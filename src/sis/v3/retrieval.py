@@ -10,6 +10,7 @@ their contraindications match; their presence is reported to the caller.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -85,6 +86,24 @@ def precondition_holds(condition: Mapping, context: RetrievalContext) -> bool:
     if kind == "failure_signature_not":
         return condition.get("value") not in context.failure_signatures
     raise ContractError("unknown precondition kind")
+
+
+def suppression_match(haystack: str, needle: str) -> bool:
+    """Boundary-anchored counterexample match.
+
+    Plain substring matching lets a 1-2 character counterexample (or a
+    common word inside a longer signature) suppress a candidate on every
+    context. Instead we require token boundaries on both ends; needles
+    shorter than 3 characters must equal a whole whitespace token.
+    """
+    needle = needle.strip().lower()
+    if not needle:
+        return False
+    if len(needle) < 3:
+        return needle in haystack.split()
+    return re.search(
+        r"(?<![a-z0-9])" + re.escape(needle) + r"(?![a-z0-9])",
+        haystack) is not None
 
 
 @dataclass(frozen=True)

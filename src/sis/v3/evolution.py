@@ -145,8 +145,11 @@ class Frontier:
             return False
         self._seen.add(key)
         self._entries.append(entry)
+        # Tie-break on the content digest: candidate.digest covers
+        # created_at, which would make equal-fitness ordering depend on
+        # wall-clock time instead of content.
         self._entries.sort(
-            key=lambda e: (-e.fitness, e.candidate.digest))
+            key=lambda e: (-e.fitness, e.candidate.content_digest))
         del self._entries[self._size:]
         return entry in self._entries
 
@@ -189,6 +192,10 @@ class SkillOptimizer:
         self._budget = budget
         self._gen = generator_identity
         self._submit = registry_submit
+        # Per-child faults observed during the last optimize() call —
+        # recorded, never silently swallowed: a failing registry submit
+        # or evaluator must not abort the whole search.
+        self.failures: list[dict] = []
 
     def optimize(
         self,
@@ -212,6 +219,7 @@ class SkillOptimizer:
             raise ContractError("at least one mutator is required")
 
         frontier = Frontier(self._budget.frontier_size)
+        self.failures = []
         start = time.monotonic()
         evaluations = 0
         spawned = 0
@@ -232,7 +240,15 @@ class SkillOptimizer:
                         break
                     if time.monotonic() - start > self._budget.max_wall_seconds:
                         break
-                    child_payload = mut(parent)
+                    try:
+                        child_payload = mut(parent)
+                    except Exception as exc:
+                        self.failures.append({
+                            "candidate_id": "<unmutated>",
+                            "stage": "mutate",
+                            "error": f"{type(exc).__name__}:"
+                                     f"{str(exc)[:120]}"})
+                        continue
                     if child_payload is None:
                         continue
                     child_digest = content_digest(
@@ -257,9 +273,25 @@ class SkillOptimizer:
                         created_at=_utcnow(),
                     )
                     spawned += 1
-                    if self._submit is not None:
-                        self._submit(child)
-                    result = self._evaluator.evaluate(child, dev_tasks)
+                    try:
+                        if self._submit is not None:
+                            self._submit(child)
+                    except Exception as exc:
+                        self.failures.append({
+                            "candidate_id": child.candidate_id,
+                            "stage": "submit",
+                            "error": f"{type(exc).__name__}:"
+                                     f"{str(exc)[:120]}"})
+                        continue
+                    try:
+                        result = self._evaluator.evaluate(child, dev_tasks)
+                    except Exception as exc:
+                        self.failures.append({
+                            "candidate_id": child.candidate_id,
+                            "stage": "evaluate",
+                            "error": f"{type(exc).__name__}:"
+                                     f"{str(exc)[:120]}"})
+                        continue
                     evaluations += 1
                     score = fitness(result)
                     entry = FrontierEntry(

@@ -19,6 +19,11 @@ qualification requires at least one bound evaluator receipt digest:
 candidate generators can never confer promotion authority. Revocation is
 a first-class terminal state so promoted artifacts always support audit,
 rollback, and takedown.
+
+Audit rows are hash-chained (``prev_digest`` → ``entry_digest``) inside
+the same transaction and re-verified end-to-end on every ``audit()``
+read — rewritten, reordered or deleted history fails closed, the same
+tamper-evidence model as the v3.2 authority journal.
 """
 from __future__ import annotations
 
@@ -77,9 +82,13 @@ CREATE TABLE IF NOT EXISTS candidate_transition (
     actor_identity TEXT NOT NULL,
     receipt_refs_json TEXT NOT NULL,
     note TEXT NOT NULL,
-    committed_at TEXT NOT NULL
+    committed_at TEXT NOT NULL,
+    prev_digest TEXT NOT NULL DEFAULT '',
+    entry_digest TEXT NOT NULL DEFAULT ''
 );
 """
+
+_GENESIS = "0" * 64
 
 
 def _utcnow() -> str:
@@ -113,6 +122,24 @@ def _permitted(role: str, action: str) -> bool:
         return False
 
 
+def _entry_digest(seq, candidate_id, from_state, to_state,
+                  actor_identity, receipt_refs_json, note,
+                  committed_at, prev_digest) -> str:
+    """Domain-separated digest over one audit row plus its chain link."""
+    import json as _json
+    return canonical_digest("candidate_audit", 1, {
+        "seq": seq,
+        "candidate_id": candidate_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "actor_identity": actor_identity,
+        "receipt_refs": _json.loads(receipt_refs_json),
+        "note": note,
+        "committed_at": committed_at,
+        "prev_digest": prev_digest,
+    })
+
+
 class CandidateRegistry:
     """Single-writer transactional store for governed learning candidates."""
 
@@ -129,6 +156,7 @@ class CandidateRegistry:
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA busy_timeout=15000")
         con.executescript(_SCHEMA)
+        self._migrate(con)
 
     def close(self) -> None:
         with self._lock:
@@ -259,17 +287,65 @@ class CandidateRegistry:
         self.transition(candidate_id, "revoked", actor_role=actor_role,
                         actor_identity=actor_identity, note=note)
 
+    def _migrate(self, con) -> None:
+        """Seal legacy audit rows: add chain columns, backfill digests.
+
+        Rows written before the chain existed are sealed over their
+        current content — backfill makes them verifiable, it cannot
+        prove they were not already altered. New writes are always
+        chained inside the same BEGIN IMMEDIATE transaction.
+        """
+        cols = {row[1] for row in con.execute(
+            "PRAGMA table_info(candidate_transition)")}
+        missing = {"prev_digest", "entry_digest"} - cols
+        if not missing:
+            return
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            for col in missing:
+                con.execute(
+                    f"ALTER TABLE candidate_transition"
+                    f" ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+            rows = con.execute(
+                "SELECT seq, candidate_id, from_state, to_state,"
+                " actor_identity, receipt_refs_json, note, committed_at"
+                " FROM candidate_transition ORDER BY seq").fetchall()
+            prev = _GENESIS
+            for (seq, cid, frm, to, actor, refs, note, at) in rows:
+                digest = _entry_digest(seq, cid, frm, to, actor,
+                                       refs, note, at, prev)
+                con.execute(
+                    "UPDATE candidate_transition SET prev_digest=?,"
+                    " entry_digest=? WHERE seq=?", (prev, digest, seq))
+                prev = digest
+            con.execute("COMMIT")
+        except Exception:
+            _safe_rollback(con)
+            raise
+
     def _audit(self, con, candidate_id, from_state, to_state,
                actor_identity, receipt_refs, note) -> None:
         import json as _json
+        refs_json = _json.dumps(list(receipt_refs), sort_keys=True)
+        at = _utcnow()
+        row = con.execute(
+            "SELECT COALESCE(MAX(seq), 0) FROM candidate_transition"
+        ).fetchone()
+        seq = row[0] + 1
+        tail = con.execute(
+            "SELECT entry_digest FROM candidate_transition"
+            " ORDER BY seq DESC LIMIT 1").fetchone()
+        prev = tail[0] if tail is not None and tail[0] else _GENESIS
+        digest = _entry_digest(seq, candidate_id, from_state, to_state,
+                               actor_identity, refs_json, note, at, prev)
         con.execute(
             "INSERT INTO candidate_transition"
-            " (candidate_id, from_state, to_state, actor_identity,"
-            "  receipt_refs_json, note, committed_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (candidate_id, from_state, to_state, actor_identity,
-             _json.dumps(list(receipt_refs), sort_keys=True),
-             note, _utcnow()))
+            " (seq, candidate_id, from_state, to_state, actor_identity,"
+            "  receipt_refs_json, note, committed_at, prev_digest,"
+            "  entry_digest)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (seq, candidate_id, from_state, to_state, actor_identity,
+             refs_json, note, at, prev, digest))
 
     # ------------------------------------------------------------------ #
     # reads — digest re-verified on every read; corrupt rows fail closed
@@ -306,24 +382,46 @@ class CandidateRegistry:
         return self.get(candidate_id)[1]
 
     def audit(self, candidate_id: str | None = None) -> list[dict]:
+        """Return the transition log after verifying the hash chain.
+
+        Every row's ``entry_digest`` is recomputed from stored content and
+        its ``prev_digest`` link; a rewritten, reordered, deleted or
+        truncated row raises ``audit_chain_tampered`` — history integrity
+        is checked on every read, same as record integrity.
+        """
         import json as _json
-        sql = ("SELECT seq, candidate_id, from_state, to_state,"
-               " actor_identity, receipt_refs_json, note, committed_at"
-               " FROM candidate_transition")
-        args: tuple = ()
-        if candidate_id is not None:
-            sql += " WHERE candidate_id=?"
-            args = (candidate_id,)
-        sql += " ORDER BY seq"
+        rows = self._conn().execute(
+            "SELECT seq, candidate_id, from_state, to_state,"
+            " actor_identity, receipt_refs_json, note, committed_at,"
+            " prev_digest, entry_digest"
+            " FROM candidate_transition ORDER BY seq").fetchall()
+        # The chain is only meaningful end-to-end: verify the full log,
+        # then filter — a filtered read must never skip verification.
+        self._verify_chain(rows)
         out = []
-        for seq, cid, frm, to, actor, refs, note, at in \
-                self._conn().execute(sql, args):
+        for seq, cid, frm, to, actor, refs, note, at, prev, dg in rows:
+            if candidate_id is not None and cid != candidate_id:
+                continue
             out.append({
                 "seq": seq, "candidate_id": cid, "from_state": frm,
                 "to_state": to, "actor_identity": actor,
                 "receipt_refs": _json.loads(refs), "note": note,
-                "committed_at": at})
+                "committed_at": at, "entry_digest": dg})
         return out
+
+    @staticmethod
+    def _verify_chain(rows) -> None:
+        prev = _GENESIS
+        for seq, cid, frm, to, actor, refs, note, at, p, dg in rows:
+            if p != prev:
+                raise CandidateError(
+                    f"audit_chain_tampered:link_at_{seq}")
+            expected = _entry_digest(seq, cid, frm, to, actor,
+                                     refs, note, at, p)
+            if dg != expected or not _HEX.fullmatch(dg):
+                raise CandidateError(
+                    f"audit_chain_tampered:row_at_{seq}")
+            prev = dg
 
 
 def _safe_rollback(con) -> None:

@@ -12,6 +12,10 @@
 - Holdout size in the deterministic fixture (2 tasks) is a smoke test,
   not a statistical result; `mcnemar_exact_p` is reported honestly and
   is not significant.
+- Preregistration binds the plan, not the execution. The `conformance`
+  block in each governed report records whether a run honored the
+  preregistered budget/arms/sample size; it flags violations, it does
+  not prevent them.
 
 ## Isolation
 
@@ -41,11 +45,23 @@
 - Dev-set fitness selection can overfit the development partition by
   construction; that is exactly why the sealed holdout is separate.
   Reports must never present dev fitness as generalization.
+- Per-child optimizer faults (a mutator crash, a failed registry
+  submit, an evaluator exception) are isolated to that child and
+  recorded on `SkillOptimizer.failures`; the run continues, but callers
+  should inspect `failures` — isolation means a partial search, not a
+  failed one.
 
 ## Serving and packaging
 
 - `global` candidate scope is refused unless `allow_global_scope=True`
   is set deliberately — it is a deployment decision, not a default.
+- `target_task_family`/`target_agent` are provenance unless the caller
+  supplies `task_family` to `serve()` — without it, a candidate trained
+  on family A can serve advisory text on family B tasks (scope rules
+  still apply). Deployments that need the hard gate must opt in.
+- Counterexample suppression is lexical: a token-boundary match over
+  failure/symbol/file strings. Semantically equivalent counterexamples
+  phrased differently will not suppress.
 - `security_scan` is a string heuristic for advisory triage only; a
   clean scan never implies qualification and a flagged bundle is not
   proof of malice.

@@ -123,6 +123,16 @@
   deployments must persist and reconcile the audit stream.
 - Bundle format is vskill-*style* (manifest + payload + SHA256SUMS);
   wire compatibility with an external vskill registry is not claimed.
+- Skill ingestion (`tools/ingest_skills.py`) is packaging, not
+  evaluation. Step extraction from `SKILL.md` is a deterministic
+  heuristic (bullet/numbered lines, else short prose lines), not a
+  semantic parse; the full body is retained in `instructions` for audit.
+  Bodies over 24 KiB or resource sets over 64 files / 16 MiB are refused
+  rather than truncated, so a large skill must be split to be ingested.
+  Resource contents are recorded by digest only — a deployment that
+  needs the files must ship the skill directory alongside the registry.
+  Most imported skills have no holdout task in the current fixtures and
+  therefore remain PROPOSED; ingestion never schedules evaluation.
 
 ## Not in scope (per charter)
 

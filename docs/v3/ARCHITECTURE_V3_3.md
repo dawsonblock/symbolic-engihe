@@ -15,6 +15,7 @@ runner / executor               -->   statement-bound registration)
                                       |
 ExperienceRecordV1  --[learner]-->    MemoryStore     (dedup, tamper-proof)
 SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
+ingest_skills.py    --[learner]-->    CandidateRegistry (PROPOSED only)
                                       |
                                   EVALUATING --[evaluator]--> dev/holdout
                                   receipts + CandidateEvidenceV1
@@ -45,7 +46,9 @@ SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
 | `governed_eval.py` | `EvaluationPartition` + sealed-holdout disjointness, `preregister`, `required_sample_size`, `compute_metrics`, `run_governed_evaluation` (5 arms), `run_candidate_probe` (per-candidate qualification probe under the same gates) |
 | `serving.py` | `GovernedServingGateway`: registry-authenticated repo identity, per-candidate rejection audit, serve-time decision/evidence re-authentication, authenticated outcomes, advisory-only serving |
 | `skill_package.py` | vskill-style bundles: manifest + payload + SHA256SUMS, `export_bundle`/`verify_install`/`import_bundle`/`security_scan` |
+| `skill_ingest.py` | real skill directories (`SKILL.md` + resources) → bounded `CandidateV1` at PROPOSED; traversal/symlink/size limits, advisory scan |
 | `tools/governed_campaign.py` | deterministic end-to-end campaign CLI (M9) |
+| `tools/ingest_skills.py` | ingest a skill directory/tree/bundle into a candidate registry at PROPOSED (M10) |
 
 ## Learning tracks
 

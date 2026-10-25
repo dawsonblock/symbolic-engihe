@@ -1,3 +1,24 @@
+## 2026-10-25 — Skill ingestion (M10)
+
+- Added `sis.v3.skill_ingest` + `tools/ingest_skills.py`: real skill
+  directories (`SKILL.md` frontmatter + body, optional
+  `references/`/`scripts/`/`assets/`) and skill trees are parsed into
+  bounded `CandidateV1` records of type `skill_bundle` and submitted by
+  the `learner` role at PROPOSED. vskill-style bundles are accepted
+  through the existing verified import path.
+- Bounded, dependency-free parsing: frontmatter ≤ 8 KiB, body ≤ 24 KiB
+  (split into contract-sized instruction chunks), ≤ 64 resources hashed
+  (contents never inlined), symlinks/traversal/hidden files refused,
+  UTF-8 only, control characters refused.
+- Ingestion is packaging only: a claimed `qualified` status is ignored,
+  no signing keys are held, and qualification still requires signed
+  holdout evidence plus an operator decision. Scan findings (shell
+  execution tokens in served steps, prompt-injection phrasing in the
+  body) are advisory and reported, never a refusal or a qualification.
+- Candidate ids are derived from name + content digest, so re-ingesting
+  identical content is a no-op and changed content is a new candidate.
+- Suite: **793 passed, 2 skipped**.
+
 ## 2026-10-25 — Authority/evidence binding and serving integrity hardening
 
 - Candidate qualification no longer accepts an unrelated pass receipt.

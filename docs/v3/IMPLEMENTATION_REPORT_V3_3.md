@@ -283,6 +283,33 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   clean commit; its exact source commit is recorded in
   `release/release_manifest.json`.
 
+### Completion pass 7 (skill ingestion, M10)
+
+- **Real skills had no governed entry point.** The candidate plane could
+  generate skill variants from episodes but could not ingest a skill a
+  human had written; `skill_package.import_bundle` only accepted a
+  pre-built SIS bundle. Added `sis.v3.skill_ingest` and
+  `tools/ingest_skills.py`: a skill directory or tree (`SKILL.md` +
+  `references/`/`scripts/`/`assets/`) becomes a bounded `CandidateV1`
+  of type `skill_bundle` at PROPOSED, submitted by the `learner` role.
+- **Bounded, non-executing parse.** Frontmatter is parsed with a
+  dependency-free scalar reader; the body is split into contract-sized
+  instruction chunks (the v1 contract caps any string at 4 KiB, and real
+  bodies are larger); resources are recorded by digest and size, never
+  inlined; symlinks, traversal, hidden files, non-UTF-8 and control
+  characters are refused.
+- **Ingestion is not qualification.** A claimed `qualified` status is
+  ignored, no signing material is held, and scan findings (shell tokens
+  in served steps, prompt-injection phrasing in the body) are advisory
+  and reported. The end-to-end test ingests a skill, qualifies it with
+  evaluator evidence and an operator decision, and serves its steps
+  through the gateway.
+- Validated against the workspace catalogs: 33/34 `skills-main` and
+  20/21 `vskill` skills ingest at PROPOSED; the two rejections are
+  skills whose body or resource set exceeds the record bound and are
+  reported with reasons. Re-ingesting either tree is a no-op.
+- Suite: **793 passed, 2 skipped** (777 + 16 ingestion/registry tests).
+
 ## Defects found and fixed during the build
 
 | defect | fix |

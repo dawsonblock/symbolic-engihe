@@ -411,6 +411,21 @@ class RegistryLifecycleTests(RegistryFixture):
         self.stack.revoke(cand, actor_identity="op-1")
         self.assertEqual(self.reg.state_of(cand.candidate_id), "revoked")
 
+    def test_lookup_distinguishes_missing_from_tampered(self):
+        cand = make_candidate(cid="lookup")
+        self.reg.submit(cand, actor_role="learner")
+        record, state = self.reg.lookup(cand.candidate_id)
+        self.assertEqual(record.digest, cand.digest)
+        self.assertEqual(state, "proposed")
+        self.assertIsNone(self.reg.lookup("absent-candidate"))
+        self.reg._conn().execute(
+            "UPDATE candidate SET state='qualified' WHERE candidate_id=?",
+            (cand.candidate_id,))
+        self.reg._conn().commit()
+        with self.assertRaisesRegex(CandidateError,
+                                    "state_projection_drift"):
+            self.reg.lookup(cand.candidate_id)
+
     def test_direct_state_flip_fails_closed(self):
         cand = make_candidate(cid="flipped")
         self.reg.submit(cand, actor_role="learner")

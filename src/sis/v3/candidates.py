@@ -878,6 +878,19 @@ class CandidateRegistry:
                 self._verify_serving_basis(candidate_id, state, con)
             return record, state
 
+    def lookup(self, candidate_id: str) -> tuple[CandidateV1, str] | None:
+        """Return the record and state, or ``None`` when the id is unknown.
+
+        Only an absent id is ``None``; a catalog that fails verification
+        still raises, so ingestion cannot mistake tampering for novelty.
+        """
+        try:
+            return self.get(candidate_id)
+        except CandidateError as exc:
+            if str(exc) == "candidate_missing":
+                return None
+            raise
+
     def by_state(self, state: str) -> list[CandidateV1]:
         if state not in STATES:
             raise ContractError(f"unknown candidate state: {state}")

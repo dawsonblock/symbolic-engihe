@@ -92,6 +92,15 @@
 - **Basis revocation suppresses** — when a caller supplies a revocation
   set, a revocation naming a candidate's receipt, evidence binding or
   decision rejects it with `evidence_revoked`.
+- **Skill ingestion is untrusted input handling** — `skill_ingest`
+  parses skill directories with bounded, dependency-free rules; it never
+  executes, imports, or fetches anything. Symlinks (the skill directory,
+  `SKILL.md`, or any resource), hidden files, non-UTF-8, control
+  characters, oversized bodies and oversized resource sets are refused.
+  Ingested skills enter at PROPOSED under `candidate:write`; a claimed
+  qualification status is ignored, scan findings are advisory, and
+  serving still requires signed holdout evidence plus an operator
+  decision.
 - **Serving is scope-bound** — `repository_scope` of `registry_id` /
   `family_id` resolves through the signed `RepositoryRegistry`; a
   self-declared or unknown repository identity abstains. `global` scope

@@ -192,7 +192,15 @@ def main() -> int:
     verifier = OutcomeVerifier(executor=executor,
                                key_dir=root / "eval-keys",
                                registry_dir=root / "eval-reg")
-    candidates = CandidateRegistry(root / "candidates.db")
+
+    def authenticated_receipt(digest):
+        receipt = verifier.load_receipt(digest)
+        if not verifier.verify_receipt(receipt):
+            raise ValueError("receipt_signature_invalid")
+        return receipt
+
+    candidates = CandidateRegistry(
+        root / "candidates.db", receipt_authority=authenticated_receipt)
     memory = MemoryStore(root / "memory.db")
     audit_log: list[dict] = []
 
@@ -412,14 +420,20 @@ def main() -> int:
                               actor_role="evaluator")
     # Harvest the signed holdout receipts the harness already issued —
     # qualification evidence is the real evaluated outcome, not a re-run.
+    holdout_receipts = {}
     for entry in eval_report["per_task"]:
         for arm_name, arm in entry["arms"].items():
             if arm.get("receipt_digest"):
-                receipts[arm["receipt_digest"]] = verifier.load_receipt(
+                holdout_receipts[arm["receipt_digest"]] = verifier.load_receipt(
                     arm["receipt_digest"])
-    win_digests = tuple(sorted(r.digest for r in receipts.values()
-                               if r.outcome == "pass"))[:2] or \
-        (next(iter(receipts)),)
+    # Qualification evidence comes only from holdout receipts that this
+    # verifier issued and signed as a pass — never the synthetic receipts
+    # used for the authority demonstration above.
+    win_digests = tuple(sorted(
+        d for d, r in holdout_receipts.items() if r.outcome == "pass"))[:2]
+    if not win_digests:
+        raise SystemExit(
+            "no verified holdout pass receipts; refusing qualification")
     for cand in mem_candidates + skill_candidates:
         candidates.qualify(cand.candidate_id, actor_role="operator",
                            actor_identity="campaign-operator",

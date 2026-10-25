@@ -11,6 +11,15 @@ from sis.v3.policy import AuthorizationDenied
 NOW = "2026-10-24T12:00:00Z"
 
 
+class _Receipt:
+    def __init__(self, outcome="pass"):
+        self.outcome = outcome
+
+
+def accepting_receipts(digest):
+    return _Receipt("pass")
+
+
 def make_candidate(cid="cand-1", ctype="skill_instruction",
                    payload=None, scope=None, episodes=("ep-1",)):
     payload = payload if payload is not None else {
@@ -36,7 +45,9 @@ class RegistryFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.reg = CandidateRegistry(Path(self.temp.name) / "c.db")
+        self.reg = CandidateRegistry(
+            Path(self.temp.name) / "c.db",
+            receipt_authority=accepting_receipts)
         self.addCleanup(self.reg.close)
 
 
@@ -139,6 +150,45 @@ class RegistryLifecycleTests(RegistryFixture):
                          receipt_refs=("a" * 64, "b" * 64))
         audit = self.reg.audit(cand.candidate_id)
         self.assertEqual(audit[-1]["receipt_refs"], ["a" * 64, "b" * 64])
+
+    def test_qualification_requires_authenticated_pass_receipts(self):
+        def evaluating(reg):
+            cand = make_candidate(cid="rcpt-" + str(id(reg)))
+            reg.submit(cand, actor_role="learner")
+            reg.transition(cand.candidate_id, "validated",
+                           actor_role="learner")
+            reg.transition(cand.candidate_id, "evaluating",
+                           actor_role="evaluator")
+            return cand
+
+        # No authority configured: a cited digest is not evidence.
+        path = Path(self.temp.name) / "no-authority.db"
+        reg = CandidateRegistry(path)
+        self.addCleanup(reg.close)
+        cand = evaluating(reg)
+        with self.assertRaisesRegex(CandidateConflict, "receipt_authority"):
+            reg.qualify(cand.candidate_id, actor_role="operator",
+                        receipt_refs=("a" * 64,))
+
+        def reject(digest):
+            raise ValueError("signature invalid")
+
+        path = Path(self.temp.name) / "rejecting.db"
+        reg = CandidateRegistry(path, receipt_authority=reject)
+        self.addCleanup(reg.close)
+        cand = evaluating(reg)
+        with self.assertRaisesRegex(CandidateConflict, "receipt_rejected"):
+            reg.qualify(cand.candidate_id, actor_role="operator",
+                        receipt_refs=("a" * 64,))
+
+        path = Path(self.temp.name) / "failing.db"
+        reg = CandidateRegistry(
+            path, receipt_authority=lambda d: _Receipt("fail"))
+        self.addCleanup(reg.close)
+        cand = evaluating(reg)
+        with self.assertRaisesRegex(CandidateConflict, "pass_receipt"):
+            reg.qualify(cand.candidate_id, actor_role="operator",
+                        receipt_refs=("a" * 64,))
 
     def test_illegal_transitions_rejected(self):
         cand = make_candidate()

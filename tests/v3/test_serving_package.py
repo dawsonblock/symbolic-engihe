@@ -11,7 +11,7 @@ from sis.v3.skill_package import (PackageError, export_bundle,
                                   verify_install)
 from sis.v3.serving import GovernedServingGateway
 from tests.v3.authority_testkit import make_registry, register_repo
-from tests.v3.test_candidates import make_candidate
+from tests.v3.test_candidates import accepting_receipts, make_candidate
 
 
 def _request(failures=("sig-x",)):
@@ -33,7 +33,8 @@ class ServingFixture(unittest.TestCase):
                       registry_id="repo-a", family_id="fam-a")
         register_repo(self.registry, self.reg_seed,
                       registry_id="repo-b", family_id="fam-b")
-        self.cands = CandidateRegistry(root / "c.db")
+        self.cands = CandidateRegistry(
+            root / "c.db", receipt_authority=accepting_receipts)
         self.addCleanup(self.cands.close)
         self.audit = []
         self.gateway = GovernedServingGateway(
@@ -215,7 +216,8 @@ class PackageTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.reg = CandidateRegistry(self.root / "c.db")
+        self.reg = CandidateRegistry(
+            self.root / "c.db", receipt_authority=accepting_receipts)
         self.addCleanup(self.reg.close)
         self.cand = make_candidate()
 

@@ -143,9 +143,13 @@ def _entry_digest(seq, candidate_id, from_state, to_state,
 class CandidateRegistry:
     """Single-writer transactional store for governed learning candidates."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, receipt_authority=None) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Independent evaluator boundary: a callable that resolves a receipt
+        # digest and raises unless its signature authenticates. Qualification
+        # is refused when this is absent — a cited digest is not evidence.
+        self._receipt_authority = receipt_authority
         self._lock = threading.RLock()
         self._con = sqlite3.connect(
             str(self.path), isolation_level=None, timeout=15.0,
@@ -257,6 +261,8 @@ class CandidateRegistry:
                 if not any(_permitted(actor_role, a) for a in actions):
                     raise CandidateConflict(
                         f"role_denied:{actor_role} cannot {current}->{target}")
+                if target == "qualified":
+                    self._authenticate_receipts(refs)
                 con.execute(
                     "UPDATE candidate SET state=? WHERE candidate_id=?",
                     (target, candidate_id))
@@ -280,6 +286,29 @@ class CandidateRegistry:
         self.transition(candidate_id, "qualified", actor_role=actor_role,
                         actor_identity=actor_identity,
                         receipt_refs=receipt_refs, note=note)
+
+    def _authenticate_receipts(self, refs) -> None:
+        """Require every cited receipt to resolve as an authentic pass.
+
+        The authority callable is supplied by the deployment and owns the
+        trusted evaluator keys; this registry never trusts a bare digest.
+        An authority error, a missing receipt, or a non-pass outcome is a
+        refusal, not a warning.
+        """
+        if self._receipt_authority is None:
+            raise CandidateConflict(
+                "qualification_requires_receipt_authority")
+        for ref in refs:
+            try:
+                receipt = self._receipt_authority(ref)
+            except CandidateError:
+                raise
+            except Exception as exc:
+                raise CandidateConflict(
+                    f"receipt_rejected:{ref[:12]}") from exc
+            if receipt is None or getattr(receipt, "outcome", None) != "pass":
+                raise CandidateConflict(
+                    f"qualification_requires_pass_receipt:{ref[:12]}")
 
     def revoke(self, candidate_id: str, *,
                actor_role: str, actor_identity: str = "",

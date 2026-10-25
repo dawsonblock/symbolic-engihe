@@ -1,9 +1,10 @@
 {
-  "generated_at": "2026-10-25T06:28:58Z",
+  "generated_at": "2026-10-25T08:11:58Z",
   "governed_metrics": {
     "A": {
       "abstention_rate": 1.0,
       "evaluation_integrity_failures": 0,
+      "failure_rate": 1.0,
       "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 120.0,
       "mean_tool_calls_per_task": 3.0,
@@ -13,11 +14,12 @@
       "paired_win_rate": 0.0,
       "served": 0,
       "solved_task_rate": 0.0,
-      "verified_regression_rate": 1.0
+      "verified_regression_rate": null
     },
     "B": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "failure_rate": 0.0,
       "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 140.0,
       "mean_tool_calls_per_task": 3.0,
@@ -27,11 +29,12 @@
       "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
-      "verified_regression_rate": 0.0
+      "verified_regression_rate": null
     },
     "C": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "failure_rate": 0.0,
       "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 143.0,
       "mean_tool_calls_per_task": 3.0,
@@ -41,11 +44,12 @@
       "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
-      "verified_regression_rate": 0.0
+      "verified_regression_rate": null
     },
     "D": {
       "abstention_rate": 1.0,
       "evaluation_integrity_failures": 0,
+      "failure_rate": 1.0,
       "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 136.0,
       "mean_tool_calls_per_task": 3.0,
@@ -55,11 +59,12 @@
       "paired_win_rate": 0.0,
       "served": 0,
       "solved_task_rate": 0.0,
-      "verified_regression_rate": 1.0
+      "verified_regression_rate": null
     },
     "E": {
       "abstention_rate": 0.0,
       "evaluation_integrity_failures": 0,
+      "failure_rate": 0.0,
       "mean_cost_per_verified_solve": null,
       "mean_tokens_per_task": 163.0,
       "mean_tool_calls_per_task": 3.0,
@@ -69,7 +74,7 @@
       "paired_win_rate": 1.0,
       "served": 2,
       "solved_task_rate": 1.0,
-      "verified_regression_rate": 0.0
+      "verified_regression_rate": null
     }
   },
   "kind": "governed_evaluation_evidence",
@@ -161,7 +166,7 @@
     "sample_size": 29,
     "schema_version": 1
   },
-  "report_digest": "834e427836a2f177164924eab710dd36ebc079769946c782c66a1760c9031046",
+  "report_digest": "43849b7ccbc8c20e5354fa9ea1a72293fad427d56bb74ed3181ede3193a620aa",
   "schema_version": 1,
   "solved_counts": {
     "A": 0,

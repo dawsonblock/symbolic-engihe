@@ -17,7 +17,12 @@
   `evaluating→rejected|inconclusive`, and every receipt signature.
 - `promotion:approve` → operator only. Owns `evaluating→qualified` and
   `qualified→revoked`. Qualification requires ≥1 bound receipt digest —
-  a promotion cannot exist without cited evidence.
+  a promotion cannot exist without cited evidence. The registry also
+  requires a deployment-supplied `receipt_authority` callable: every
+  cited digest must resolve to a signature-authenticated receipt whose
+  outcome is `pass`. Without that authority, qualification is refused
+  (`qualification_requires_receipt_authority`); a bare 64-hex string is
+  never treated as evidence.
 
 ## Fail-closed boundaries (all tested)
 

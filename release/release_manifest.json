@@ -2,74 +2,55 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
-    "sha256": "0686f7dc96cb506f0ea93e3fbec9e60baaf9f7ac8eb794ab0823cb3d733bddf2",
+    "sha256": "eb9e9652622d22c86ca9b705b879efa53156f714ce2138d25280cd85beba0121",
     "source_files": 306
   },
   "branch": "codex/sis-v3.3-governed-learning",
-  "campaigns": {
-    "deterministic": {
-      "note": "machinery evidence",
-      "solved": {
-        "A": 0,
-        "B": 2,
-        "C": 2,
-        "D": 0,
-        "E": 2
-      },
-      "tool": "tools/governed_campaign.py"
-    },
-    "live_governed": {
-      "note": "real codex-exec full lifecycle; null efficacy \u2014 ceiling hit",
-      "solved_holdout": {
-        "A": 2,
-        "B": 2,
-        "C": 2,
-        "D": 2,
-        "E": 2
-      },
-      "tool": "tools/governed_live_campaign.py --wall 120"
-    },
-    "live_study": {
-      "note": "real codex-exec; positive direction, underpowered",
-      "solved": {
-        "A": 4,
-        "B": 3,
-        "C": 3,
-        "D": 5
-      },
-      "tool": "tools/live_study.py --wall 120"
-    }
-  },
   "docs": [
     "docs/v3/ARCHITECTURE_V3_3.md",
-    "docs/v3/SECURITY_BOUNDARIES_V3_3.md",
-    "docs/v3/MEMORY_DESIGN.md",
-    "docs/v3/EVOLUTION_DESIGN.md",
+    "docs/v3/CODEX_ADAPTER.md",
     "docs/v3/EVALUATION_PROTOCOL_V3_3.md",
-    "docs/v3/V33_LIMITATIONS.md",
+    "docs/v3/EVIDENCE_PROTOCOL.md",
+    "docs/v3/EVOLUTION_DESIGN.md",
+    "docs/v3/G1_GATE_REPORT.md",
+    "docs/v3/G2_GATE_REPORT.md",
+    "docs/v3/G3_GATE_REPORT.md",
+    "docs/v3/G4_GATE_REPORT.md",
     "docs/v3/IMPLEMENTATION_REPORT_V3_3.md",
+    "docs/v3/MEMORY_DESIGN.md",
+    "docs/v3/MIGRATION.md",
+    "docs/v3/OPERATIONS.md",
+    "docs/v3/QUALIFICATION_REPORT.md",
     "docs/v3/RELEASE_NOTES_V3_3.md",
+    "docs/v3/SECURITY_BOUNDARIES_V3_3.md",
+    "docs/v3/STATUS.md",
+    "docs/v3/TEST_MATRIX.md",
+    "docs/v3/THREAT_MODEL.md",
+    "docs/v3/TRUST_BOUNDARIES.md",
+    "docs/v3/UPGRADE_2026_10_24.md",
+    "docs/v3/V2_BASELINE.md",
+    "docs/v3/V32_GAP_MAP.md",
+    "docs/v3/V33_LIMITATIONS.md",
     "docs/audits/BASELINE_INTEGRITY.md"
   ],
   "evidence": [
     "evidence/baseline/",
-    "evidence/integration/",
-    "evidence/security/",
     "evidence/benchmark/",
+    "evidence/integration/",
     "evidence/qualification/",
-    "evidence/release/"
+    "evidence/release/",
+    "evidence/security/"
   ],
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "10c2aa8",
-  "source_commit_note": "manifest-covered files identical to this commit; the release commit itself touches only out-of-band release/ provenance and the root manifest",
+  "source_commit": "9d75de85a91233c968945fd608fe4512a9564964",
+  "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
     "failed": 0,
-    "passed": 711,
+    "passed": 737,
     "skipped": 2
-  },
-  "verification": "release/verification.json \u2014 verify() + fresh-extraction verify_tree + compileall + extracted-test smoke, all pass"
+  }
 }

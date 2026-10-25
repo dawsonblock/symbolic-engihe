@@ -13,8 +13,8 @@
       "sha256": "f4e9590f3ebad5ffec1d03da3db058375438693dbcd93f2738ff3ea66da17b8d"
     },
     "CHANGELOG.md": {
-      "bytes": 14561,
-      "sha256": "5f8b5d43bb9b7ecf63f5633cb7370510e0b6ebec50f66c54e299850f5294e8cb"
+      "bytes": 14660,
+      "sha256": "fd2c8d8bc8bb7ae487928f63d572b50b5721624c5b73e0df94728ea092b816b5"
     },
     "LICENSE": {
       "bytes": 1083,
@@ -193,8 +193,8 @@
       "sha256": "664b533c8f9174ae2b2855e03e5d871237d9fa5cd97084c9590a0da63176dfd1"
     },
     "docs/v3/IMPLEMENTATION_REPORT_V3_3.md": {
-      "bytes": 10127,
-      "sha256": "e6028a16b8e4b87c9c255839a181f2547ccdcf77700ba19004ab62bab771e3b2"
+      "bytes": 11221,
+      "sha256": "29381a647c2ad89ff5be2973d33a11269d663f73806e71f8c03c57c04a57ff8c"
     },
     "docs/v3/MEMORY_DESIGN.md": {
       "bytes": 3406,
@@ -210,11 +210,11 @@
     },
     "docs/v3/QUALIFICATION_REPORT.md": {
       "bytes": 4888,
-      "sha256": "536137810d35a8fe4dfabe18bd377ef5890d07c151a5b3f6ae0343aefc831928"
+      "sha256": "ec06bcb7afc7fd1d3d7a259d2993290b61594f58de665ff51645eed6ffddbd61"
     },
     "docs/v3/RELEASE_NOTES_V3_3.md": {
-      "bytes": 4403,
-      "sha256": "350a04d5d665e5eedb3649cd63ae57eab446266347af706949a1e8d4355fdc9b"
+      "bytes": 4710,
+      "sha256": "203b52b461210df0bdc26d80e21abfb631c4dc53aa275ba8d45eaeaa57550883"
     },
     "docs/v3/SECURITY_BOUNDARIES_V3_3.md": {
       "bytes": 6090,
@@ -357,8 +357,8 @@
       "sha256": "9aa05fc78b55d4b6b23a7bd65dc612d9dd99e28fffeccbbcb9ddcfa4910b016c"
     },
     "evidence/qualification/qualification_run.json": {
-      "bytes": 2270,
-      "sha256": "098501dea1dd2f9075aca46344bc9c34e8425d9b0d29a9a251479b9aabef20d8"
+      "bytes": 2340,
+      "sha256": "e19408cc14e52c1a2e09b777b30de94189a6993512f496b03e5114a3ffbade45"
     },
     "evidence/security/failure_injection.json": {
       "bytes": 4132,
@@ -1093,8 +1093,8 @@
       "sha256": "2f00bda768a4b24ca0d7324b5a78e7e33c88551673eb314370d68f720bc8b01c"
     },
     "tests/v3/test_release_artifact.py": {
-      "bytes": 7416,
-      "sha256": "0e706f19b03db8119441bcec5bf1c23d0550035d23e37364f916247d17a7edba"
+      "bytes": 9265,
+      "sha256": "85cde4363b54cf3f5898af1fcfd9978784417ffa058c0c36e6a5a4bd3641091b"
     },
     "tests/v3/test_retrieval.py": {
       "bytes": 9853,
@@ -1209,8 +1209,8 @@
       "sha256": "f298d68aee327b979e1b25c3cd4c95de13d463f9caf4addd85b6b3bce9304abe"
     },
     "tools/package_release.py": {
-      "bytes": 8684,
-      "sha256": "9dbe595beb12a70856c60ffb8eec809f464ae50709b8ab11acc4b04c0d654a30"
+      "bytes": 9284,
+      "sha256": "cab050a6e47bf7bfe6ddbc814ef07b001c3aabc2b2881775d9a5623af9acd462"
     },
     "tools/run_paired_study.py": {
       "bytes": 3837,
@@ -1227,5 +1227,5 @@
   },
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "5ba7b38027853a21b08794749b97eb6f2c736924"
+  "source_commit": "bb1497d0fd464c6fe6f37bb97ce0237ba4adc2b3"
 }

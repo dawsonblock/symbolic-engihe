@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
-    "sha256": "ba66a2e6d208bfeef45a73d4fa87c3bf8ec9648ce398405da6afc3c6d82af0ed",
+    "sha256": "a327863d8512ae9c1cb74b697681b8a340dd2fed9c8f16011b65baf3797d74c0",
     "source_files": 324
   },
   "branch": "codex/sis-v3.3-governed-learning",
@@ -46,7 +46,7 @@
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "063b164857750c016d6a7282ae5e0e950646eb79",
+  "source_commit": "0354390c587d8449ef449dc0415599465df4fce6",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {

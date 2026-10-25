@@ -253,8 +253,8 @@
       "sha256": "cc4f3520eada3be52898c151c1360670494549d5d309964eee9177b219692f24"
     },
     "docs/v3/SKILL_INGESTION.md": {
-      "bytes": 6356,
-      "sha256": "67bafb3105985cbc6f486417acb3593677a1d5abd6c2bb229e8346afa9c8a27b"
+      "bytes": 6586,
+      "sha256": "0e743ef4502a806ec6a661f38d5c7f5e3a950c3cd75d882584b33334fc7a5c64"
     },
     "docs/v3/STATUS.md": {
       "bytes": 43913,
@@ -394,7 +394,7 @@
     },
     "evidence/qualification/qualification_run.json": {
       "bytes": 3791,
-      "sha256": "2ce3802a0fcd8c8d1ff2f8c77e04356717e2539bc6915be9a6b9ccbb158d7a74"
+      "sha256": "3f768c7ab64fa26ea9ae0601f7b49a6b6b25f1d4c9baf644a299a06a025c2c21"
     },
     "evidence/security/failure_injection.json": {
       "bytes": 4132,
@@ -1285,8 +1285,8 @@
       "sha256": "6ab2755992642574677658c6faa783ba61aa1973fdb5e7ae390f5cac4c91a3f3"
     },
     "tools/skill_holdout.py": {
-      "bytes": 18248,
-      "sha256": "122647452377dae0ac86c719ef00bd9488f5a063c5ddb394be055eb6b82e3a90"
+      "bytes": 18447,
+      "sha256": "56994736bee7f52df9a5dfe4189a6deb7f61b2d4692c843b732ff7bb9419ba7a"
     },
     "tools/smoke_integration.py": {
       "bytes": 5572,
@@ -1299,5 +1299,5 @@
   },
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "063b164857750c016d6a7282ae5e0e950646eb79"
+  "source_commit": "0354390c587d8449ef449dc0415599465df4fce6"
 }

@@ -1,0 +1,22 @@
+{
+  "archive": "SIS-v3.3.0-GOVERNED-LEARNING.zip",
+  "fresh_extraction": {
+    "compileall_src": true,
+    "extracted_test_smoke": {
+      "command": "pytest -q tests/v3/test_candidates.py",
+      "tail": "10 passed in 0.21s"
+    },
+    "verify_tree": {
+      "files": 297
+    }
+  },
+  "kind": "release_verification",
+  "schema_version": 1,
+  "zip_verify": {
+    "manifest": "RELEASE_SHA256.json",
+    "project": "sis-v2-authority-transfer",
+    "source_files": 297,
+    "valid": true,
+    "zip_sha256": "6cbbc69d47058cb3d5c12bab02306635c99f07f26a20923a5567842abce67429"
+  }
+}

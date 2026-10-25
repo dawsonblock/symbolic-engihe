@@ -638,3 +638,18 @@ remaining_unknowns:
   - "efficacy gate remains OPEN: needs a harder held-out corpus where baseline Codex actually fails, and >=8 tasks for statistical power"
   - "run_paired_study.py spec runner lacks verifier wiring (superseded by live_study.py for now)"
 ```
+
+## v3.1-alpha — live study #2: real signal, gate still open (M6)
+
+```yaml
+phase_id: v31-live-study-2
+status: executed_signal_positive_gate_not_met
+observed_outcomes:
+  - "run 1 (ceiling corpus): all arms 2/2 -> delta=0"
+  - "run 2 (convention corpus, pre-steps-fix): A=4,D=4 -> delta=0; exposed that served guidance never transmitted procedure steps"
+  - "FIX: helpful_next_checks now serves the winning procedure's steps"
+  - "run 3 (post-fix): A=3, B=4, C=3, D=5 -> delta=+2, mcnemar_p=0.5, zero losses; D won money+clamp where all unguided arms failed"
+  - "slug failed in every arm incl. D -> hint underdetermined (apostrophe rule)"
+remaining_unknowns:
+  - "efficacy gate remains OPEN: direction is positive but n=6 is underpowered; needs >=6 all-discordant pairs -> more convention-hard tasks and sharper hints"
+```

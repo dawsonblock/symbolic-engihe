@@ -33,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_canonical_zip import build, source_binding  # noqa: E402
 from verify_release import verify_tree  # noqa: E402
 
+SMOKE_TEST = "tests/v3/test_candidates.py"
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -62,6 +64,36 @@ def _docs(root: Path) -> list[str]:
 def _evidence(root: Path) -> list[str]:
     base = root / "evidence"
     return [f"evidence/{p.name}/" for p in sorted(base.iterdir()) if p.is_dir()]
+
+
+def fresh_extraction_checks(tree: Path) -> dict:
+    """Gate the extracted archive: it must compile and its smoke test pass.
+
+    Recording a result is not verification. A non-compiling or
+    test-failing extraction fails the build, so a broken archive can
+    never ship under a green manifest.
+    """
+    if not compileall.compile_dir(str(tree / "src"), quiet=1, force=True):
+        raise ValueError("fresh-extraction compile check failed")
+    smoke = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", SMOKE_TEST],
+        cwd=tree, capture_output=True, text=True,
+        env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
+    )
+    lines = (smoke.stdout or smoke.stderr).strip().splitlines()
+    tail = lines[-1] if lines else ""
+    if smoke.returncode != 0:
+        raise ValueError(
+            f"fresh-extraction smoke test failed"
+            f" (rc={smoke.returncode}): {tail}")
+    return {
+        "compileall_src": True,
+        "extracted_test_smoke": {
+            "command": f"pytest -q {SMOKE_TEST}",
+            "returncode": smoke.returncode,
+            "tail": tail,
+        },
+    }
 
 
 def package(root: Path, release: str, *, status: str, passed: int,
@@ -118,12 +150,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
             z.extractall(temp)
         tree = Path(temp) / root.name
         tree_report = verify_tree(tree)
-        compiled = compileall.compile_dir(str(tree / "src"), quiet=1, force=True)
-        smoke = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests/v3/test_candidates.py"],
-            cwd=tree, capture_output=True, text=True,
-            env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
-        )
+        fresh = fresh_extraction_checks(tree)
         verification = {
             "schema_version": 1,
             "kind": "release_verification",
@@ -137,14 +164,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
             },
             "source_binding": report["source_binding"],
             "source": report["source"],
-            "fresh_extraction": {
-                "verify_tree": tree_report,
-                "compileall_src": bool(compiled),
-                "extracted_test_smoke": {
-                    "command": "pytest -q tests/v3/test_candidates.py",
-                    "tail": (smoke.stdout or smoke.stderr).strip().splitlines()[-1],
-                },
-            },
+            "fresh_extraction": {"verify_tree": tree_report, **fresh},
         }
 
     release_manifest = {

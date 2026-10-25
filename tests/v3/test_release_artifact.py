@@ -191,5 +191,52 @@ class CanonicalArchiveBindingTests(unittest.TestCase):
             build_canonical_zip.build(repo, self.target)
 
 
+class FreshExtractionGateTests(unittest.TestCase):
+    """The release build must fail closed on a broken extracted archive."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def _tree(self, *, source=b"VALUE = 1\n",
+              test_body=b"def test_ok():\n    assert True\n"):
+        _copy_subset(self.root, {
+            "src/pkg/a.py": source,
+            "tests/v3/test_candidates.py": test_body,
+        })
+        return self.root
+
+    def test_passing_extraction_is_recorded(self):
+        import package_release
+        report = package_release.fresh_extraction_checks(self._tree())
+        self.assertTrue(report["compileall_src"])
+        self.assertEqual(
+            report["extracted_test_smoke"]["returncode"], 0)
+        self.assertEqual(
+            report["extracted_test_smoke"]["command"],
+            "pytest -q tests/v3/test_candidates.py")
+
+    def test_failing_smoke_fails_the_build(self):
+        import package_release
+        tree = self._tree(
+            test_body=b"def test_bad():\n    assert False\n")
+        with self.assertRaisesRegex(ValueError, "smoke test failed"):
+            package_release.fresh_extraction_checks(tree)
+
+    def test_missing_smoke_test_fails_the_build(self):
+        import package_release
+        tree = self._tree()
+        (tree / "tests/v3/test_candidates.py").unlink()
+        with self.assertRaisesRegex(ValueError, "smoke test failed"):
+            package_release.fresh_extraction_checks(tree)
+
+    def test_uncompilable_source_fails_the_build(self):
+        import package_release
+        tree = self._tree(source=b"def broken(:\n")
+        with self.assertRaisesRegex(ValueError, "compile check failed"):
+            package_release.fresh_extraction_checks(tree)
+
+
 if __name__ == "__main__":
     unittest.main()

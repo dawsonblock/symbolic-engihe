@@ -21,6 +21,9 @@ SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log"}
 # archive, or every rebuild would embed the previous release (and its stale
 # checksum) inside the next one.
 OUT_OF_BAND_DIRS = {"release"}
+# The build record describes the build, not the source. It is rewritten by
+# every packaging run, so it cannot be part of the archive it describes.
+OUT_OF_BAND_FILES = {"evidence/release/build_record.json"}
 
 
 def _valid_manifest(document):
@@ -42,6 +45,7 @@ def _included(relative):
     path = PurePosixPath(relative)
     return (path.name not in {"SOURCE_SHA256.json", "RELEASE_SHA256.json"}
             and not (path.parts and path.parts[0] in OUT_OF_BAND_DIRS)
+            and relative not in OUT_OF_BAND_FILES
             and not any(part in SKIP_DIRS or part.endswith(".egg-info") for part in path.parts)
             and path.suffix not in SKIP_EXTS)
 

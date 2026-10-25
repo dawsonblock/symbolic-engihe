@@ -85,8 +85,9 @@ def package(root: Path, release: str, *, status: str, passed: int,
             "state are recorded in release/verification.json"
         ),
         "manifest_scope": (
-            "all _included() source/evidence files; release/ is out-of-band "
-            "and never inventoried into the archive"
+            "all _included() source/evidence files; release/ and "
+            "evidence/release/build_record.json are out-of-band and never "
+            "inventoried into the archive"
         ),
         "post_build_verification": (
             "release/verification.json — outside the archive by construction"

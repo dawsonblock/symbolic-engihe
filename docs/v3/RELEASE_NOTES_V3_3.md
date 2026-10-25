@@ -42,13 +42,46 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 ## Verification
 
 - `PYTHONPATH=src python3 -m pytest tests/ -q`
-- **709 passed, 2 skipped** (47 new v3.3 tests: registry, memory,
-  evolution, composition, serving, packaging, governed eval, campaign).
+- **737 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
+  composition, serving, packaging, governed-eval, campaign and
+  release-binding tests).
 - Every module compiles (`python3 -m py_compile`).
+- `python3 tools/verify_release.py release/SIS-v3.3.0-GOVERNED-LEARNING.zip`
+  verifies the archive against its embedded manifest; the build also
+  re-hashes every member against the source tree it came from
+  (`verify_against_tree`) and records the Git commit.
+
+## Post-build review repairs
+
+- **Release binding.** The previously shipped ZIP predated the hardening
+  commit, and the build could embed the previous ZIP inside the next one
+  because `release/` was inventoried. `release/` is now out-of-band:
+  excluded from the archive manifest, rejected as an archive member, and
+  the build refuses a dirty source tree and re-hashes the archive
+  against the working tree.
+- **Qualification evidence.** `CandidateRegistry` now requires a
+  deployment-supplied `receipt_authority`; every cited digest must
+  resolve to a signature-authenticated receipt with outcome `pass`.
+  Wiring this in exposed a latent flake where qualification could cite
+  a synthetic authority-demo receipt; holdout evidence is now separate
+  and a run without a verified pass receipt refuses to qualify.
+- **Regression metric.** `verified_regression_rate` is now relative to
+  baseline solves (baseline cannot regress against itself);
+  `failure_rate` carries the absolute number.
+- **Memory evidence.** `MemoryStore.ingest` accepts an
+  `evidence_check` hook; both campaigns bind it to
+  `verify_experience_evidence`, which resolves and verifies the signed
+  receipt and requires the signed outcome to match the record.
+- **Serving audit.** Served guidance rows carry `task_id`;
+  `record_outcome` binds a receipt digest and outcome to the exact
+  guidance digest the gateway served.
 
 ## Upgrade notes
 
 - No schema migrations needed for v3.2 state; new stores are new files.
 - Callers opting into arm `E` must pass `arms=("A","B","C","D","E")`.
-- `CandidateRegistry.qualify` requires `receipt_refs` — wire real
-  evaluator receipt digests, never placeholders.
+- `CandidateRegistry.qualify` requires `receipt_refs` **and** a
+  `receipt_authority` callable configured at registry construction —
+  wire real evaluator verification, never placeholders.
+- `MemoryStore.ingest` should be called with
+  `evidence_check=verify_experience_evidence` in production ingestion.

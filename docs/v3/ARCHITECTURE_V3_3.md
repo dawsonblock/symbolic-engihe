@@ -56,6 +56,9 @@ SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
 1. Candidate generation never confers promotion authority —
    `proposed→validated` is `candidate:write` (learner); `evaluating→qualified`
    is `promotion:approve` (operator) and requires ≥1 bound receipt digest.
+   The registry also requires a deployment-supplied `receipt_authority`:
+   each cited digest must resolve to a signature-authenticated receipt
+   with outcome `pass`, so a digest string alone is never evidence.
 2. Receipts are the only evidence handle. Booleans carry no authority.
 3. Learner/optimizer hold no signing keys and no authority-DB access.
 4. Served text is data: delivered through `helpful_next_checks`, it can

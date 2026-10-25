@@ -93,7 +93,7 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 
 ## M10 — Release qualification: IMPLEMENTED_NOT_EFFICACY_QUALIFIED
 
-- Suite: **709 passed, 2 skipped** (`PYTHONPATH=src pytest tests/`).
+- Suite: **737 passed, 2 skipped** (`PYTHONPATH=src pytest tests/`).
 - Docs: ARCHITECTURE_V3_3, SECURITY_BOUNDARIES_V3_3, MEMORY_DESIGN,
   EVOLUTION_DESIGN, EVALUATION_PROTOCOL_V3_3, V33_LIMITATIONS, this
   report.
@@ -127,6 +127,42 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   `paired_win_rate`, `paired_loss_rate` (vs arm A, same valid-solve
   rule) and `mean_cost_per_verified_solve` (`None` — cost is unmetered,
   never fabricated). Suite: 710 passed, 2 skipped.
+
+### Completion pass 3 (release binding + qualification authority)
+
+- **Release archive was stale and could self-embed.** `dee2c4b`
+  inventoried `release/` into `RELEASE_SHA256.json` without rebuilding
+  the ZIP, so the shipped archive still contained pre-hardening code.
+  Worse, the next build would embed the previous ZIP (and its stale
+  checksum) inside itself, and `verify()` would still pass because the
+  archive matched its own embedded manifest. `release/` is now
+  out-of-band: excluded from the inventory, rejected as an archive
+  member, and `build_canonical_zip` re-hashes every member against the
+  source tree (`verify_against_tree`), records the Git commit, and
+  refuses a dirty tree. New tests cover embedding, stale archives,
+  dirty builds, and source binding.
+- **Qualification accepted unauthenticated digests.**
+  `CandidateRegistry.qualify` checked only that `receipt_refs` were
+  64-hex strings. It now requires a deployment-supplied
+  `receipt_authority`; every digest must resolve to a
+  signature-authenticated receipt with outcome `pass`. Wiring this in
+  exposed a latent campaign bug: qualification drew from a dict seeded
+  with synthetic authority-demo receipts, so a random digest sort could
+  cite a receipt the verifier never issued (flaky ~80%). Holdout
+  evidence is now separate, and no verified pass receipt means no
+  qualification.
+- **Regression metric was mislabeled.** `verified_regression_rate` was
+  the absolute failure rate, so baseline A reported 0.5 regressions
+  against itself. It is now the fraction of baseline-verified solves an
+  arm loses; `failure_rate` keeps the absolute number.
+- **Memory and serving evidence binding.** `MemoryStore.ingest` takes an
+  `evidence_check` hook wired to `verify_experience_evidence`
+  (journal resolution + signature + outcome match); serving audit rows
+  carry `task_id`, and `record_outcome` binds a receipt digest/outcome
+  to the exact served guidance digest.
+- Suite: **737 passed, 2 skipped**. Deterministic campaign unchanged
+  (A=0/B=2/C=2/D=0/E=2); live governed campaign re-run at this tree:
+  all arms 2/2 (ceiling), authentic lifecycle.
 - `tools/smoke_integration.py` run locally on macOS: CLI + authed
   loopback HTTP smoke passes (401/403/200 status boundaries).
 - `tools/live_study.py` executed against authenticated `codex exec`

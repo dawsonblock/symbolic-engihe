@@ -1,58 +1,81 @@
-# SIS3-013 qualification report — gate status
+# SIS v3.3 qualification report
 
-Date: 2026-10-23/24. Suite: 526 tests, 0 failures, 2 skips (run under `-W error`).
+Release designation: **SIS-v3.3.0-GOVERNED-LEARNING**
+Branch: `codex/sis-v3.3-governed-learning`
+Status: **IMPLEMENTED_NOT_EFFICACY_QUALIFIED**
 
-Repair pass landed: `cryptography` Ed25519 backend preferred (vendored
-fallback kept wire-identical), per-principal operator signatures for
-promotion (token fallback retained), evaluator signing moved into a child
-process (`evaluator_worker`), benchmark wall-clock violations flagged.
+This report supersedes the historical SIS3-013 ledger (retained in Git
+history). It records what was executed for this release, not what was
+planned.
 
-v3.1 roadmap slice landed: ZIP-native release verification
-(`tools/verify_release.py` `verify()` streams the archive and never
-extracts; `RELEASE_SHA256.json` covers 220 files), extracted-tree
-`verify_tree` + `build_zip`, SQLite `close()`/context-manager on all four
-connection owners, `episode_projection` with an agent-facing redacted view,
-`OutcomeEnvelopeV2` with pinned-key registry/revocation/nonce replay/expiry,
-`semantic_checks` metamorphic operator-class gating, `counterexamples`
-negative-evidence index, scoped `catalog` with evidence-revocation cascade
-suspension, `guidance_gateway` shadow/diagnostic/conditional phases with kill
-switch, retrieval `AblationFlags`, and benchmark Wilson/McNemar statistics.
+## Gate ledger
 
-## Milestone gate ledger
-
-| Gate | Required evidence | Status |
+| Gate | Evidence | Result |
 |---|---|---|
-| M0 | Old tests green; no unauthorized mutation; negative-transfer rejection; schema round-trip; fresh-release verification | **Met**: 526 green; `verify()` on a built ZIP + `verify_tree` on fresh extraction + compile check all pass; tamper/extra/missing/duplicate/symlink rejected |
-| M1 | ≥1 actual coding task end-to-end through adapter→store→verifier | **Met**: live-002 — real Codex fixed the fixture bug, evaluator independently signed `pass`, 16 chained events, full receipt preserved (`docs/v3/episodes/live-002/`). Live-001 documents the earlier quota-limited fail |
-| M2 | Forgeries/digest mismatches denied; signed receipts survive replay/restart | **Met locally**; evaluator shares the caller's process — separate OS-principal custody not deployed |
-| M3 | False transfer rejected; compatible task gets useful candidate; source preservation; traceable evidence | **Mechanics met**: hard gates + contraindications + abstain paths tested; `semantic_checks` now flags noncommutative→commutative operator swaps structurally; no *live* cross-repository transfer demonstrated |
-| M4 | Mutation denied to agent identities; unsigned/unauthorized promotion rejected; corruption safe; rollback tested | **Met locally** (operator token is a shared-secret gate, not per-principal auth) |
-| M5 | Pre-registered held-out tasks; four arms; equal budgets; independent scoring; positive D−A lower bound | **Not met**: harness exists and is tested with scripted agents; zero real held-out tasks have been run |
-| M6 | Learned ranker beats deterministic retrieval at matched budgets | **Not attempted** (correctly deferred) |
+| Source baseline traceable | `docs/audits/BASELINE_INTEGRITY.md`, `evidence/baseline/` — all four manifest discrepancies traced to pushed commits; manifest was stale, not tampered | **PASS** |
+| Authority transactions | `tests/v3/test_authority_db.py` (WAL, fault-at-each-step, power loss, stale head, concurrent promotion) | **PASS** |
+| Receipt authenticity | `tests/v3/test_receipt_signatures.py` (forged signer, tampered body, replay, wrong key) | **PASS** |
+| Qualification evidence | `CandidateRegistry` requires `receipt_authority`; every cited digest must resolve to a signed `pass` | **PASS** |
+| Trust-domain separation | policy roles: learner/evaluator/operator; learners hold no signing material or authority writes | **PASS** |
+| Memory provenance | `verify_experience_evidence` binds ingest to the evaluator journal and signed outcome | **PASS** |
+| Sealed holdout | partition disjointness + repository-disjointness enforced before runs | **PASS** |
+| Governed serving | scope/revocation/applicability/counterexample gates; prompt injection served as data only | **PASS** |
+| Revocation/rollback | revoked candidates stop serving immediately; audit chain verifies | **PASS** |
+| Release integrity | ZIP ↔ embedded manifest ↔ source tree all verified; `release/` excluded from the archive | **PASS** |
+| Learning efficacy | live campaigns below | **NOT ESTABLISHED** |
 
-## Release-label decision
+## Executed verification
 
-- `v3.0.0-alpha` criterion: "a real adapter and verifier operate end-to-end".
-  **Met by live-002** — the alpha bar is cleared on pipeline grounds.
-  Caveat: a single solved fixture task is not efficacy evidence; alpha is
-  the honest ceiling until M5 data exists.
-- `v3.0.0-beta` / stable: far out of scope; requires the M5 efficacy gate.
+| Command | Result |
+|---|---|
+| `PYTHONPATH=src python3 -m pytest tests/ -q` | **737 passed, 2 skipped, 0 failed** |
+| `PYTHONPATH=src python3 tools/governed_campaign.py -o <dir>` | exit 0; A=0 B=2 C=2 D=0 E=2; 5 candidates qualified; revocation demo passed |
+| `PYTHONPATH=src python3 tools/governed_live_campaign.py -o <dir> --wall 120` | exit 0; authenticated `codex exec`; A=2 B=2 C=2 D=2 E=2 (ceiling hit) |
+| `PYTHONPATH=src python3 tools/live_study.py ... --wall 120` | A=4 B=3 C=3 D=5; D-vs-A 1W/0L, McNemar p=1.0 (underpowered) |
+| `python3 tools/verify_release.py <zip>` | 306-file archive verified against embedded manifest |
+| fresh extraction + `verify_tree` + `compileall` + extracted test smoke | pass |
+| `python3 tools/smoke_integration.py` | CLI + authed loopback HTTP smoke pass |
+| security failure injection (13 scenarios) | 13/13 green (`evidence/security/failure_injection.json`) |
 
-## What is proven vs. unproven
+## Efficacy verdict
 
-Proven: bounded contracts, default-deny policy, bounded execution,
-tamper-evident storage, evaluator-signed outcomes, digest-locked proposals,
-hard-gated retrieval, signed promotion decisions, paired benchmark mechanics,
-and a real (failed) Codex episode captured end-to-end.
+**EFFICACY_NOT_QUALIFIED.**
 
-Unproven: any procedure ever serving a real second task, any improvement in
-solved-task rate, OS-validated isolation, evaluator custody beyond
-subprocess memory separation, WORM/external anchoring.
+- The deterministic campaign proves the machinery end-to-end with a
+  scripted agent. It is not evidence about a real model.
+- The live governed campaign ran the full lifecycle with a real
+  authenticated Codex agent, but every arm solved both holdout tasks
+  unaided. The fixtures are below the model's ceiling, so the contrast
+  is null, not negative.
+- The six-task live study is directionally positive for served
+  procedures (D=5 vs A=4) but p=1.0 and n=6. It cannot support a claim.
+- No preregistered powered holdout has been run. A claim of improved
+  coding outcomes would be unsupported.
 
-## Next concrete steps
+## What is proven
 
-1. ~~Passing live episode~~ — done (live-002).
-2. Mine a candidate from live-002; qualify it through the promotion
-   controller on a second disjoint fixture; serve it via guidance on a third.
-3. Run the four-arm harness on ≥3 scripted fixtures; only then consider
-   pre-registering a real held-out suite.
+- A verified episode can become a memory candidate, and only
+  signature-authenticated pass receipts can qualify any candidate.
+- Candidate text cannot grant permissions, alter policy, or reach
+  authority; serving is scope- and revocation-gated and audited with
+  the task and the outcome receipt.
+- Promoted artifacts are content-addressed, immutable in record form,
+  auditable (hash-chained), revocable, and exportable/re-importable
+  with unchanged identity.
+- The release archive is source-bound: it cannot silently ship stale
+  code, and `release/` can no longer be embedded recursively.
+
+## What is not proven
+
+- That any of the three learning tracks improves solved-task rate on
+  unseen repositories under a powered, preregistered design.
+- OS-level isolation: execution remains `isolation:unverified_local`.
+- Cost per verified solve: not metered (`None`, never fabricated).
+- Semantic (not lexical) conflict/counterexample detection.
+
+## Release decision
+
+Security and correctness gates pass. The release is published as
+**IMPLEMENTED_NOT_EFFICACY_QUALIFIED** — the strongest claim the
+evidence supports. A security or integrity blocker would take
+precedence over any benchmark result; none is open.

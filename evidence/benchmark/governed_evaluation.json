@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-25T08:11:58Z",
+  "generated_at": "2026-10-25T08:24:20Z",
   "governed_metrics": {
     "A": {
       "abstention_rate": 1.0,
@@ -166,7 +166,7 @@
     "sample_size": 29,
     "schema_version": 1
   },
-  "report_digest": "43849b7ccbc8c20e5354fa9ea1a72293fad427d56bb74ed3181ede3193a620aa",
+  "report_digest": "e3d4b35231b697f7e0932babafe0deb9943800dc3a98f13fe0e32a99915eb05c",
   "schema_version": 1,
   "solved_counts": {
     "A": 0,

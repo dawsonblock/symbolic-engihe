@@ -13,12 +13,26 @@ State machine (spec):
 
 Every transition is role-gated through ``policy.require_permission`` and
 committed inside one ``BEGIN IMMEDIATE`` transaction with an audit row —
-a transition and its audit entry land together or not at all. Only the
-``operator`` role (``promotion:approve``) may qualify a candidate, and
-qualification requires at least one bound evaluator receipt digest:
-candidate generators can never confer promotion authority. Revocation is
-a first-class terminal state so promoted artifacts always support audit,
-rollback, and takedown.
+a transition and its audit entry land together or not at all.
+
+Two signed artifacts are required for serving state, not just a role
+string:
+
+- ``evaluating -> qualified`` needs at least one operator-signed
+  ``CandidateDecisionV1`` *and* at least one evaluator-signed
+  ``CandidateEvidenceV1`` binding the cited pass receipts to this exact
+  candidate (record digest + content digest + holdout partition +
+  protocol). A pass receipt for an unrelated task or candidate is not a
+  qualification handle.
+- ``qualified -> revoked`` needs an operator-signed decision for that
+  exact edge.
+
+Decisions and evidence are stored durably in this registry and
+re-authenticated on every serving read. The state column is never
+trusted: reads fold the hash-chained transition log, require the column
+to match that projection, and require every serving-state transition to
+be backed by the signed artifacts it cites. A direct SQL flip to
+``qualified`` fails closed instead of serving.
 
 Audit rows are hash-chained (``prev_digest`` → ``entry_digest``) inside
 the same transaction and re-verified end-to-end on every ``audit()``
@@ -27,13 +41,19 @@ tamper-evidence model as the v3.2 authority journal.
 """
 from __future__ import annotations
 
+import json as _json
 import re
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .contracts import CandidateV1, ContractError, canonical_digest, loads_json
+from .candidate_authority import (QUALIFICATION_PARTITION,
+                                  CandidateAuthorityError)
+from .contracts import (CandidateDecisionV1, CandidateEvidenceV1,
+                        CandidateV1, ContractError, canonical_digest,
+                        loads_json)
 from .policy import require_permission
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -44,6 +64,7 @@ CANDIDATE_TYPES = frozenset({
 })
 STATES = ("proposed", "validated", "evaluating", "rejected",
           "inconclusive", "qualified", "revoked")
+SERVING_STATES = frozenset({"qualified", "revoked"})
 
 _EDGES = {
     "proposed": frozenset({"validated", "rejected"}),
@@ -81,10 +102,33 @@ CREATE TABLE IF NOT EXISTS candidate_transition (
     to_state TEXT NOT NULL,
     actor_identity TEXT NOT NULL,
     receipt_refs_json TEXT NOT NULL,
+    evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+    decision_digest TEXT NOT NULL DEFAULT '',
     note TEXT NOT NULL,
     committed_at TEXT NOT NULL,
     prev_digest TEXT NOT NULL DEFAULT '',
     entry_digest TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS candidate_decision (
+    decision_digest TEXT PRIMARY KEY,
+    decision_json TEXT NOT NULL,
+    signer_key_id TEXT NOT NULL,
+    decision_nonce TEXT NOT NULL,
+    consumed_at TEXT NOT NULL,
+    UNIQUE(signer_key_id, decision_nonce)
+);
+CREATE TABLE IF NOT EXISTS candidate_evidence (
+    evidence_digest TEXT PRIMARY KEY,
+    evidence_json TEXT NOT NULL,
+    candidate_id TEXT NOT NULL,
+    signer_key_id TEXT NOT NULL,
+    stored_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS registry_migration (
+    migration TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL,
+    entries INTEGER NOT NULL,
+    detail TEXT NOT NULL
 );
 """
 
@@ -123,33 +167,88 @@ def _permitted(role: str, action: str) -> bool:
 
 
 def _entry_digest(seq, candidate_id, from_state, to_state,
-                  actor_identity, receipt_refs_json, note,
-                  committed_at, prev_digest) -> str:
+                  actor_identity, receipt_refs_json, evidence_refs_json,
+                  decision_digest, note, committed_at, prev_digest) -> str:
     """Domain-separated digest over one audit row plus its chain link."""
-    import json as _json
     return canonical_digest("candidate_audit", 1, {
         "seq": seq,
         "candidate_id": candidate_id,
         "from_state": from_state,
         "to_state": to_state,
         "actor_identity": actor_identity,
-        "receipt_refs": _json.loads(receipt_refs_json),
+        "receipt_refs": _refs(receipt_refs_json),
+        "evidence_refs": _refs(evidence_refs_json),
+        "decision_digest": decision_digest,
         "note": note,
         "committed_at": committed_at,
         "prev_digest": prev_digest,
     })
 
 
-class CandidateRegistry:
-    """Single-writer transactional store for governed learning candidates."""
+def _legacy_entry_digest(seq, candidate_id, from_state, to_state,
+                         actor_identity, receipt_refs_json, note,
+                         committed_at, prev_digest) -> str:
+    """Digest of a row sealed before evidence/decision fields existed.
 
-    def __init__(self, path: str | Path, *, receipt_authority=None) -> None:
+    Only used to prove a pre-migration chain was intact before it is
+    resealed; it must never be used to seal a new row.
+    """
+    return canonical_digest("candidate_audit", 1, {
+        "seq": seq,
+        "candidate_id": candidate_id,
+        "from_state": from_state,
+        "to_state": to_state,
+        "actor_identity": actor_identity,
+        "receipt_refs": _refs(receipt_refs_json),
+        "note": note,
+        "committed_at": committed_at,
+        "prev_digest": prev_digest,
+    })
+
+
+def _refs(raw):
+    """Decode a stored ref list; malformed JSON is registry corruption."""
+    try:
+        value = _json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise CandidateError("audit_row_malformed") from exc
+    if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value):
+        raise CandidateError("audit_row_malformed")
+    return value
+
+
+class CandidateRegistry:
+    """Single-writer transactional store for governed learning candidates.
+
+    ``expected_evaluation_protocol_digest`` optionally pins every
+    qualification evidence binding to the preregistered protocol; a
+    mismatch is refused at qualification and re-detected at serve time.
+    """
+
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        receipt_authority=None,
+        evidence_authority=None,
+        decision_authority=None,
+        expected_evaluation_protocol_digest: str | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # Independent evaluator boundary: a callable that resolves a receipt
-        # digest and raises unless its signature authenticates. Qualification
-        # is refused when this is absent — a cited digest is not evidence.
+        # digest and raises unless its signature authenticates.
         self._receipt_authority = receipt_authority
+        # Signed-artifact boundaries. Evidence binds receipts to a
+        # candidate; decisions bind the exact serving-state edge. Both are
+        # re-authenticated on read, never trusted from the database alone.
+        self._evidence_authority = evidence_authority
+        self._decision_authority = decision_authority
+        if expected_evaluation_protocol_digest is not None:
+            _check_digest(expected_evaluation_protocol_digest,
+                          "expected_evaluation_protocol_digest")
+        self._expected_protocol = expected_evaluation_protocol_digest
         self._lock = threading.RLock()
         self._con = sqlite3.connect(
             str(self.path), isolation_level=None, timeout=15.0,
@@ -160,7 +259,14 @@ class CandidateRegistry:
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA busy_timeout=15000")
         con.executescript(_SCHEMA)
-        self._migrate(con)
+        try:
+            self._migrate(con)
+        except Exception:
+            # A refused migration (e.g. a broken pre-migration chain) must
+            # not leak the connection the registry just opened.
+            con.close()
+            self._con = None
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -184,6 +290,23 @@ class CandidateRegistry:
             raise CandidateError("candidate_registry_closed")
         return self._con
 
+    @contextmanager
+    def _read(self):
+        """Consistent read snapshot under the writer lock."""
+        with self._lock:
+            con = self._conn()
+            con.execute("BEGIN")
+            try:
+                yield con
+            except Exception:
+                _safe_rollback(con)
+                raise
+            else:
+                try:
+                    con.execute("COMMIT")
+                except sqlite3.Error:
+                    pass
+
     # ------------------------------------------------------------------ #
     # intake — learners only; a submission can never mint elevated state
     # ------------------------------------------------------------------ #
@@ -194,16 +317,19 @@ class CandidateRegistry:
             candidate = CandidateV1.from_dict(candidate)
         with self._lock:
             con = self._conn()
-            row = con.execute(
-                "SELECT candidate_digest, state FROM candidate WHERE candidate_id=?",
-                (candidate.candidate_id,),
-            ).fetchone()
-            if row is not None:
-                if row[0] == candidate.digest:
-                    return candidate.digest
-                raise CandidateConflict("candidate_id_conflict")
             con.execute("BEGIN IMMEDIATE")
             try:
+                # Never build new history on a tampered projection.
+                self._project(con)
+                row = con.execute(
+                    "SELECT candidate_digest, state FROM candidate WHERE candidate_id=?",
+                    (candidate.candidate_id,),
+                ).fetchone()
+                if row is not None:
+                    if row[0] == candidate.digest:
+                        con.execute("COMMIT")
+                        return candidate.digest
+                    raise CandidateConflict("candidate_id_conflict")
                 con.execute(
                     "INSERT INTO candidate"
                     " (candidate_id, candidate_digest, candidate_json, state, created_at)"
@@ -211,7 +337,7 @@ class CandidateRegistry:
                     (candidate.candidate_id, candidate.digest,
                      candidate.canonical_bytes().decode("utf-8"), _utcnow()))
                 self._audit(con, candidate.candidate_id, "", "proposed",
-                            actor_role, (), "submitted")
+                            actor_role, (), (), "", "submitted")
                 con.execute("COMMIT")
             except sqlite3.IntegrityError as exc:
                 _safe_rollback(con)
@@ -226,34 +352,43 @@ class CandidateRegistry:
     # ------------------------------------------------------------------ #
     def transition(self, candidate_id: str, target: str, *,
                    actor_role: str, actor_identity: str = "",
-                   receipt_refs=(), note: str = "") -> None:
+                   receipt_refs=(), evidence_refs=(), decision_ref: str | None = None,
+                   note: str = "") -> None:
         """Move ``candidate_id`` along a legal edge; role-gated + audited.
 
-        QUALIFIED additionally requires ``promotion:approve`` *and* at
-        least one bound evaluator receipt digest — the evidence handle the
-        qualification stands on. Every check is re-evaluated inside the
-        write transaction so stale readers cannot interleave.
+        QUALIFIED requires ``promotion:approve``, at least one bound pass
+        receipt, at least one authenticated evidence binding that names
+        this candidate, and an operator-signed decision for the exact
+        edge. REVOKED requires an operator-signed decision as well.
+        Every check is re-evaluated inside the write transaction so stale
+        readers cannot interleave, and the decision nonce is consumed in
+        the same transaction so it can never be replayed.
         """
         if target not in STATES:
             raise ContractError(f"unknown candidate state: {target}")
-        refs = tuple(receipt_refs or ())
+        refs = tuple(dict.fromkeys(receipt_refs or ()))
+        erefs = tuple(dict.fromkeys(evidence_refs or ()))
         for ref in refs:
             _check_digest(ref, "receipt_refs[]")
-        if target == "qualified" and not refs:
-            raise CandidateConflict(
-                "qualification_requires_bound_receipts")
+        for ref in erefs:
+            _check_digest(ref, "evidence_refs[]")
+        if decision_ref is not None:
+            _check_digest(decision_ref, "decision_ref")
 
         with self._lock:
             con = self._conn()
             con.execute("BEGIN IMMEDIATE")
             try:
+                states, _ = self._project(con)
                 row = con.execute(
-                    "SELECT state FROM candidate WHERE candidate_id=?",
+                    "SELECT candidate_digest, candidate_json, state"
+                    " FROM candidate WHERE candidate_id=?",
                     (candidate_id,),
                 ).fetchone()
                 if row is None:
                     raise CandidateConflict("candidate_missing")
-                current = row[0]
+                record = self._row_to_record(row[:2])
+                current = states.get(candidate_id, "")
                 if target not in _EDGES[current]:
                     raise CandidateConflict(
                         f"illegal_transition:{current}->{target}")
@@ -261,13 +396,46 @@ class CandidateRegistry:
                 if not any(_permitted(actor_role, a) for a in actions):
                     raise CandidateConflict(
                         f"role_denied:{actor_role} cannot {current}->{target}")
+                if target == "qualified" and not refs:
+                    raise CandidateConflict(
+                        "qualification_requires_bound_receipts")
+                if target == "qualified" and not erefs:
+                    raise CandidateConflict(
+                        "qualification_requires_evidence_binding")
+                if target == "qualified" and decision_ref is None:
+                    raise CandidateConflict(
+                        "qualification_requires_decision")
+                if target == "revoked" and decision_ref is None:
+                    raise CandidateConflict(
+                        "revocation_requires_decision")
+                if target != "qualified" and erefs:
+                    raise CandidateConflict(
+                        "evidence_only_for_qualification")
+                needs_decision = target in {"qualified", "revoked"} or \
+                    decision_ref is not None
+                if needs_decision and not actor_identity:
+                    raise CandidateConflict(
+                        "actor_identity_required_for_decision")
+
                 if target == "qualified":
                     self._authenticate_receipts(refs)
+                    if self._expected_protocol is None:
+                        raise CandidateConflict(
+                            "qualification_requires_expected_protocol")
+                    self._authenticate_evidence(record, erefs, refs, con)
+                decision = None
+                if needs_decision:
+                    decision = self._authenticate_decision(
+                        record, current, target, refs, erefs,
+                        actor_identity, decision_ref, con)
+
                 con.execute(
                     "UPDATE candidate SET state=? WHERE candidate_id=?",
                     (target, candidate_id))
-                self._audit(con, candidate_id, current, target,
-                            actor_identity or actor_role, refs, note)
+                self._audit(
+                    con, candidate_id, current, target,
+                    actor_identity or actor_role, refs, erefs,
+                    decision.digest if decision is not None else "", note)
                 con.execute("COMMIT")
             except CandidateError:
                 _safe_rollback(con)
@@ -281,20 +449,24 @@ class CandidateRegistry:
 
     def qualify(self, candidate_id: str, *,
                 actor_role: str, actor_identity: str = "",
-                receipt_refs, note: str = "") -> None:
-        """Explicit qualification — operator only, receipts mandatory."""
+                receipt_refs, evidence_refs=(), decision_ref: str | None = None,
+                note: str = "") -> None:
+        """Explicit qualification — operator decision + bound evidence."""
         self.transition(candidate_id, "qualified", actor_role=actor_role,
                         actor_identity=actor_identity,
-                        receipt_refs=receipt_refs, note=note)
+                        receipt_refs=receipt_refs,
+                        evidence_refs=evidence_refs,
+                        decision_ref=decision_ref, note=note)
+
+    def revoke(self, candidate_id: str, *,
+               actor_role: str, actor_identity: str = "",
+               decision_ref: str | None = None, note: str = "") -> None:
+        self.transition(candidate_id, "revoked", actor_role=actor_role,
+                        actor_identity=actor_identity,
+                        decision_ref=decision_ref, note=note)
 
     def _authenticate_receipts(self, refs) -> None:
-        """Require every cited receipt to resolve as an authentic pass.
-
-        The authority callable is supplied by the deployment and owns the
-        trusted evaluator keys; this registry never trusts a bare digest.
-        An authority error, a missing receipt, or a non-pass outcome is a
-        refusal, not a warning.
-        """
+        """Require every cited receipt to resolve as an authentic pass."""
         if self._receipt_authority is None:
             raise CandidateConflict(
                 "qualification_requires_receipt_authority")
@@ -310,52 +482,185 @@ class CandidateRegistry:
                 raise CandidateConflict(
                     f"qualification_requires_pass_receipt:{ref[:12]}")
 
-    def revoke(self, candidate_id: str, *,
-               actor_role: str, actor_identity: str = "",
-               note: str = "") -> None:
-        self.transition(candidate_id, "revoked", actor_role=actor_role,
-                        actor_identity=actor_identity, note=note)
+    def _authenticate_evidence(self, record, erefs, refs, con) -> None:
+        """Every cited binding must authenticate and name this candidate."""
+        if self._evidence_authority is None:
+            raise CandidateConflict(
+                "qualification_requires_evidence_authority")
+        covered: set[str] = set()
+        for ref in erefs:
+            try:
+                evidence = self._evidence_authority.resolve(ref)
+            except CandidateAuthorityError as exc:
+                raise CandidateConflict(
+                    f"evidence_rejected:{exc.reason}") from exc
+            except Exception as exc:
+                raise CandidateConflict(
+                    f"evidence_rejected:{ref[:12]}") from exc
+            try:
+                self._evidence_authority.check(
+                    evidence, candidate=record, receipt_refs=refs,
+                    partition=QUALIFICATION_PARTITION)
+            except CandidateAuthorityError as exc:
+                raise CandidateConflict(
+                    f"evidence_rejected:{exc.reason}") from exc
+            if self._expected_protocol is not None and \
+                    evidence.evaluation_protocol_digest != self._expected_protocol:
+                raise CandidateConflict("evidence_protocol_mismatch")
+            covered.update(evidence.receipt_refs)
+            self._store_evidence(con, evidence)
+        if not set(refs) <= covered:
+            raise CandidateConflict("evidence_receipt_not_bound")
+
+    def _authenticate_decision(self, record, current, target, refs, erefs,
+                               actor_identity, decision_ref, con):
+        if self._decision_authority is None:
+            raise CandidateConflict("decision_authority_required")
+        try:
+            decision = self._decision_authority.resolve(decision_ref)
+        except CandidateAuthorityError as exc:
+            raise CandidateConflict(
+                f"decision_rejected:{exc.reason}") from exc
+        except Exception as exc:
+            raise CandidateConflict(
+                f"decision_rejected:{decision_ref[:12]}") from exc
+        try:
+            self._decision_authority.check(
+                decision, candidate=record, from_state=current,
+                to_state=target, receipt_refs=refs, evidence_refs=erefs,
+                actor_identity=actor_identity)
+        except CandidateAuthorityError as exc:
+            raise CandidateConflict(
+                f"decision_rejected:{exc.reason}") from exc
+        self._store_decision(con, decision)
+        return decision
+
+    @staticmethod
+    def _store_decision(con, decision: CandidateDecisionV1) -> None:
+        try:
+            con.execute(
+                "INSERT INTO candidate_decision"
+                " (decision_digest, decision_json, signer_key_id,"
+                "  decision_nonce, consumed_at) VALUES (?, ?, ?, ?, ?)",
+                (decision.digest,
+                 decision.canonical_bytes().decode("utf-8"),
+                 decision.signer_key_id, decision.decision_nonce, _utcnow()))
+        except sqlite3.IntegrityError as exc:
+            raise CandidateConflict("decision_replayed") from exc
+
+    @staticmethod
+    def _store_evidence(con, evidence: CandidateEvidenceV1) -> None:
+        con.execute(
+            "INSERT OR IGNORE INTO candidate_evidence"
+            " (evidence_digest, evidence_json, candidate_id,"
+            "  signer_key_id, stored_at) VALUES (?, ?, ?, ?, ?)",
+            (evidence.digest, evidence.canonical_bytes().decode("utf-8"),
+             evidence.candidate_id, evidence.signer_key_id, _utcnow()))
 
     def _migrate(self, con) -> None:
-        """Seal legacy audit rows: add chain columns, backfill digests.
+        """Seal legacy audit rows and add signed-artifact columns.
 
         Rows written before the chain existed are sealed over their
         current content — backfill makes them verifiable, it cannot
-        prove they were not already altered. New writes are always
-        chained inside the same BEGIN IMMEDIATE transaction.
+        prove they were not already altered. A legacy qualified row has
+        no decision/evidence, so the projection marks it unbacked and
+        serving fails closed until it is re-qualified with signed
+        artifacts.
+
+        A database that is *already* chained under the previous digest
+        domain is resealed only after that chain verifies end-to-end
+        against the old domain. Resealing an unverified chain would
+        launder tampering performed before the upgrade, so a broken
+        pre-migration chain refuses to open instead. Every reseal is
+        recorded in ``registry_migration`` and reported by ``verify()``.
         """
         cols = {row[1] for row in con.execute(
             "PRAGMA table_info(candidate_transition)")}
-        missing = {"prev_digest", "entry_digest"} - cols
+        wanted = {"prev_digest", "entry_digest", "evidence_refs_json",
+                  "decision_digest"}
+        missing = wanted - cols
         if not missing:
             return
+        chained = {"prev_digest", "entry_digest"} <= cols
+        selected = [
+            "seq", "candidate_id", "from_state", "to_state",
+            "actor_identity", "receipt_refs_json", "note", "committed_at",
+        ]
+        if chained:
+            selected += ["prev_digest", "entry_digest"]
+        if "evidence_refs_json" not in missing:
+            selected.append("evidence_refs_json")
+        if "decision_digest" not in missing:
+            selected.append("decision_digest")
         con.execute("BEGIN IMMEDIATE")
         try:
-            for col in missing:
+            rows = con.execute(
+                "SELECT " + ", ".join(selected)
+                + " FROM candidate_transition ORDER BY seq").fetchall()
+            if chained:
+                self._verify_pre_migration_chain(rows)
+            for col in sorted(missing):
+                default = "'[]'" if col == "evidence_refs_json" else "''"
                 con.execute(
                     f"ALTER TABLE candidate_transition"
-                    f" ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
-            rows = con.execute(
-                "SELECT seq, candidate_id, from_state, to_state,"
-                " actor_identity, receipt_refs_json, note, committed_at"
-                " FROM candidate_transition ORDER BY seq").fetchall()
+                    f" ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}")
             prev = _GENESIS
-            for (seq, cid, frm, to, actor, refs, note, at) in rows:
-                digest = _entry_digest(seq, cid, frm, to, actor,
-                                       refs, note, at, prev)
+            for row in rows:
+                values = dict(zip(selected, row))
+                erefs_json = values.get("evidence_refs_json", "[]")
+                decision_digest = values.get("decision_digest", "")
+                digest = _entry_digest(
+                    values["seq"], values["candidate_id"],
+                    values["from_state"], values["to_state"],
+                    values["actor_identity"], values["receipt_refs_json"],
+                    erefs_json, decision_digest, values["note"],
+                    values["committed_at"], prev)
                 con.execute(
                     "UPDATE candidate_transition SET prev_digest=?,"
-                    " entry_digest=? WHERE seq=?", (prev, digest, seq))
+                    " entry_digest=? WHERE seq=?", (prev, digest,
+                                                    values["seq"]))
                 prev = digest
+            con.execute(
+                "INSERT OR REPLACE INTO registry_migration"
+                " (migration, applied_at, entries, detail) VALUES (?, ?, ?, ?)",
+                ("chain-reseal-v1", _utcnow(), len(rows),
+                 "resealed_pre_migration_chain" if chained
+                 else "backfilled_pre_chain_rows"))
             con.execute("COMMIT")
         except Exception:
             _safe_rollback(con)
             raise
 
+    @staticmethod
+    def _verify_pre_migration_chain(rows) -> None:
+        """Prove a pre-migration chain is intact before resealing it."""
+        prev = _GENESIS
+        for row in rows:
+            values = dict(zip(
+                ("seq", "candidate_id", "from_state", "to_state",
+                 "actor_identity", "receipt_refs_json", "note",
+                 "committed_at", "prev_digest", "entry_digest"), row[:10]))
+            if values["prev_digest"] != prev:
+                raise CandidateError(
+                    "audit_chain_tampered:pre_migration_link_at_"
+                    + str(values["seq"]))
+            expected = _legacy_entry_digest(
+                values["seq"], values["candidate_id"], values["from_state"],
+                values["to_state"], values["actor_identity"],
+                values["receipt_refs_json"], values["note"],
+                values["committed_at"], values["prev_digest"])
+            if values["entry_digest"] != expected:
+                raise CandidateError(
+                    "audit_chain_tampered:pre_migration_row_at_"
+                    + str(values["seq"]))
+            prev = values["entry_digest"]
+
+
     def _audit(self, con, candidate_id, from_state, to_state,
-               actor_identity, receipt_refs, note) -> None:
-        import json as _json
+               actor_identity, receipt_refs, evidence_refs,
+               decision_digest, note) -> None:
         refs_json = _json.dumps(list(receipt_refs), sort_keys=True)
+        erefs_json = _json.dumps(list(evidence_refs), sort_keys=True)
         at = _utcnow()
         row = con.execute(
             "SELECT COALESCE(MAX(seq), 0) FROM candidate_transition"
@@ -365,19 +670,188 @@ class CandidateRegistry:
             "SELECT entry_digest FROM candidate_transition"
             " ORDER BY seq DESC LIMIT 1").fetchone()
         prev = tail[0] if tail is not None and tail[0] else _GENESIS
-        digest = _entry_digest(seq, candidate_id, from_state, to_state,
-                               actor_identity, refs_json, note, at, prev)
+        digest = _entry_digest(
+            seq, candidate_id, from_state, to_state, actor_identity,
+            refs_json, erefs_json, decision_digest, note, at, prev)
         con.execute(
             "INSERT INTO candidate_transition"
             " (seq, candidate_id, from_state, to_state, actor_identity,"
-            "  receipt_refs_json, note, committed_at, prev_digest,"
-            "  entry_digest)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  receipt_refs_json, evidence_refs_json, decision_digest,"
+            "  note, committed_at, prev_digest, entry_digest)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (seq, candidate_id, from_state, to_state, actor_identity,
-             refs_json, note, at, prev, digest))
+             refs_json, erefs_json, decision_digest, note, at, prev, digest))
 
     # ------------------------------------------------------------------ #
-    # reads — digest re-verified on every read; corrupt rows fail closed
+    # state projection — the state column is never trusted
+    # ------------------------------------------------------------------ #
+    def _project(self, con=None) -> tuple[dict[str, str], dict[str, str]]:
+        """Fold the audit chain and verify the committed state columns.
+
+        Structural checks only: chain integrity, legal edge continuity,
+        column agreement, and the presence of the signed-artifact rows a
+        serving-state transition cites. Signature/binding checks live in
+        ``_verify_serving_basis`` so writers can append without needing
+        evaluator custody. Serving transitions that cannot be backed —
+        legacy rows with no decision digest, or rows whose cited
+        decision/evidence is absent — are returned as ``unbacked`` with
+        a reason. They are excluded from serving but stay writable, so a
+        takedown under a signed decision remains possible; reads of the
+        affected candidate fail closed through ``_verify_serving_basis``.
+        """
+        con = con or self._conn()
+        rows = con.execute(
+            "SELECT seq, candidate_id, from_state, to_state,"
+            " actor_identity, receipt_refs_json, evidence_refs_json,"
+            " decision_digest, note, committed_at, prev_digest, entry_digest"
+            " FROM candidate_transition ORDER BY seq").fetchall()
+        self._verify_chain(rows)
+        states: dict[str, str] = {}
+        unbacked: dict[str, str] = {}
+        for (seq, cid, frm, to, actor, refs, erefs, dd,
+             note, at, prev, dg) in rows:
+            current = states.get(cid, "")
+            if frm != current:
+                raise CandidateError(
+                    f"state_projection_invalid:link_at_{seq}")
+            if current == "":
+                if to != "proposed":
+                    raise CandidateError(
+                        f"state_projection_invalid:first_edge_at_{seq}")
+            elif to not in _EDGES.get(current, frozenset()):
+                raise CandidateError(
+                    f"state_projection_invalid:edge_at_{seq}")
+            if to in SERVING_STATES:
+                if not dd:
+                    unbacked[cid] = "state_not_decision_backed"
+                else:
+                    # A decision-backed serving transition supersedes an
+                    # earlier unbacked one (e.g. remediating a legacy
+                    # qualification by revoking it under a signed decision).
+                    unbacked.pop(cid, None)
+                    if con.execute(
+                        "SELECT 1 FROM candidate_decision WHERE decision_digest=?",
+                        (dd,),
+                    ).fetchone() is None:
+                        unbacked[cid] = "decision_missing"
+                    elif to == "qualified":
+                        refs_list = _refs(erefs)
+                        if not refs_list:
+                            unbacked[cid] = "state_not_evidence_backed"
+                        elif any(
+                            con.execute(
+                                "SELECT 1 FROM candidate_evidence"
+                                " WHERE evidence_digest=?", (ref,),
+                            ).fetchone() is None
+                            for ref in refs_list
+                        ):
+                            unbacked[cid] = "evidence_missing"
+            states[cid] = to
+        candidate_rows = con.execute(
+            "SELECT candidate_id, state FROM candidate").fetchall()
+        known = {cid for cid, _ in candidate_rows}
+        for cid in states:
+            if cid not in known:
+                raise CandidateError(f"candidate_row_missing:{cid}")
+        for cid, state in candidate_rows:
+            if states.get(cid, "") != state:
+                raise CandidateError(f"state_projection_drift:{cid}")
+        return states, unbacked
+
+    def _verify_serving_basis(self, candidate_id: str, state: str,
+                              con) -> dict:
+        """Authenticate the signed artifacts behind a serving state."""
+        if self._decision_authority is None or self._evidence_authority is None:
+            raise CandidateError("serving_integrity_unavailable")
+        edge = "qualified" if state == "qualified" else "revoked"
+        row = con.execute(
+            "SELECT candidate_digest, candidate_json FROM candidate"
+            " WHERE candidate_id=?", (candidate_id,)).fetchone()
+        if row is None:
+            raise CandidateError("candidate_missing")
+        record = self._row_to_record(row)
+        trow = con.execute(
+            "SELECT actor_identity, receipt_refs_json, evidence_refs_json,"
+            " decision_digest FROM candidate_transition"
+            " WHERE candidate_id=? AND to_state=? ORDER BY seq DESC LIMIT 1",
+            (candidate_id, edge)).fetchone()
+        if trow is None:
+            raise CandidateError(f"state_not_decision_backed:{candidate_id}")
+        actor, refs_json, erefs_json, dd = trow
+        refs = tuple(_refs(refs_json))
+        erefs = tuple(_refs(erefs_json))
+        decision = self._load_decision(con, dd)
+        try:
+            self._decision_authority.check(
+                decision, candidate=record,
+                from_state="evaluating" if edge == "qualified" else "qualified",
+                to_state=edge, receipt_refs=refs, evidence_refs=erefs,
+                actor_identity=actor)
+        except CandidateAuthorityError as exc:
+            raise CandidateError(
+                f"decision_not_authenticated:{exc.reason}") from exc
+        if edge != "qualified":
+            return {"decision_digest": dd, "receipt_refs": refs,
+                    "evidence_refs": erefs}
+        if self._expected_protocol is None:
+            # Qualification requires a pinned protocol; a serving replica
+            # that cannot state the expected protocol cannot verify the
+            # evidence it is about to serve.
+            raise CandidateError("serving_protocol_unpinned")
+        covered: set[str] = set()
+        for ref in erefs:
+            evidence = self._load_evidence(con, ref)
+            try:
+                self._evidence_authority.check(
+                    evidence, candidate=record, receipt_refs=refs,
+                    partition=QUALIFICATION_PARTITION)
+            except CandidateAuthorityError as exc:
+                raise CandidateError(
+                    f"evidence_not_authenticated:{exc.reason}") from exc
+            if evidence.evaluation_protocol_digest != self._expected_protocol:
+                raise CandidateError("evidence_protocol_mismatch")
+            covered.update(evidence.receipt_refs)
+        if not set(refs) <= covered:
+            raise CandidateError("evidence_receipt_not_bound")
+        return {"decision_digest": dd, "receipt_refs": refs,
+                "evidence_refs": erefs}
+
+    @staticmethod
+    def _load_decision(con, digest: str) -> CandidateDecisionV1:
+        row = con.execute(
+            "SELECT decision_json FROM candidate_decision"
+            " WHERE decision_digest=?", (digest,)).fetchone()
+        if row is None:
+            raise CandidateError(f"decision_missing:{digest[:12]}")
+        try:
+            decision = CandidateDecisionV1.from_dict(
+                loads_json(row[0].encode("utf-8")))
+        except ContractError as exc:
+            raise CandidateError(
+                f"decision_tampered:{digest[:12]}") from exc
+        if decision.digest != digest:
+            raise CandidateError(f"decision_tampered:{digest[:12]}")
+        return decision
+
+    @staticmethod
+    def _load_evidence(con, digest: str) -> CandidateEvidenceV1:
+        row = con.execute(
+            "SELECT evidence_json FROM candidate_evidence"
+            " WHERE evidence_digest=?", (digest,)).fetchone()
+        if row is None:
+            raise CandidateError(f"evidence_missing:{digest[:12]}")
+        try:
+            evidence = CandidateEvidenceV1.from_dict(
+                loads_json(row[0].encode("utf-8")))
+        except ContractError as exc:
+            raise CandidateError(
+                f"evidence_tampered:{digest[:12]}") from exc
+        if evidence.digest != digest:
+            raise CandidateError(f"evidence_tampered:{digest[:12]}")
+        return evidence
+
+    # ------------------------------------------------------------------ #
+    # reads — digest + state projection re-verified; corrupt rows fail closed
     # ------------------------------------------------------------------ #
     def _row_to_record(self, row) -> CandidateV1:
         record = CandidateV1.from_dict(loads_json(row[1].encode("utf-8")))
@@ -387,66 +861,140 @@ class CandidateRegistry:
         return record
 
     def get(self, candidate_id: str) -> tuple[CandidateV1, str]:
-        row = self._conn().execute(
-            "SELECT candidate_digest, candidate_json, state FROM candidate"
-            " WHERE candidate_id=?", (candidate_id,),
-        ).fetchone()
-        if row is None:
-            raise CandidateError("candidate_missing")
-        return self._row_to_record(row[:2]), row[2]
+        with self._read() as con:
+            states, unbacked = self._project(con)
+            row = con.execute(
+                "SELECT candidate_digest, candidate_json FROM candidate"
+                " WHERE candidate_id=?", (candidate_id,),
+            ).fetchone()
+            if row is None or candidate_id not in states:
+                raise CandidateError("candidate_missing")
+            record = self._row_to_record(row)
+            state = states[candidate_id]
+            if state == "qualified":
+                if candidate_id in unbacked:
+                    raise CandidateError(
+                        f"{unbacked[candidate_id]}:{candidate_id}")
+                self._verify_serving_basis(candidate_id, state, con)
+            return record, state
 
     def by_state(self, state: str) -> list[CandidateV1]:
         if state not in STATES:
             raise ContractError(f"unknown candidate state: {state}")
-        rows = self._conn().execute(
-            "SELECT candidate_digest, candidate_json FROM candidate"
-            " WHERE state=? ORDER BY candidate_id", (state,),
-        ).fetchall()
-        return [self._row_to_record(r) for r in rows]
+        if state == "qualified":
+            return [cand for cand, _ in self.qualified_bases()]
+        with self._read() as con:
+            states, _ = self._project(con)
+            rows = con.execute(
+                "SELECT candidate_id, candidate_digest, candidate_json"
+                " FROM candidate ORDER BY candidate_id").fetchall()
+            return [self._row_to_record(r[1:]) for r in rows
+                    if states.get(r[0]) == state]
 
     def qualified(self) -> list[CandidateV1]:
-        return self.by_state("qualified")
+        return [cand for cand, _ in self.qualified_bases()]
+
+    def qualified_bases(self) -> list[tuple[CandidateV1, dict]]:
+        """Qualified records with their authenticated basis, in one fold.
+
+        Serving needs both the record and the signed handles behind it
+        (revocation checks). Folding once avoids re-verifying the whole
+        catalog and every signature once per candidate.
+        """
+        with self._read() as con:
+            states, unbacked = self._project(con)
+            stale = sorted(cid for cid, folded in states.items()
+                           if folded == "qualified" and cid in unbacked)
+            if stale:
+                cid = stale[0]
+                raise CandidateError(f"{unbacked[cid]}:{cid}")
+            rows = con.execute(
+                "SELECT candidate_id, candidate_digest, candidate_json"
+                " FROM candidate ORDER BY candidate_id").fetchall()
+            return [
+                (self._row_to_record(r[1:]),
+                 self._verify_serving_basis(r[0], "qualified", con))
+                for r in rows if states.get(r[0]) == "qualified"]
 
     def state_of(self, candidate_id: str) -> str:
         return self.get(candidate_id)[1]
 
-    def audit(self, candidate_id: str | None = None) -> list[dict]:
-        """Return the transition log after verifying the hash chain.
+    def serving_basis(self, candidate_id: str) -> dict:
+        """Signed handles behind a qualified candidate (for revocation checks)."""
+        with self._read() as con:
+            states, unbacked = self._project(con)
+            state = states.get(candidate_id)
+            if state != "qualified" or candidate_id in unbacked:
+                raise CandidateError("candidate_not_qualified")
+            return self._verify_serving_basis(candidate_id, state, con)
 
-        Every row's ``entry_digest`` is recomputed from stored content and
-        its ``prev_digest`` link; a rewritten, reordered, deleted or
-        truncated row raises ``audit_chain_tampered`` — history integrity
-        is checked on every read, same as record integrity.
-        """
-        import json as _json
-        rows = self._conn().execute(
-            "SELECT seq, candidate_id, from_state, to_state,"
-            " actor_identity, receipt_refs_json, note, committed_at,"
-            " prev_digest, entry_digest"
-            " FROM candidate_transition ORDER BY seq").fetchall()
-        # The chain is only meaningful end-to-end: verify the full log,
-        # then filter — a filtered read must never skip verification.
-        self._verify_chain(rows)
-        out = []
-        for seq, cid, frm, to, actor, refs, note, at, prev, dg in rows:
-            if candidate_id is not None and cid != candidate_id:
-                continue
-            out.append({
-                "seq": seq, "candidate_id": cid, "from_state": frm,
-                "to_state": to, "actor_identity": actor,
-                "receipt_refs": _json.loads(refs), "note": note,
-                "committed_at": at, "entry_digest": dg})
-        return out
+    def audit(self, candidate_id: str | None = None) -> list[dict]:
+        """Return the transition log after verifying the hash chain."""
+        with self._read() as con:
+            rows = con.execute(
+                "SELECT seq, candidate_id, from_state, to_state,"
+                " actor_identity, receipt_refs_json, evidence_refs_json,"
+                " decision_digest, note, committed_at,"
+                " prev_digest, entry_digest"
+                " FROM candidate_transition ORDER BY seq").fetchall()
+            # The chain is only meaningful end-to-end: verify the full log,
+            # then filter — a filtered read must never skip verification.
+            self._verify_chain(rows)
+            out = []
+            for (seq, cid, frm, to, actor, refs, erefs, dd,
+                 note, at, prev, dg) in rows:
+                if candidate_id is not None and cid != candidate_id:
+                    continue
+                out.append({
+                    "seq": seq, "candidate_id": cid, "from_state": frm,
+                    "to_state": to, "actor_identity": actor,
+                    "receipt_refs": _refs(refs),
+                    "evidence_refs": _refs(erefs),
+                    "decision_digest": dd, "note": note,
+                    "committed_at": at, "entry_digest": dg})
+            return out
+
+    def verify(self) -> dict:
+        """Replay the whole catalog: chain, projection, serving basis."""
+        with self._read() as con:
+            rows = con.execute(
+                "SELECT entry_digest FROM candidate_transition"
+                " ORDER BY seq").fetchall()
+            head = rows[-1][0] if rows else _GENESIS
+            migrations = [
+                {"migration": migration, "applied_at": at,
+                 "entries": entries, "detail": detail}
+                for migration, at, entries, detail in con.execute(
+                    "SELECT migration, applied_at, entries, detail"
+                    " FROM registry_migration ORDER BY migration")]
+            problems: list[str] = []
+            try:
+                states, unbacked = self._project(con)
+            except CandidateError as exc:
+                return {"ok": False, "entries": len(rows), "head": head,
+                        "problems": [str(exc)], "migrations": migrations}
+            for cid in sorted(unbacked):
+                problems.append(f"{unbacked[cid]}:{cid}")
+            for cid, state in states.items():
+                if state in SERVING_STATES and cid not in unbacked:
+                    try:
+                        self._verify_serving_basis(cid, state, con)
+                    except CandidateError as exc:
+                        problems.append(str(exc))
+            return {"ok": not problems, "entries": len(rows),
+                    "head": head, "problems": problems,
+                    "migrations": migrations}
 
     @staticmethod
     def _verify_chain(rows) -> None:
         prev = _GENESIS
-        for seq, cid, frm, to, actor, refs, note, at, p, dg in rows:
+        for (seq, cid, frm, to, actor, refs, erefs, dd,
+             note, at, p, dg) in rows:
             if p != prev:
                 raise CandidateError(
                     f"audit_chain_tampered:link_at_{seq}")
-            expected = _entry_digest(seq, cid, frm, to, actor,
-                                     refs, note, at, p)
+            expected = _entry_digest(seq, cid, frm, to, actor, refs, erefs,
+                                     dd, note, at, p)
             if dg != expected or not _HEX.fullmatch(dg):
                 raise CandidateError(
                     f"audit_chain_tampered:row_at_{seq}")

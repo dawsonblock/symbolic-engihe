@@ -32,6 +32,17 @@ The contracts cover:
   counterexamples, evidence, status, and expiry.
 - `PromotionDecisionV1`: candidate/protocol/receipt digests, actor, transition,
   policy version, rollback reference, and signature/authorization fields.
+- `CandidateV1`: typed learning artifact (six kinds), content digest over the
+  typed payload, repository scope, applicability preconditions, known
+  counterexamples, and lineage. It carries no serving state.
+- `CandidateEvidenceV1`: evaluator-signed binding of receipt digests to one
+  exact candidate record/content digest on a declared partition under a
+  declared evaluation-protocol digest. A receipt alone is not a
+  qualification handle.
+- `CandidateDecisionV1`: operator-signed authorization for one exact
+  candidate transition (from-state, to-state, candidate digest, cited
+  receipts/evidence, actor identity, one-use nonce). A decision for another
+  candidate or edge cannot authorize this one.
 - `GuidanceRequestV1` and `GuidanceV1`: bounded context and a recommendation or
   abstention with exact evidence/policy references and at most three IDs.
 

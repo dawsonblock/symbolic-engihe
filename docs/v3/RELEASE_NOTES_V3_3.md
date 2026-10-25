@@ -9,8 +9,11 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 
 - **Typed candidate plane** — `CandidateV1` (six artifact types) plus
   `CandidateRegistry`: WAL sqlite, role-gated transitions,
-  operator-only qualification with mandatory bound receipts,
-  append-only transition audit, digest-verified reads.
+  operator-only qualification requiring an authenticated pass receipt,
+  an evaluator-signed `CandidateEvidenceV1` binding those receipts to
+  the exact candidate, and an operator-signed `CandidateDecisionV1`;
+  append-only transition audit, digest-verified reads, and an
+  audit-derived state projection that refuses direct state flips.
 - **Experience memory** — `ExperienceRecordV1`, `MemoryStore`
   (episode-replay rejection, tamper-proof), `induce_candidate`,
   gated `retrieve_memories` with abstention.
@@ -24,9 +27,17 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
   sizing, abstention/negative-transfer metrics.
 - **Governed serving** — `GovernedServingGateway`: registry-resolved
   repo identity, scope/revocation/applicability/counterexample gates
-  with per-candidate rejection audit; advisory-only output.
+  with per-candidate rejection audit; serve-time re-authentication of
+  the decision/evidence behind every qualified candidate; advisory-only
+  output; outcomes require an authenticated receipt for the served task.
 - **vskill-style packaging** — export/verify/import of skill bundles;
   imports land at PROPOSED regardless of claimed status.
+- **Migration and revocation hardening** — upgrading a v3.3 registry
+  reseals its audit chain only after the old chain verifies against the
+  old digest domain (recorded in `registry_migration`); a missing
+  decision/evidence row excludes the candidate instead of freezing the
+  catalog; expiry is compared as parsed instants; a revocation naming
+  the decision suppresses serving.
 - **Deterministic campaign CLI** — `tools/governed_campaign.py`
   produces `campaign_evidence.json`: A=0, B=2, C=2, D=0, E=2 on
   unseen-repo holdouts (machinery evidence).
@@ -42,9 +53,10 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 ## Verification
 
 - `PYTHONPATH=src python3 -m pytest tests/ -q`
-- **741 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
+- **777 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
   composition, serving, packaging, governed-eval, campaign and
-  release-binding tests).- Every module compiles (`python3 -m py_compile`).
+  release-binding tests, plus authority/evidence-binding and serving
+  integrity regressions).- Every module compiles (`python3 -m py_compile`).
 - `python3 tools/verify_release.py release/SIS-v3.3.0-GOVERNED-LEARNING.zip`
   verifies the archive against its embedded manifest; the build also
   re-hashes every member against the source tree it came from
@@ -52,6 +64,20 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 
 ## Post-build review repairs
 
+- **Authority/evidence binding.** Candidate qualification used to
+  authenticate a pass receipt but not its relationship to the
+  candidate; one arbitrary holdout receipt could qualify every skill
+  variant. Qualification now requires an evaluator-signed
+  `CandidateEvidenceV1` naming the exact candidate, holdout partition
+  and protocol, plus an operator-signed `CandidateDecisionV1` for the
+  exact edge. Both campaigns run a per-candidate holdout probe.
+- **Serving integrity.** `qualified`/`revoked` were mutable columns
+  gated by a caller-supplied role string. The registry now derives
+  state from the hash-chained transition log, re-authenticates the
+  signed decision/evidence on every serving read, rejects direct SQL
+  flips (`state_projection_drift`), consumes decision nonces atomically,
+  and excludes legacy unbacked qualifications. `record_outcome`
+  requires an authenticated receipt with the same task and outcome.
 - **Release binding.** The previously shipped ZIP predated the hardening
   commit, and the build could embed the previous ZIP inside the next one
   because `release/` was inventoried. `release/` is now out-of-band:

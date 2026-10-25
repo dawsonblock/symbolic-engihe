@@ -15,13 +15,24 @@ Isolation invariants:
   permission, alter sandbox/policy, or touch authority.
 - Serving requires a resolvable repository identity. A self-declared
   ``repository_id`` that the trusted registry cannot resolve abstains.
+- Catalog integrity is re-derived on every serve. The registry folds
+  the hash-chained transition log, requires the committed state column
+  to match that projection, and re-authenticates the operator decision
+  and evaluator evidence binding behind every qualified candidate. A
+  direct state flip, a forged decision/evidence row, or a legacy
+  unbacked qualification abstains with ``catalog_unavailable`` and an
+  audited ``integrity_error`` — never a partial serve.
 - Revoked, tampered, malformed, out-of-scope, family-mismatched (when
-  ``task_family`` is declared) or inapplicable candidates are excluded
-  individually (each rejection is counted and auditable); nothing
-  silently degrades to permissive.
+  ``task_family`` is declared), basis-revoked (a revocation naming the
+  candidate's receipt, evidence binding or decision) or inapplicable
+  candidates are excluded individually (each rejection is counted and
+  auditable); nothing silently degrades to permissive.
 - ``decision`` remains honest: ``recommend`` only when the strict
   procedure path qualifies; candidate-only advice rides along as
   advisory checks under an abstention decision with a reason.
+- Serving outcomes bind a *signature-authenticated* receipt for the
+  same task and outcome to the exact guidance digest this gateway
+  delivered; a bare digest is not evidence.
 - ``target_task_family``/``target_agent`` are provenance fields; the
   optional ``task_family`` argument turns the family field into an
   enforced gate for deployments that want it.
@@ -31,7 +42,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Mapping
 
-from .candidates import CandidateRegistry
+from .candidates import CandidateError, CandidateRegistry
 from .composition import compose_guidance
 from .contracts import CandidateV1, ContractError, GuidanceRequestV1, GuidanceV1, canonical_digest
 from .guidance import _abstain
@@ -62,7 +73,7 @@ def _unique_digests(digests) -> list[str]:
 
 
 class GovernedServingGateway:
-    """Scope-, digest-, revocation- and applicability-gated candidate serving."""
+    """Decision/evidence-authenticated, scope- and revocation-gated serving."""
 
     def __init__(
         self,
@@ -75,6 +86,7 @@ class GovernedServingGateway:
         max_steps: int = 12,
         token_budget: int = 400,
         audit_sink: Callable[[Mapping], None] | None = None,
+        receipt_authority: Callable[[str], object] | None = None,
     ) -> None:
         self._candidates = registry
         self._registry = repository_registry
@@ -84,6 +96,9 @@ class GovernedServingGateway:
         self._max_steps = max_steps
         self._token_budget = token_budget
         self._audit = audit_sink
+        # Outcomes may only cite a receipt the trusted evaluator boundary
+        # resolves and authenticates; a bare digest is not evidence.
+        self._receipt_authority = receipt_authority
         # task_id -> digest of the guidance actually served, so an outcome
         # can only be attached to guidance this gateway delivered.
         self._served: dict[str, str] = {}
@@ -200,6 +215,16 @@ class GovernedServingGateway:
                     max(1, len(s) // 4) for s in checks)))
             self._emit(served_map, out)
             return out
+        except CandidateError as exc:
+            # The registry re-authenticates the audit chain, state
+            # projection and signed serving basis on every read. A failure
+            # here means the catalog cannot be trusted — abstain, never
+            # serve a subset that merely happens to parse.
+            served_map["integrity_error"] = str(exc)
+            out = _abstain("catalog_unavailable", (
+                "Candidate catalog integrity could not be verified.",))
+            self._emit(served_map, out)
+            return out
         except (ContractError, ValueError, TypeError):
             out = _abstain("catalog_unavailable", (
                 "Serving inputs could not be validated.",))
@@ -221,11 +246,13 @@ class GovernedServingGateway:
         out: list[CandidateV1] = []
         requester = self._registry.resolve(requester_id)
         family = getattr(requester, "family_id", None)
-        for cand in self._candidates.qualified():
+        for cand, basis in self._candidates.qualified_bases():
             digest = cand.digest
             reject = None
             if digest in revoked:
                 reject = "revoked"
+            elif revoked and self._basis_revoked(basis, revoked):
+                reject = "evidence_revoked"
             elif not self._scope_covers(cand, requester_id, family):
                 reject = "out_of_scope"
             elif task_family is not None and \
@@ -245,6 +272,20 @@ class GovernedServingGateway:
                 continue
             out.append(cand)
         return out
+
+    @staticmethod
+    def _basis_revoked(basis: Mapping, revoked) -> bool:
+        """True when a committed revocation names this candidate's basis.
+
+        The decision is the authorization artifact; a revocation that
+        names it must suppress serving exactly like one that names the
+        receipts or the evidence binding.
+        """
+        handles = set(basis.get("receipt_refs", ())) \
+            | set(basis.get("evidence_refs", ()))
+        if basis.get("decision_digest"):
+            handles.add(basis["decision_digest"])
+        return bool(handles & set(revoked))
 
     def _scope_covers(self, cand: CandidateV1, requester_id: str,
                       family_id) -> bool:
@@ -272,9 +313,9 @@ class GovernedServingGateway:
         """Bind the outcome that followed to the guidance that was served.
 
         The digest must be the guidance this gateway actually delivered
-        for ``task_id``; an outcome cannot be attached to guidance that
-        was never served, and the receipt reference must be a real
-        SHA-256 handle. Durable correlation lives in the audit sink.
+        for ``task_id``; the receipt must resolve through the trusted
+        evaluator boundary, authenticate, carry the same task and the
+        same outcome. An unauthenticated digest is not an outcome.
         """
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("task_id must be a nonempty string")
@@ -286,6 +327,18 @@ class GovernedServingGateway:
             raise ValueError("unknown outcome: " + repr(outcome))
         if self._served.get(task_id) != served_digest:
             raise ValueError("served_guidance_unknown")
+        if self._receipt_authority is None:
+            raise ValueError("receipt_authority_required")
+        try:
+            receipt = self._receipt_authority(receipt_digest)
+        except Exception as exc:
+            raise ValueError("receipt_unauthenticated") from exc
+        if receipt is None:
+            raise ValueError("receipt_unauthenticated")
+        if getattr(receipt, "task_id", None) != task_id:
+            raise ValueError("receipt_task_mismatch")
+        if getattr(receipt, "outcome", None) != outcome:
+            raise ValueError("receipt_outcome_mismatch")
         self._audit_record({
             "schema_version": 1,
             "kind": "serving_outcome",
@@ -299,7 +352,7 @@ class GovernedServingGateway:
         task_id = served_map.get("task_id")
         if isinstance(task_id, str) and task_id:
             self._served[task_id] = guidance.digest
-        self._audit_record({
+        record = {
             "schema_version": 1,
             "kind": "served_guidance",
             "task_id": task_id,
@@ -309,7 +362,10 @@ class GovernedServingGateway:
             "rejections": served_map.get("rejections", []),
             "resolutions": served_map.get("resolutions", []),
             "served_digest": guidance.digest,
-        })
+        }
+        if served_map.get("integrity_error"):
+            record["integrity_error"] = served_map["integrity_error"]
+        self._audit_record(record)
 
     def _audit_record(self, record: dict) -> None:
         if self._audit is not None:

@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -28,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sis.v3.authority_db import AuthorityDB
 from sis.v3.benchmark import BenchmarkHarness, BudgetCaps, report_digest
+from sis.v3.candidate_authority import (CandidateDecisionAuthority,
+                                        CandidateEvidenceAuthority)
 from sis.v3.candidates import CandidateRegistry
 from sis.v3.contracts import (ExperienceRecordV1, GuidanceRequestV1,
                               GuidanceV1, ProcedureRecordV1,
@@ -39,12 +40,12 @@ from sis.v3.evolution import (EvolutionBudget, SkillOptimizer,
                               specialize_step)
 from sis.v3.governed_eval import (EvaluationPartition,
                                   assert_partition_disjoint,
-                                  preregister, run_governed_evaluation,
+                                  preregister, run_candidate_probe,
+                                  run_governed_evaluation,
                                   required_sample_size)
-from sis.v3.memory import (MemoryStore, induce_candidate, retrieve_memories,
+from sis.v3.memory import (MemoryStore, induce_candidate,
                            verify_experience_evidence)
 from sis.v3.promotion import PromotionController, operator_token_digest
-from sis.v3.retrieval import RetrievalContext
 from sis.v3.runner import LocalSubprocessExecutor, tree_digest
 from sis.v3.secure_guidance import StrictGuidanceGateway
 from sis.v3.serving import GovernedServingGateway
@@ -199,11 +200,6 @@ def main() -> int:
             raise ValueError("receipt_signature_invalid")
         return receipt
 
-    candidates = CandidateRegistry(
-        root / "candidates.db", receipt_authority=authenticated_receipt)
-    memory = MemoryStore(root / "memory.db")
-    audit_log: list[dict] = []
-
     statements: dict = {}
     dev = [build_task(n, root, statements, verifier, registry, reg_seed)
            for n in DEV_TASKS]
@@ -222,6 +218,23 @@ def main() -> int:
         sample_size=required_sample_size(0.7, 0.3),
         budget={"wall_seconds": 120, "token_budget": 100_000,
                 "tool_budget": 1000})
+
+    # Qualification needs three independent signatures: the evaluator
+    # receipt, the evaluator's evidence binding to the exact candidate,
+    # and the operator's transition decision. Test-custody keys here.
+    op_seed, op_pub, op_key = evaluator_keypair()
+    evidence_authority = CandidateEvidenceAuthority(
+        trusted_evaluator_keys={eval_key: eval_pub.hex()})
+    decision_authority = CandidateDecisionAuthority(
+        trusted_operator_keys={op_key: op_pub.hex()})
+    candidates = CandidateRegistry(
+        root / "candidates.db", receipt_authority=authenticated_receipt,
+        evidence_authority=evidence_authority,
+        decision_authority=decision_authority,
+        expected_evaluation_protocol_digest=protocol["protocol_digest"])
+    memory = MemoryStore(root / "memory.db")
+    audit_log: list[dict] = []
+
     harness = BenchmarkHarness(verifier=verifier, work_root=root / "work")
     budget = BudgetCaps(wall_seconds=120, token_budget=100_000,
                         tool_budget=1000)
@@ -357,7 +370,8 @@ def main() -> int:
         grant_authority=grants)
     gateway = GovernedServingGateway(
         candidates, repository_registry=registry, strict_gateway=strict,
-        audit_sink=audit_log.append)
+        audit_sink=audit_log.append,
+        receipt_authority=authenticated_receipt)
 
     # ---- phase 3: qualify candidates on holdout evidence --------------- #
     # Evaluate candidates on holdout via the harness arms, then qualify
@@ -412,34 +426,71 @@ def main() -> int:
         served_map=served_map,
         arms=("A", "B", "C", "D", "E"))
 
-    # qualification decisions: qualify candidates whose arm evidence
-    # shows wins, binding the real evaluation receipts
+    # Qualification evidence must name the candidate it qualifies. The
+    # five-arm holdout receipts are collective (a pool was served), so
+    # each candidate gets its own sealed-holdout probe: guidance composed
+    # from that candidate alone, scored by the same independent verifier
+    # under the same disjointness and protocol-conformance gates.
+    candidate_by_id = {c.candidate_id: c
+                       for c in mem_candidates + skill_candidates}
     qualified = []
+    qualification_evidence = []
     for cand in mem_candidates + skill_candidates:
         candidates.transition(cand.candidate_id, "evaluating",
                               actor_role="evaluator")
-    # Harvest the signed holdout receipts the harness already issued —
-    # qualification evidence is the real evaluated outcome, not a re-run.
-    holdout_receipts = {}
-    for entry in eval_report["per_task"]:
-        for arm_name, arm in entry["arms"].items():
-            if arm.get("receipt_digest"):
-                holdout_receipts[arm["receipt_digest"]] = verifier.load_receipt(
-                    arm["receipt_digest"])
-    # Qualification evidence comes only from holdout receipts that this
-    # verifier issued and signed as a pass — never the synthetic receipts
-    # used for the authority demonstration above.
-    win_digests = tuple(sorted(
-        d for d, r in holdout_receipts.items() if r.outcome == "pass"))[:2]
-    if not win_digests:
-        raise SystemExit(
-            "no verified holdout pass receipts; refusing qualification")
-    for cand in mem_candidates + skill_candidates:
-        candidates.qualify(cand.candidate_id, actor_role="operator",
-                           actor_identity="campaign-operator",
-                           receipt_refs=win_digests[:1],
-                           note="holdout-qualified")
+        composed = compose_guidance([cand], token_budget=600, max_steps=12)
+        if not composed.steps:
+            qualification_evidence.append({
+                "candidate_id": cand.candidate_id,
+                "status": "no_guidance"})
+            continue
+        guidance = _measure_guidance(composed)
+        probe = run_candidate_probe(
+            harness, [(e, r) for e, r, _ in holdout],
+            lambda ctx: scripted_agent(ctx, tasks=TASKS),
+            budget=budget, protocol=protocol,
+            learned_repo_digests=[d[2] for d in dev],
+            context_provider=lambda t, a, g=guidance: g)
+        conformance = probe["governed"]["conformance"]
+        pass_receipts = []
+        for entry in probe["per_task"]:
+            arm = (entry.get("arms") or {}).get("E") or {}
+            digest = arm.get("receipt_digest")
+            if digest and arm.get("outcome") == "pass":
+                pass_receipts.append(verifier.load_receipt(digest))
+        if not pass_receipts:
+            qualification_evidence.append({
+                "candidate_id": cand.candidate_id,
+                "status": "no_candidate_pass_evidence",
+                "probe_conformance": conformance})
+            continue
+        receipt_refs = tuple(dict.fromkeys(r.digest for r in pass_receipts))
+        evidence = evidence_authority.issue(
+            seed=eval_seed, candidate=cand, receipt_refs=receipt_refs,
+            evaluation_protocol_digest=protocol["protocol_digest"],
+            partition="holdout", evaluator_identity="campaign-evaluator",
+            signer_key_id=eval_key)
+        decision = decision_authority.issue(
+            seed=op_seed, candidate=cand, from_state="evaluating",
+            to_state="qualified", actor_identity="campaign-operator",
+            receipt_refs=receipt_refs, evidence_refs=(evidence.digest,),
+            signer_key_id=op_key)
+        candidates.qualify(
+            cand.candidate_id, actor_role="operator",
+            actor_identity="campaign-operator", receipt_refs=receipt_refs,
+            evidence_refs=(evidence.digest,), decision_ref=decision.digest,
+            note="candidate-specific holdout evidence")
         qualified.append(cand.candidate_id)
+        qualification_evidence.append({
+            "candidate_id": cand.candidate_id, "status": "qualified",
+            "receipt_refs": list(receipt_refs),
+            "evidence_digest": evidence.digest,
+            "decision_digest": decision.digest,
+            "probe_conformance": conformance})
+    if not qualified:
+        raise SystemExit(
+            "no candidate had its own verified holdout pass evidence; "
+            "refusing qualification")
 
     # ---- phase 4: governed serving + revocation demonstration ---------- #
     served = []
@@ -466,9 +517,15 @@ def main() -> int:
                        "checks": list(g.helpful_next_checks),
                        "outcome_receipt": arm_e.get("receipt_digest")})
     revoked = qualified[0] if qualified else None
+    revoke_decision = None
     if revoked:
+        revoke_decision = decision_authority.issue(
+            seed=op_seed, candidate=candidate_by_id[revoked],
+            from_state="qualified", to_state="revoked",
+            actor_identity="campaign-operator", signer_key_id=op_key)
         candidates.revoke(revoked, actor_role="operator",
                           actor_identity="campaign-operator",
+                          decision_ref=revoke_decision.digest,
                           note="demonstration revocation")
         req = GuidanceRequestV1(
             schema_version=1, task_id=holdout[0][0].task_id,
@@ -508,6 +565,10 @@ def main() -> int:
         "registry": {
             "qualified": qualified,
             "revoked": [revoked] if revoked else [],
+            "qualification_evidence": qualification_evidence,
+            "revocation_decision": (revoke_decision.digest
+                                    if revoke_decision else None),
+            "verify": candidates.verify(),
             "audit": candidates.audit(),
         },
         "served": served,

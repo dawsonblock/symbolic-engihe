@@ -17,10 +17,16 @@ ExperienceRecordV1  --[learner]-->    MemoryStore     (dedup, tamper-proof)
 SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
                                       |
                                   EVALUATING --[evaluator]--> dev/holdout
-                                  receipts --[operator]------> QUALIFIED
+                                  receipts + CandidateEvidenceV1
+                                  (binds receipts to the exact candidate)
+                                      |
+                                  CandidateDecisionV1 --[operator]--> QUALIFIED
+                                  (binds the exact serving-state edge)
                                       |
                            GovernedServingGateway
-                           (scope + revocation + applicability +
+                           (re-derives state from the audit chain;
+                            re-authenticates decision + evidence;
+                            scope + revocation + applicability +
                             counterexample + composition budget)
                                       |
                            GuidanceV1 advisory channel --> agent
@@ -30,13 +36,14 @@ SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
 
 | module | role |
 |---|---|
-| `candidates.py` | `CandidateRegistry`: WAL sqlite, role-gated state machine, append-only transition audit, digest-verified reads |
-| `contracts.py` | `CandidateV1`, `ExperienceRecordV1` records (canonical digests, bounded validation) |
+| `candidates.py` | `CandidateRegistry`: WAL sqlite, role-gated state machine, append-only transition audit, digest-verified reads, signed-evidence/decision-gated serving state, audit-derived state projection, verified pre-migration chain reseal (recorded in `registry_migration`) |
+| `candidate_authority.py` | `CandidateEvidenceAuthority` (evaluator-signed receipt→candidate binding) and `CandidateDecisionAuthority` (operator-signed exact-edge decision), both Ed25519 |
+| `contracts.py` | `CandidateV1`, `CandidateEvidenceV1`, `CandidateDecisionV1`, `ExperienceRecordV1` records (canonical digests, bounded validation) |
 | `memory.py` | `MemoryStore` (episode dedup, outcome index), `induce_candidate`, `retrieve_memories` (gates + abstention) |
 | `evolution.py` | `SkillOptimizer`, pure-payload mutators, `Frontier`, `EvolutionBudget`; dev-eval via injected `EvaluationClient` |
 | `composition.py` | `compose_guidance`: precedence by type, dedup, polarity conflicts, token budget, abstain |
-| `governed_eval.py` | `EvaluationPartition` + sealed-holdout disjointness, `preregister`, `required_sample_size`, `compute_metrics`, `run_governed_evaluation` (5 arms) |
-| `serving.py` | `GovernedServingGateway`: registry-authenticated repo identity, per-candidate rejection audit, advisory-only serving |
+| `governed_eval.py` | `EvaluationPartition` + sealed-holdout disjointness, `preregister`, `required_sample_size`, `compute_metrics`, `run_governed_evaluation` (5 arms), `run_candidate_probe` (per-candidate qualification probe under the same gates) |
+| `serving.py` | `GovernedServingGateway`: registry-authenticated repo identity, per-candidate rejection audit, serve-time decision/evidence re-authentication, authenticated outcomes, advisory-only serving |
 | `skill_package.py` | vskill-style bundles: manifest + payload + SHA256SUMS, `export_bundle`/`verify_install`/`import_bundle`/`security_scan` |
 | `tools/governed_campaign.py` | deterministic end-to-end campaign CLI (M9) |
 
@@ -55,15 +62,31 @@ SkillOptimizer      --[learner]-->    CandidateRegistry (PROPOSED only)
 
 1. Candidate generation never confers promotion authority —
    `proposed→validated` is `candidate:write` (learner); `evaluating→qualified`
-   is `promotion:approve` (operator) and requires ≥1 bound receipt digest.
-   The registry also requires a deployment-supplied `receipt_authority`:
-   each cited digest must resolve to a signature-authenticated receipt
-   with outcome `pass`, so a digest string alone is never evidence.
-2. Receipts are the only evidence handle. Booleans carry no authority.
+   is `promotion:approve` (operator) and requires three independent signed
+   artifacts: an authenticated pass receipt, an evaluator-signed
+   `CandidateEvidenceV1` that binds those receipts to *this* candidate's
+   record/content digest on the holdout partition under the expected
+   protocol, and an operator-signed `CandidateDecisionV1` for the exact
+   edge. `qualified→revoked` requires its own decision. The registry
+   requires deployment-supplied `receipt_authority`, `evidence_authority`
+   and `decision_authority`; without them qualification/revocation is
+   refused. Candidate generators hold none of these keys.
+2. Receipts are the only outcome evidence handle; a receipt alone is not
+   a qualification handle. Evidence must name the candidate it qualifies.
 3. Learner/optimizer hold no signing keys and no authority-DB access.
 4. Served text is data: delivered through `helpful_next_checks`, it can
    describe an action but cannot grant one.
-5. Promotion supports audit, revocation, rollback (`qualified→revoked` is
+5. Serving state is decision-backed, never a column. The registry folds
+   the hash-chained transition log, requires the committed state column
+   to match, and re-authenticates the decision and evidence behind every
+   qualified candidate on every serve. A direct state flip or forged
+   artifact abstains with `catalog_unavailable`; a missing artifact row
+   or legacy qualification is excluded from serving without freezing the
+   catalog, so a signed takedown still works. The evaluation protocol is
+   pinned: a registry without it can neither qualify nor serve.
+6. Promotion supports audit, revocation, rollback (`qualified→revoked` is
    terminal-audited; audit rows are append-only in the same transaction).
-6. The qualification holdout is sealed: no shared `repo_snapshot_digest`
+7. The qualification holdout is sealed: no shared `repo_snapshot_digest`
    with induction/development; enforced, not assumed.
+8. Serving outcomes bind an authenticated receipt for the same task and
+   outcome to the exact delivered guidance digest.

@@ -593,6 +593,64 @@ class CandidateV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CandidateEvidenceV1(V1Record):
+    """Evaluator-signed binding of evaluation receipts to one candidate.
+
+    An ``OutcomeReceiptV1`` proves an outcome for a task; by itself it
+    says nothing about which artifact was evaluated. This record is the
+    missing link: the evaluator attests that ``receipt_refs`` are the
+    outcomes of evaluating exactly the candidate named by
+    ``candidate_digest``/``content_digest`` on the declared partition
+    under the declared protocol. Qualification requires such a binding —
+    a pass receipt for an unrelated task or candidate is not evidence.
+    """
+
+    evidence_id: str
+    candidate_id: str
+    candidate_digest: str
+    content_digest: str
+    receipt_refs: tuple[str, ...]
+    evaluation_protocol_digest: str
+    partition: str
+    outcome: str
+    evaluator_identity: str
+    issued_at: str
+    expires_at: str | None
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "candidate_evidence"
+
+
+@dataclass(frozen=True, kw_only=True)
+class CandidateDecisionV1(V1Record):
+    """Operator-signed authorization for one exact candidate transition.
+
+    Binds the candidate record digest (not just its id), the exact edge,
+    the evidence handles, and the actor identity. A decision minted for
+    one candidate or edge cannot authorize another; its nonce is consumed
+    atomically with the transition, so replay is a conflict.
+    """
+
+    decision_id: str
+    candidate_id: str
+    candidate_digest: str
+    content_digest: str
+    from_state: str
+    to_state: str
+    receipt_refs: tuple[str, ...]
+    evidence_refs: tuple[str, ...]
+    actor_identity: str
+    decision_nonce: str
+    issued_at: str
+    expires_at: str | None
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "candidate_decision"
+
+
+@dataclass(frozen=True, kw_only=True)
 class ExperienceRecordV1(V1Record):
     """Verified experience episode (v3.3 memory plane).
 
@@ -881,6 +939,45 @@ def _validate_record(record: V1Record) -> None:
         _require(isinstance(d["payload"], Mapping) and bool(d["payload"]),
                  "payload must be a nonempty object")
         _timestamp(d["created_at"], "created_at")
+    elif isinstance(record, CandidateEvidenceV1):
+        _identifier(d["evidence_id"], "evidence_id")
+        _identifier(d["candidate_id"], "candidate_id")
+        for name in ("candidate_digest", "content_digest",
+                     "evaluation_protocol_digest"):
+            _digest(d[name], name)
+        for ref in _sequence(d["receipt_refs"], "receipt_refs",
+                             minimum=1, maximum=32):
+            _digest(ref, "receipt_refs[]")
+        _enum(d["partition"], {"development", "holdout", "monitoring"},
+              "partition")
+        _enum(d["outcome"], _OUTCOMES, "outcome")
+        _identifier(d["evaluator_identity"], "evaluator_identity")
+        _timestamp(d["issued_at"], "issued_at")
+        if d["expires_at"] is not None:
+            _timestamp(d["expires_at"], "expires_at")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, CandidateDecisionV1):
+        for name in ("decision_id", "candidate_id", "actor_identity",
+                     "decision_nonce", "signer_key_id"):
+            _identifier(d[name], name)
+        for name in ("candidate_digest", "content_digest"):
+            _digest(d[name], name)
+        _enum(d["from_state"], _CANDIDATE_STATES | {""}, "from_state")
+        _enum(d["to_state"], _CANDIDATE_STATES, "to_state")
+        _require(d["to_state"] != d["from_state"],
+                 "decision must change state")
+        for name in ("receipt_refs", "evidence_refs"):
+            for ref in _sequence(d[name], name, maximum=32):
+                _digest(ref, name + "[]")
+        _timestamp(d["issued_at"], "issued_at")
+        if d["expires_at"] is not None:
+            _timestamp(d["expires_at"], "expires_at")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
     elif isinstance(record, ExperienceRecordV1):
         for name in ("experience_id", "episode_id", "repository_registry_id"):
             _identifier(d[name], name)

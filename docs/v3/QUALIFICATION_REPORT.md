@@ -15,12 +15,12 @@ planned.
 | Source baseline traceable | `docs/audits/BASELINE_INTEGRITY.md`, `evidence/baseline/` — all four manifest discrepancies traced to pushed commits; manifest was stale, not tampered | **PASS** |
 | Authority transactions | `tests/v3/test_authority_db.py` (WAL, fault-at-each-step, power loss, stale head, concurrent promotion) | **PASS** |
 | Receipt authenticity | `tests/v3/test_receipt_signatures.py` (forged signer, tampered body, replay, wrong key) | **PASS** |
-| Qualification evidence | `CandidateRegistry` requires `receipt_authority`; every cited digest must resolve to a signed `pass` | **PASS** |
+| Qualification evidence | `CandidateRegistry` requires `receipt_authority` (signed pass receipt), `evidence_authority` (evaluator-signed `CandidateEvidenceV1` naming the exact candidate/holdout partition and the registry's pinned protocol), `decision_authority` (operator-signed exact-edge `CandidateDecisionV1`), and a pinned `expected_evaluation_protocol_digest` (unpinned registries cannot qualify or serve qualified candidates) | **PASS** |
 | Trust-domain separation | policy roles: learner/evaluator/operator; learners hold no signing material or authority writes | **PASS** |
 | Memory provenance | `verify_experience_evidence` binds ingest to the evaluator journal and signed outcome | **PASS** |
 | Sealed holdout | partition disjointness + repository-disjointness enforced before runs | **PASS** |
-| Governed serving | scope/revocation/applicability/counterexample gates; prompt injection served as data only | **PASS** |
-| Revocation/rollback | revoked candidates stop serving immediately; audit chain verifies | **PASS** |
+| Governed serving | scope/revocation/applicability/counterexample gates; serve-time re-authentication of decision + evidence; direct state flips abstain; prompt injection served as data only | **PASS** |
+| Revocation/rollback | revoked candidates stop serving immediately; signed revocation decision; audit chain verifies | **PASS** |
 | Release integrity | ZIP ↔ embedded manifest ↔ source tree all verified; `release/` excluded from the archive | **PASS** |
 | Learning efficacy | live campaigns below | **NOT ESTABLISHED** |
 
@@ -28,7 +28,7 @@ planned.
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=src python3 -m pytest tests/ -q` | **741 passed, 2 skipped, 0 failed** |
+| `PYTHONPATH=src python3 -m pytest tests/ -q` | **777 passed, 2 skipped, 0 failed** |
 | `PYTHONPATH=src python3 tools/governed_campaign.py -o <dir>` | exit 0; A=0 B=2 C=2 D=0 E=2; 5 candidates qualified; revocation demo passed |
 | `PYTHONPATH=src python3 tools/governed_live_campaign.py -o <dir> --wall 120` | exit 0; authenticated `codex exec`; A=2 B=2 C=2 D=2 E=2 (ceiling hit) |
 | `PYTHONPATH=src python3 tools/live_study.py ... --wall 120` | A=4 B=3 C=3 D=5; D-vs-A 1W/0L, McNemar p=1.0 (underpowered) |
@@ -59,11 +59,19 @@ planned.
 
 ## What is proven
 
-- A verified episode can become a memory candidate, and only
-  signature-authenticated pass receipts can qualify any candidate.
+- A verified episode can become a memory candidate, and qualification
+  requires three signed artifacts: an authenticated pass receipt, an
+  evaluator-signed evidence binding naming that exact candidate on the
+  holdout partition under the expected protocol, and an operator-signed
+  decision for the exact serving-state edge. An unrelated pass receipt
+  cannot qualify a candidate.
+- Candidate serving state is derived from the hash-chained transition
+  log and re-authenticated on every serve; a direct SQL flip, a forged
+  decision/evidence row, or a legacy unbacked qualification abstains
+  instead of serving.
 - Candidate text cannot grant permissions, alter policy, or reach
   authority; serving is scope- and revocation-gated and audited with
-  the task and the outcome receipt.
+  the task and the authenticated outcome receipt.
 - Promoted artifacts are content-addressed, immutable in record form,
   auditable (hash-chained), revocable, and exportable/re-importable
   with unchanged identity.

@@ -1,3 +1,54 @@
+## 2026-10-25 — Authority/evidence binding and serving integrity hardening
+
+- Candidate qualification no longer accepts an unrelated pass receipt.
+  Added `CandidateEvidenceV1` + `CandidateEvidenceAuthority`: an
+  evaluator-signed binding of receipt digests to one exact candidate
+  record/content digest on the sealed holdout partition under the
+  expected protocol. `CandidateRegistry.qualify` requires every cited
+  receipt to be covered by an authenticated binding that names the
+  candidate; a pass receipt for another task, repository or candidate
+  is refused.
+- Serving state is no longer a mutable column gated by a role string.
+  Added `CandidateDecisionV1` + `CandidateDecisionAuthority`:
+  operator-signed exact-edge decisions for `evaluating→qualified` and
+  `qualified→revoked`, binding the candidate digest, edge, evidence
+  handles and actor identity. Decision nonces are consumed atomically
+  with the transition; replay is a conflict.
+- Every registry read now folds the hash-chained transition log,
+  requires the committed state column to match the projection, and
+  re-authenticates the signed decision/evidence behind each qualified
+  candidate. A direct SQL state flip raises `state_projection_drift`;
+  the serving gateway abstains `catalog_unavailable` with an audited
+  `integrity_error`. Legacy unbacked qualifications are excluded and
+  revocable only under a signed decision.
+- `GovernedServingGateway.record_outcome` now requires an
+  authenticated receipt with the same task and outcome; a bare digest
+  cannot write a `serving_outcome` row. A revocation naming the
+  candidate's receipt, evidence binding **or decision** suppresses it
+  (`evidence_revoked`).
+- Both governed campaigns now evaluate each candidate individually on
+  the holdout and issue candidate-specific evidence + decisions instead
+  of reusing a collective arm receipt. The probe runs through
+  `run_candidate_probe`, which enforces repository disjointness and
+  records budget/sample-size conformance against the preregistered
+  protocol; a candidate that composes no guidance is reported as
+  `no_guidance` rather than bound to a pass.
+- Qualification requires a pinned evaluation protocol
+  (`expected_evaluation_protocol_digest`); without it qualification is
+  refused and a serving replica cannot read the qualified catalog.
+- Upgrading a v3.3 database reseals the audit chain only after the old
+  chain verifies against the old digest domain; a broken pre-migration
+  chain refuses to open. The reseal is recorded in
+  `registry_migration` and reported by `verify()["migrations"]`.
+- A serving transition whose cited decision or evidence row is missing
+  is `unbacked` (`decision_missing`/`evidence_missing`): it cannot
+  serve, but intake and signed takedown stay possible instead of the
+  whole catalog freezing.
+- Evidence/decision expiry is compared as parsed UTC instants, not
+  strings, and `expires_at <= issued_at` is refused at issuance.
+- Suite: **777 passed, 2 skipped**. Deterministic campaign still
+  reproduces A=0/B=2/C=2/D=0/E=2 and qualifies 5 candidates.
+
 ## v3.3.0 — Governed learning (2026-10-25)
 
 - Added a typed candidate registry (`CandidateV1`, six artifact types) with

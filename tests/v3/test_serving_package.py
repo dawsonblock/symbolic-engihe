@@ -4,14 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from sis.v3.candidates import CandidateRegistry
-from sis.v3.contracts import ContractError, GuidanceRequestV1
+from sis.v3.contracts import GuidanceRequestV1
 from sis.v3.skill_package import (PackageError, export_bundle,
                                   import_bundle, security_scan,
                                   verify_install)
 from sis.v3.serving import GovernedServingGateway
 from tests.v3.authority_testkit import make_registry, register_repo
-from tests.v3.test_candidates import accepting_receipts, make_candidate
+from tests.v3.candidate_testkit import CandidateStack
+from tests.v3.test_candidates import make_candidate
 
 
 def _request(failures=("sig-x",)):
@@ -33,22 +33,18 @@ class ServingFixture(unittest.TestCase):
                       registry_id="repo-a", family_id="fam-a")
         register_repo(self.registry, self.reg_seed,
                       registry_id="repo-b", family_id="fam-b")
-        self.cands = CandidateRegistry(
-            root / "c.db", receipt_authority=accepting_receipts)
-        self.addCleanup(self.cands.close)
+        self.stack = CandidateStack(root / "c.db")
+        self.addCleanup(self.stack.close)
+        self.cands = self.stack.registry
         self.audit = []
         self.gateway = GovernedServingGateway(
             self.cands, repository_registry=self.registry,
-            audit_sink=self.audit.append)
+            audit_sink=self.audit.append,
+            receipt_authority=self.stack.resolve_receipt)
 
     def _qualified(self, cand):
-        self.cands.submit(cand, actor_role="learner")
-        self.cands.transition(cand.candidate_id, "validated",
-                              actor_role="learner")
-        self.cands.transition(cand.candidate_id, "evaluating",
-                              actor_role="evaluator")
-        self.cands.qualify(cand.candidate_id, actor_role="operator",
-                           receipt_refs=("a" * 64,))
+        self.stack.prepare(cand)
+        self.stack.qualify(cand)
 
 
 class ServingTests(ServingFixture):
@@ -80,7 +76,7 @@ class ServingTests(ServingFixture):
         cand = make_candidate(cid="q", scope={
                               "kind": "family_id", "value": "fam-a"})
         self._qualified(cand)
-        self.cands.revoke(cand.candidate_id, actor_role="operator")
+        self.stack.revoke(cand)
         out = self.gateway.serve(_request(), repository_id="repo-a")
         self.assertTrue(all("do the thing" != s
                             for s in out.helpful_next_checks))
@@ -146,14 +142,15 @@ class ServingTests(ServingFixture):
         served = self.gateway.serve(_request(), repository_id="repo-a")
         self.assertEqual(self.audit[-1]["task_id"], "t1")
         self.assertEqual(self.audit[-1]["served_digest"], served.digest)
+        receipt = self.stack.receipt(task_id="t1", outcome="pass")
         self.gateway.record_outcome(
             task_id="t1", served_digest=served.digest,
-            receipt_digest="b" * 64, outcome="pass")
+            receipt_digest=receipt.digest, outcome="pass")
         outcome = self.audit[-1]
         self.assertEqual(outcome["kind"], "serving_outcome")
         self.assertEqual(outcome["task_id"], "t1")
         self.assertEqual(outcome["served_digest"], served.digest)
-        self.assertEqual(outcome["receipt_digest"], "b" * 64)
+        self.assertEqual(outcome["receipt_digest"], receipt.digest)
         self.assertEqual(outcome["outcome"], "pass")
 
     def test_outcome_cannot_attach_to_unserved_guidance(self):
@@ -172,12 +169,70 @@ class ServingTests(ServingFixture):
             self.gateway.record_outcome(
                 task_id="t1", served_digest=served.digest,
                 receipt_digest="b" * 64, outcome="great")
+        with self.assertRaisesRegex(ValueError, "receipt_unauthenticated"):
+            self.gateway.record_outcome(
+                task_id="t1", served_digest=served.digest,
+                receipt_digest="b" * 64, outcome="pass")
+        wrong_task = self.stack.receipt(task_id="other-task", outcome="pass")
+        with self.assertRaisesRegex(ValueError, "receipt_task_mismatch"):
+            self.gateway.record_outcome(
+                task_id="t1", served_digest=served.digest,
+                receipt_digest=wrong_task.digest, outcome="pass")
+        failing = self.stack.receipt(task_id="t1", outcome="fail")
+        with self.assertRaisesRegex(ValueError, "receipt_outcome_mismatch"):
+            self.gateway.record_outcome(
+                task_id="t1", served_digest=served.digest,
+                receipt_digest=failing.digest, outcome="pass")
         gated = self.gateway.serve(
             _request(), repository_id="repo-a", task_family="other-fam")
         self.assertTrue(all("do the thing" != s
                             for s in gated.helpful_next_checks))
         self.assertEqual(
             self.audit[-1]["rejections"][0]["reason"], "family_mismatch")
+
+    def test_direct_state_flip_abstains_and_audits_integrity_error(self):
+        cand = make_candidate(cid="flipped",
+                              scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)
+        other = make_candidate(cid="sql-flip",
+                               scope={"kind": "family_id", "value": "fam-a"})
+        self.cands.submit(other, actor_role="learner")
+        self.cands._conn().execute(
+            "UPDATE candidate SET state='qualified' WHERE candidate_id=?",
+            (other.candidate_id,))
+        self.cands._conn().commit()
+        out = self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertEqual(out.decision, "abstain")
+        self.assertEqual(out.reason_code, "catalog_unavailable")
+        self.assertIn("state_projection_drift", self.audit[-1]["integrity_error"])
+
+    def test_evidence_revocation_stops_serving(self):
+        cand = make_candidate(scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)
+        basis = self.cands.serving_basis(cand.candidate_id)
+        served = self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertIn("do the thing", served.helpful_next_checks)
+        out = self.gateway.serve(
+            _request(), repository_id="repo-a",
+            revoked_digests={basis["receipt_refs"][0]})
+        self.assertTrue(all("do the thing" != s
+                            for s in out.helpful_next_checks))
+        self.assertEqual(
+            self.audit[-1]["rejections"][0]["reason"], "evidence_revoked")
+
+    def test_decision_revocation_stops_serving(self):
+        cand = make_candidate(scope={"kind": "family_id", "value": "fam-a"})
+        self._qualified(cand)
+        basis = self.cands.serving_basis(cand.candidate_id)
+        served = self.gateway.serve(_request(), repository_id="repo-a")
+        self.assertIn("do the thing", served.helpful_next_checks)
+        out = self.gateway.serve(
+            _request(), repository_id="repo-a",
+            revoked_digests={basis["decision_digest"]})
+        self.assertTrue(all("do the thing" != s
+                            for s in out.helpful_next_checks))
+        self.assertEqual(
+            self.audit[-1]["rejections"][0]["reason"], "evidence_revoked")
 
     def test_malformed_request_abstains_and_audits(self):
         out = self.gateway.serve({"schema_version": 1}, repository_id="repo-a")
@@ -216,8 +271,9 @@ class PackageTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.reg = CandidateRegistry(
-            self.root / "c.db", receipt_authority=accepting_receipts)
+        self.stack = CandidateStack(self.root / "c.db")
+        self.addCleanup(self.stack.close)
+        self.reg = self.stack.registry
         self.addCleanup(self.reg.close)
         self.cand = make_candidate()
 

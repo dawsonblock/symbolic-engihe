@@ -23,8 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e .
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest tests/ -q
       - name: Verify pinned pristine source baseline separately from development changes
         run: python tools/check_source_manifest.py --baseline-ref daf0cccea495f4e62f1e3ddde3f9a3a68e2e1b08
       - name: Run CLI and HTTP integration smoke

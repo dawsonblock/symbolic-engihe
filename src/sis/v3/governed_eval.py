@@ -34,7 +34,7 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .benchmark import BenchmarkHarness, BudgetCaps
@@ -282,14 +282,51 @@ def run_governed_evaluation(
     return report
 
 
+def run_candidate_probe(
+    harness: BenchmarkHarness,
+    tasks,
+    agent,
+    *,
+    budget: BudgetCaps,
+    context_provider,
+    protocol: dict,
+    learned_repo_digests=(),
+    arm: str = "E",
+) -> dict:
+    """Run one candidate's sealed-holdout probe under the same gates.
+
+    Qualification evidence must name the candidate it qualifies, so each
+    candidate is evaluated alone. The probe is not the confirmatory
+    five-arm run, but it still enforces repository disjointness and
+    records budget/sample-size conformance against the preregistered
+    protocol — the evidence cites that protocol digest, so the run that
+    produced it must be checked against the same plan.
+    """
+    assert_repository_disjoint(
+        learned_repo_digests, [t for t, _ in tasks])
+    report = harness.run(tasks, agent, budget=budget,
+                         context_provider=context_provider, arms=(arm,))
+    report["governed"] = {
+        "protocol_digest": protocol.get("protocol_digest"),
+        "analysis_mode": "candidate_probe",
+        "arms": [arm],
+        "conformance": _protocol_conformance(
+            protocol, report, arms=None, n_tasks=len(tasks)),
+    }
+    return report
+
+
 def _protocol_conformance(protocol: Mapping, report: Mapping, *,
-                          arms: Sequence[str], n_tasks: int) -> dict:
+                          arms: Sequence[str] | None,
+                          n_tasks: int) -> dict:
     """Check the executed run against the preregistered plan.
 
     The protocol digest proves a plan existed; this block records whether
     *this* run honored it — budget, arm set, and the declared sample
     size. ``conforms=False`` is reported, never hidden: an underpowered
-    or off-plan run is still honest evidence.
+    or off-plan run is still honest evidence. ``arms=None`` skips the arm
+    comparison for a single-candidate probe, which is deliberately not
+    the preregistered arm set.
     """
     mismatches: list[str] = []
     declared_budget = protocol.get("budget") or {}
@@ -301,7 +338,8 @@ def _protocol_conformance(protocol: Mapping, report: Mapping, *,
             mismatches.append(
                 f"budget.{key}:expected={expected} actual={actual_budget[key]}")
     declared_arms = protocol.get("arms")
-    if declared_arms is not None and list(declared_arms) != list(arms):
+    if arms is not None and declared_arms is not None and \
+            list(declared_arms) != list(arms):
         mismatches.append(
             f"arms:expected={list(declared_arms)} actual={list(arms)}")
     declared_n = protocol.get("sample_size")

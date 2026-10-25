@@ -11,7 +11,7 @@ from sis.v3.contracts import ContractError, TaskEnvelopeV1
 from sis.v3.governed_eval import (EvaluationPartition,
                                   assert_partition_disjoint,
                                   compute_metrics, preregister,
-                                  required_sample_size,
+                                  required_sample_size, run_candidate_probe,
                                   run_governed_evaluation)
 
 REPO = Path(__file__).resolve().parents[2]
@@ -136,6 +136,45 @@ class ConformanceTests(unittest.TestCase):
                             for m in conf["mismatches"]))
         self.assertTrue(any("sample_size" in m
                             for m in conf["mismatches"]))
+
+
+class CandidateProbeTests(unittest.TestCase):
+    """Per-candidate qualification probes stay under the governed gates."""
+
+    def _report(self):
+        return {"per_task": [], "budget": {"wall_seconds": 60,
+                                           "token_budget": 1000,
+                                           "tool_budget": 10},
+                "solved_counts": {}}
+
+    def _protocol(self):
+        return preregister(
+            primary_metric="x", method="m", alpha=0.05, min_effect=1.0,
+            sample_size=1, arms=("A", "B", "C", "D", "E"),
+            budget={"wall_seconds": 60, "token_budget": 1000})
+
+    def _probe(self, learned=("a" * 64,)):
+        return run_candidate_probe(
+            _StubHarness(self._report()),
+            [(_task("h", "c" * 64), Path("/nonexistent"))],
+            object(),
+            budget=type("B", (), {"wall_seconds": 60})(),
+            context_provider=None,
+            protocol=self._protocol(),
+            learned_repo_digests=list(learned))
+
+    def test_probe_records_conformance_and_skips_arm_comparison(self):
+        report = self._probe()
+        self.assertEqual(report["governed"]["analysis_mode"],
+                         "candidate_probe")
+        self.assertEqual(report["governed"]["arms"], ["E"])
+        conf = report["governed"]["conformance"]
+        self.assertTrue(conf["conforms"], conf["mismatches"])
+        self.assertFalse(any(m.startswith("arms:") for m in conf["mismatches"]))
+
+    def test_probe_still_enforces_repository_disjointness(self):
+        with self.assertRaisesRegex(ContractError, "overlap"):
+            self._probe(learned=("c" * 64,))
 
 
 class MetricsTests(unittest.TestCase):

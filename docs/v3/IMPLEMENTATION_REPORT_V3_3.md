@@ -194,6 +194,91 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   manifest, source inventory and `SHA256SUMS` all re-verified, with
   `verify_against_tree` reporting `source_bound: true`.
 
+### Completion pass 5 (authority/evidence binding + serving integrity)
+
+- **A pass receipt could qualify any candidate.** `CandidateRegistry`
+  authenticated the receipt signature but never the receipt's
+  relationship to the candidate; both campaigns qualified every skill
+  and memory variant with one arbitrary holdout pass receipt. Added
+  `CandidateEvidenceV1` (evaluator-signed binding of receipts to one
+  exact candidate record/content digest, holdout partition, protocol)
+  and `CandidateEvidenceAuthority`; qualification now requires every
+  cited receipt to be covered by an authenticated binding that names
+  the candidate. Unrelated receipts fail with
+  `evidence_receipt_not_bound` / `evidence_candidate_digest_mismatch`.
+- **Serving state was a mutable column gated by a role string.**
+  Added `CandidateDecisionV1` (operator-signed exact-edge decision) and
+  `CandidateDecisionAuthority`; `evaluating→qualified` and
+  `qualified→revoked` now require a decision binding the candidate
+  digest, edge, evidence handles and actor identity. Decision nonces
+  are consumed atomically with the transition (`decision_replayed` on
+  reuse).
+- **The state column is no longer trusted.** Every read folds the
+  hash-chained transition log, requires the committed state column to
+  match, and re-authenticates the decision/evidence behind each
+  qualified candidate. A direct SQL flip raises
+  `state_projection_drift`; the gateway abstains `catalog_unavailable`
+  with an audited `integrity_error`. Legacy qualified rows are
+  `state_not_decision_backed`, excluded from serving, and revocable
+  under a signed decision.
+- **Serving outcomes are receipt-authenticated.** `record_outcome`
+  resolves the receipt through a configured authority and requires the
+  same task and outcome; a bare digest no longer writes a
+  `serving_outcome` row. A revoked evidence receipt/binding suppresses
+  the candidate (`evidence_revoked`).
+- **Campaigns evaluate each candidate individually.** Both campaigns
+  now run a sealed-holdout probe composed from one candidate at a time,
+  then issue a candidate-specific evidence binding and decision. The
+  deterministic campaign still reproduces A=0/B=2/C=2/D=0/E=2 and
+  qualifies 5 candidates; the live dry-run still passes.
+- Suite: **762 passed, 2 skipped** (741 + 21 new candidate/serving
+  tests). Full suite re-run at this tree.
+
+### Completion pass 6 (review repairs on pass 5)
+
+- **The upgrade resealed an already-chained database without checking
+  it.** Adding the evidence/decision fields changed the audit digest
+  domain, so opening a v3.3 database recomputed every `entry_digest` —
+  silently laundering any tampering performed before the upgrade and
+  invalidating pre-upgrade external anchors. `_migrate` now verifies the
+  old chain end-to-end against the old domain first; a broken
+  pre-migration chain refuses to open
+  (`audit_chain_tampered:pre_migration_*`), a clean one is resealed and
+  recorded in `registry_migration`, reported by
+  `verify()["migrations"]`.
+- **A missing decision/evidence row froze the whole catalog.** `_project`
+  raised on absence, and `submit`/`transition` call it, so a lost
+  artifact row blocked intake and takedown as well as serving. Missing
+  rows are now `unbacked` reasons (`decision_missing`/`evidence_missing`):
+  serving still fails closed, but the catalog stays writable and the
+  candidate can be revoked under a signed decision.
+- **Expiry compared timestamps as strings.** `2026-10-25T10:00:00+05:00`
+  (= 05:00Z) was accepted at 08:00Z, and a fractional second past expiry
+  was accepted. Expiry is now compared as parsed UTC instants, and
+  `expires_at <= issued_at` is refused at issuance.
+- **Revoking the decision did not stop serving.** Basis revocation
+  covered receipts and evidence bindings but not the decision digest;
+  the decision is now part of the revocation basis, and
+  `qualified_bases()` folds and authenticates the catalog once per serve
+  instead of once per candidate.
+- **Protocol pinning was optional while the docs claimed it was
+  required.** Qualification without `expected_evaluation_protocol_digest`
+  now refuses (`qualification_requires_expected_protocol`), and a
+  serving replica without the pin cannot read the qualified catalog
+  (`serving_protocol_unpinned`).
+- **Probes bypassed the governed evaluation.** Both campaigns called
+  `harness.run` directly for the per-candidate probe, skipping
+  repository-disjointness and conformance accounting while citing the
+  preregistered protocol digest. Added `run_candidate_probe`, which
+  enforces disjointness and records budget/sample-size conformance; the
+  evidence records that block, and a candidate that composes no guidance
+  is reported as `no_guidance` instead of being bound to a pass.
+- Suite: **777 passed, 2 skipped** (762 + 15 review-repair tests).
+- Release re-binding is still owed: `release/` and
+  `evidence/qualification/qualification_run.json` describe commit
+  `bb1497d` (741 tests). `tools/package_release.py` refuses a dirty tree
+  by design, so they are regenerated once this pass is committed.
+
 ## Defects found and fixed during the build
 
 | defect | fix |
@@ -206,3 +291,11 @@ Ledger of the governed-learning build, milestone by milestone, on branch
 | campaign: buggy `clamp` fixture passed its own test; `dedup`/`clamp` holdouts untransferable by design | holdouts redesigned as unseen-repo variants `money2`/`slug2` of the dev conventions |
 | campaign: `scripted_agent` wrote `<task>.py` not the fixture's module | write the declared module name |
 | release build: extracted-tree compile/smoke results were recorded but never enforced | both fail the build; smoke return code recorded; 4 regression tests |
+| candidate qualification accepted an unrelated pass receipt | evaluator-signed `CandidateEvidenceV1` binding receipts to the exact candidate; campaigns probe each candidate individually |
+| candidate serving state was a mutable column gated by a role string | operator-signed `CandidateDecisionV1`, audit-derived state projection, serve-time re-authentication, atomic nonce consumption |
+| upgrade resealed an already-chained database without verifying it (laundered pre-upgrade tampering) | verify the old-domain chain first; refuse on break; record the reseal in `registry_migration` |
+| a missing decision/evidence row froze intake and takedown along with serving | missing rows become `unbacked` reasons; serving fails closed, the catalog stays writable |
+| expiry compared ISO-8601 strings, so an offset or fractional second bypassed expiry | compare parsed UTC instants; refuse `expires_at <= issued_at` |
+| revoking the decision did not stop serving | decision digest joins the revocation basis; one fold per serve via `qualified_bases()` |
+| protocol pinning was optional while the docs claimed it was required | qualification and qualified reads require `expected_evaluation_protocol_digest` |
+| per-candidate probes bypassed disjointness/conformance accounting while citing the protocol | `run_candidate_probe` enforces both and records conformance in the evidence |

@@ -274,10 +274,14 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   evidence records that block, and a candidate that composes no guidance
   is reported as `no_guidance` instead of being bound to a pass.
 - Suite: **777 passed, 2 skipped** (762 + 15 review-repair tests).
-- Release re-binding is still owed: `release/` and
-  `evidence/qualification/qualification_run.json` describe commit
-  `bb1497d` (741 tests). `tools/package_release.py` refuses a dirty tree
-  by design, so they are regenerated once this pass is committed.
+- Release re-binding: `release/` and
+  `evidence/qualification/qualification_run.json` are regenerated from
+  the commit that carries this report — the suite and deterministic
+  campaign rows were re-run there, and the live/failure-injection rows
+  are marked as carried over from `980dd34`. `tools/package_release.py`
+  refuses a dirty tree by design, so the archive is built only from the
+  clean commit; its exact source commit is recorded in
+  `release/release_manifest.json`.
 
 ## Defects found and fixed during the build
 

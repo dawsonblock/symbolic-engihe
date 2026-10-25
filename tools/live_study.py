@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -25,12 +26,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sis.v3.authority_db import AuthorityDB
 from sis.v3.benchmark import BenchmarkHarness, BudgetCaps, report_digest
-from sis.v3.contracts import GuidanceRequestV1, ProcedureRecordV1, TaskEnvelopeV1
+from sis.v3.contracts import (ContractError, GuidanceRequestV1,
+                              ProcedureRecordV1, TaskEnvelopeV1)
 from sis.v3.evaluation import assert_repository_disjoint, paired_summary
 from sis.v3.promotion import PromotionController, operator_token_digest
-from sis.v3.runner import LocalSubprocessExecutor, tree_digest
+from sis.v3.runner import LocalSubprocessExecutor, RunnerError, tree_digest
 from sis.v3.source_change import capture_change
-from sis.v3.contracts import ContractError
 from sis.v3.secure_guidance import StrictGuidanceGateway
 from sis.v3.verifier import OutcomeVerifier
 from tests.v3.authority_testkit import (TEST_TOKEN, drive, evaluator_keypair,
@@ -122,44 +123,71 @@ def codex_agent(ctx, *, statements):
         parts.append("\nProject conventions (advisory):\n" + hints)
     # Enforceable termination (v3.2 PR-06): own process group; on timeout
     # kill the whole group so the codex child cannot outlive the budget.
+    # The inner kill fires before the harness watchdog abandons the arm.
     # Capture before/after trees for a verified SourceChangeV1 (v3.2):
     # snapshot the workspace, run the agent, then capture_change binds the
     # immutable before state to whatever the agent actually wrote.
     before = Path(tempfile.mkdtemp(prefix="before-",
                                    dir=ctx.workspace.parent))
-    shutil.copytree(ctx.workspace, before, dirs_exist_ok=True)
-    proc = subprocess.Popen(
-        ["codex", "exec", "-C", str(ctx.workspace),
-         "-s", "workspace-write", "--skip-git-repo-check",
-         "".join(parts)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        start_new_session=True)
+    out = err = ""
     try:
-        out, err = proc.communicate(
-            timeout=max(60, int(ctx.budget.wall_seconds) - 15))
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, 9)
-        out, err = proc.communicate()
-    (ctx.workspace / ".codex_exec.log").write_text(
-        (out or "") + "\n" + (err or ""))
-    try:
-        change, diff = capture_change(
-            before, ctx.workspace,
-            attempt_id=f"{ctx.task.task_id}-{ctx.arm}",
-            worker_identity="codex-exec",
-            expected_before_digest=ctx.task.repo_snapshot_digest)
+        shutil.copytree(ctx.workspace, before, dirs_exist_ok=True)
+        proc = subprocess.Popen(
+            ["codex", "exec", "-C", str(ctx.workspace),
+             "-s", "workspace-write", "--skip-git-repo-check",
+             "".join(parts)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True)
+        try:
+            out, err = proc.communicate(
+                timeout=max(5, int(ctx.budget.wall_seconds) - 15))
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass  # process group already exited
+            try:
+                out, err = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass  # group is dead; only the pipe drain is stuck
+        # The exec log is harness diagnostics, not agent output: keep it
+        # out of the workspace so it cannot contaminate the source-change
+        # capture or the submitted tree digest, and so it survives the
+        # workspace cleanup.
         (ctx.workspace.parent /
-         f"change-{ctx.task.task_id}-{ctx.arm}.json").write_text(
-            json.dumps({"record": change.to_dict(),
-                        "diff_hex": diff.hex()}, default=str))
-    except ContractError:
-        pass  # no change or base moved — nothing to learn from
-    shutil.rmtree(before, ignore_errors=True)
-    # Verified accounting: codex prints 'tokens used\nN' on stdout.
+         f"exec-log-{ctx.task.task_id}-{ctx.arm}.log").write_text(
+            (out or "") + "\n" + (err or ""))
+        try:
+            change, diff = capture_change(
+                before, ctx.workspace,
+                attempt_id=f"{ctx.task.task_id}-{ctx.arm}",
+                worker_identity="codex-exec",
+                expected_before_digest=ctx.task.repo_snapshot_digest)
+            (ctx.workspace.parent /
+             f"change-{ctx.task.task_id}-{ctx.arm}.json").write_text(
+                json.dumps({"record": change.to_dict(),
+                            "diff_hex": diff.hex()}, default=str))
+        except (ContractError, RunnerError) as exc:
+            # Capture refused (no change, base moved, bounds exceeded) —
+            # surface the reason; the arm result itself still stands.
+            print(f"[capture] {ctx.task.task_id}/{ctx.arm}: {exc}",
+                  file=sys.stderr)
+    finally:
+        shutil.rmtree(before, ignore_errors=True)
+    # Reported accounting (agent-influenced stdout, so the harness keeps
+    # this 'reported', not 'verified'): codex prints 'tokens used' with
+    # the count on the same or a following line.
     usage = {}
-    for line in (out or "").splitlines():
-        if line.strip().isdigit():
-            usage["tokens_used"] = int(line.strip())
+    lines = (out or "").splitlines()
+    marks = [i for i, line in enumerate(lines)
+             if "tokens used" in line.lower()]
+    if marks:
+        for cand in lines[marks[-1]:marks[-1] + 4]:
+            digits = "".join(
+                c for c in cand if c.isdigit() or c == ",").strip(",")
+            if digits:
+                usage["tokens_used"] = int(digits.replace(",", ""))
+                break
     return usage or None
 
 
@@ -199,6 +227,7 @@ def main() -> int:
         register_repo(registry, reg_seed, registry_id=ident_name,
                       base_tree_digest=repo_tree)
         statements[task_id] = (statement, mod)
+        stmt_digest = hashlib.sha256(statement.encode()).hexdigest()
 
         # Qualified procedure carrying the convention, granted to this repo.
         sig = "sig-" + name
@@ -234,12 +263,12 @@ def main() -> int:
             actor_role="evaluator", task_id=task_id,
             criterion_version="v1",
             argv=(sys.executable, "-m", "pytest", "-q", "eval_tests.py"),
-            files={"eval_tests.py": test.encode()}, base_commit="a1b2c3d")
+            files={"eval_tests.py": test.encode()}, base_commit="a1b2c3d",
+            statement_digest=stmt_digest)
         env = TaskEnvelopeV1(
             schema_version=1, task_id=task_id,
             repo_snapshot_digest=repo_tree, base_commit="a1b2c3d",
-            task_statement_digest=hashlib.sha256(
-                statement.encode()).hexdigest(),
+            task_statement_digest=stmt_digest,
             permitted_commands=("codex",),
             isolation_profile="unverified_local",
             time_budget_seconds=int(args.wall), token_budget=1_000_000,

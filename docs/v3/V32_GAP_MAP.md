@@ -10,7 +10,7 @@ Baseline: branch codex/sis-authority-transfer-qualification @ fc00086
 | persistent signer revocations | DONE (PR-04: signed RevocationV1, committed, per-request enforced, tamper fails closed) | — |
 | authoritative evidence dependencies | DONE (evidence-bound induction, receipt_resolver, cascade suspension) | — |
 | authenticated cross-repo grants | DONE (PR-03 ScopeGrantV1 + registry lineage + transfer evidence) | — |
-| trusted task identities | PARTIAL: registry resolves repos; task_statement_digest is unbound in live flow | bind task statement to evaluator registration |
+| trusted task identities | DONE: statement digest recorded at evaluator registration and enforced at evaluate (statement_mismatch fails closed); persisted in tasks.json | — |
 
 ## Phase 2 — execution pipeline (PR-04..05)
 
@@ -18,7 +18,7 @@ Baseline: branch codex/sis-authority-transfer-qualification @ fc00086
 |---|---|---|
 | verified learning inputs | DONE (SourceChangeV1 + digest-bound induction) | — |
 | authenticated v3 service | DONE (adapter auth probe PR-05) | — |
-| real Codex->procedure | PARTIAL: e2e loop + live serving proven; no agent->capture->learn ingest path from live codex exec events yet | codex-cli event->SourceChange ingestor |
+| real Codex->procedure | PARTIAL: e2e loop + live serving proven; verified SourceChangeV1 now captured per arm (exec log kept out of the evaluated tree); not yet fed into induction | feed captured changes into learn path |
 
 ## Phase 3 — execution custody (PR-06)
 
@@ -26,8 +26,8 @@ Baseline: branch codex/sis-authority-transfer-qualification @ fc00086
 |---|---|---|
 | isolated execution | PARTIAL: unverified_local only; codex arm ran inside copied workspace + CLI sandbox | document/stronger sandbox |
 | independent evaluator credentials | DONE (EvaluatorKeyStore, private test material) | — |
-| verified resource accounting | PARTIAL: codex exec prints token usage on stdout; not metered into UsageMeter | parse exec events into meter |
-| enforceable termination | GAP: watchdog abandons daemon thread; codex subprocess keeps running past wall | kill process group on timeout |
+| verified resource accounting | PARTIAL: 'tokens used' parsed from codex stdout into arm usage; lands as REPORTED (agent-influenced stream), not VERIFIED | metered usage path (e.g. adapter meter) for verified accounting |
+| enforceable termination | DONE: codex arm runs in own process group; killpg(SIGKILL) fires before the harness wall | — |
 
 ## Phase 4 — proof (PR-07..08)
 
@@ -39,8 +39,10 @@ Baseline: branch codex/sis-authority-transfer-qualification @ fc00086
 
 ## Conclusion
 
-v3.2 = v3.1 + ~4 real deltas: (a) subprocess termination, (b) exec-event
-usage metering, (c) task-statement binding, (d) codex-event source-change
-ingest. Plus the still-open efficacy gate (needs harder corpus, n>=10).
+v3.2 = v3.1 + 4 deltas: (a) subprocess termination — DONE, process-group
+kill; (b) usage metering — PARTIAL, reported-grade stdout parse; (c)
+task-statement binding — DONE, enforced at evaluation; (d) source-change
+capture — DONE for capture, ingest-into-learn still open. Plus the
+still-open efficacy gate (needs harder corpus, n>=10).
 The spec doc itself was a UI attachment, not on disk; this map derives
 from the PR titles in the request.

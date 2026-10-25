@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from sis.v3 import signatures
-from sis.v3.contracts import OutcomeReceiptV1, TaskEnvelopeV1
+from sis.v3.contracts import ContractError, OutcomeReceiptV1, TaskEnvelopeV1
 from sis.v3.policy import AuthorizationDenied
 from sis.v3.runner import LocalSubprocessExecutor
 from sis.v3.verifier import (
@@ -216,6 +216,45 @@ class VerifierCustodyTests(VerifierFixture):
                 criterion_version="acceptance-v2",
                 argv=(PY, "different.py"),
             )
+
+    def test_statement_digest_binding_is_enforced(self):
+        digest = "a" * 64
+        self.verifier.register_task(
+            actor_role="evaluator",
+            task_id="task-bound",
+            criterion_version="v1",
+            argv=(PY, "acceptance.py"),
+            files={"acceptance.py": ACCEPTANCE},
+            statement_digest=digest,
+        )
+        bound = TaskEnvelopeV1.from_dict(
+            {**make_task(task_id="task-bound").to_dict(),
+             "task_statement_digest": digest})
+        self.assertEqual(self.evaluate(task=bound).outcome, "pass")
+        mismatched = TaskEnvelopeV1.from_dict(
+            {**bound.to_dict(), "task_statement_digest": "b" * 64})
+        with self.assertRaisesRegex(EvaluationRejected, "statement_mismatch"):
+            self.evaluate(task=mismatched, nonce="nonce-2")
+        restarted = OutcomeVerifier(
+            executor=self.eval_executor,
+            key_dir=self.key_dir,
+            registry_dir=self.registry_dir,
+        )
+        with self.assertRaisesRegex(EvaluationRejected, "statement_mismatch"):
+            restarted.evaluate(
+                actor_role="evaluator", task=mismatched,
+                submission_dir=self.submission, evaluation_nonce="nonce-3")
+        with self.assertRaisesRegex(EvaluationRejected, "task_registration_conflict"):
+            self.verifier.register_task(
+                actor_role="evaluator", task_id="task-bound",
+                criterion_version="v1", argv=(PY, "acceptance.py"),
+                files={"acceptance.py": ACCEPTANCE},
+                statement_digest="c" * 64)
+        with self.assertRaises(ContractError):
+            self.verifier.register_task(
+                actor_role="evaluator", task_id="task-bad-digest",
+                criterion_version="v1", argv=(PY, "acceptance.py"),
+                statement_digest="not-a-digest")
 
     def test_corrupt_journal_fails_closed_on_restart(self):
         self.evaluate()

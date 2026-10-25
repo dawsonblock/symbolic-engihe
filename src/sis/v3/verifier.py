@@ -115,6 +115,7 @@ class RegisteredTask:
     files: Mapping[str, bytes]
     base_commit: str | None
     suite_commitment: str
+    statement_digest: str | None = None
 
 
 class OutcomeVerifier:
@@ -153,9 +154,15 @@ class OutcomeVerifier:
         argv: tuple[str, ...] | list[str],
         files: Mapping[str, bytes] | None = None,
         base_commit: str | None = None,
+        statement_digest: str | None = None,
     ) -> RegisteredTask:
         """Record evaluator-private acceptance material for a task identity."""
         require_permission(actor_role, "outcome:evaluate")
+        if statement_digest is not None and not (
+            isinstance(statement_digest, str)
+            and re.fullmatch(r"[0-9a-f]{64}", statement_digest)
+        ):
+            raise ContractError("statement_digest must be a lowercase SHA-256 hex digest")
         command = CommandSpec(argv=tuple(argv))
         material = dict(files or {})
         for name, data in material.items():
@@ -178,10 +185,12 @@ class OutcomeVerifier:
             files=material,
             base_commit=base_commit,
             suite_commitment=commitment,
+            statement_digest=statement_digest,
         )
         existing = self._tasks.get(task_id)
         if existing is not None:
-            if existing.suite_commitment != task.suite_commitment:
+            if (existing.suite_commitment != task.suite_commitment or
+                    existing.statement_digest != task.statement_digest):
                 raise EvaluationRejected("task_registration_conflict", task_id)
             return existing
         self._tasks[task_id] = task
@@ -206,6 +215,9 @@ class OutcomeVerifier:
             raise EvaluationRejected("unregistered_task", task_ref)
         if registration.base_commit and registration.base_commit != task.base_commit:
             raise EvaluationRejected("source_mismatch", task.base_commit or "none")
+        if (registration.statement_digest is not None and
+                registration.statement_digest != task.task_statement_digest):
+            raise EvaluationRejected("statement_mismatch", task.task_id)
         if not isinstance(evaluation_nonce, str) or not evaluation_nonce.strip() or len(evaluation_nonce) > 128:
             raise EvaluationRejected("missing_nonce")
         if evaluation_nonce in self._nonces:
@@ -340,6 +352,7 @@ class OutcomeVerifier:
                     files={name: bytes.fromhex(data) for name, data in item["files"].items()},
                     base_commit=item["base_commit"],
                     suite_commitment=item["suite_commitment"],
+                    statement_digest=item.get("statement_digest"),
                 )
                 self._tasks[task.task_id] = task
         if self._journal_path.exists():
@@ -366,6 +379,7 @@ class OutcomeVerifier:
                     "files": {name: data.hex() for name, data in sorted(task.files.items())},
                     "base_commit": task.base_commit,
                     "suite_commitment": task.suite_commitment,
+                    "statement_digest": task.statement_digest,
                 }
                 for task in sorted(self._tasks.values(), key=lambda t: t.task_id)
             ],

@@ -118,6 +118,11 @@ verifier and never enter the served repository. To add a skill, copy a
 `Holdout` entry: fixture repo, private test, the artifact a guided agent
 writes, and a keyword that appears in the skill's own steps.
 
+This tool is the v3 candidate holdout template. The older
+`sis.skill_holdout` module and `tools/demo_skill_holdout.py` are the v2
+HMAC-sealed procedural-skill holdouts; they are unrelated and are not used
+by the candidate plane.
+
 ## Limits
 
 - Step extraction is a deterministic heuristic: bullet/numbered lines,

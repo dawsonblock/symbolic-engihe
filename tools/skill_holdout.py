@@ -29,6 +29,10 @@ about real-agent efficacy.
 Keys are test custody, generated per run. Replace them with the
 deployment's evaluator/operator custody before trusting any of this.
 
+This is the v3 candidate holdout template. The older ``sis.skill_holdout``
+module and ``tools/demo_skill_holdout.py`` implement the v2 HMAC-sealed
+procedural-skill holdouts and are unrelated to it.
+
 Usage:
     python3 tools/skill_holdout.py \
         --skills-root ../skills/skills-main/skills \

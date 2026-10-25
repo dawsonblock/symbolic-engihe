@@ -132,7 +132,12 @@
   Resource contents are recorded by digest only — a deployment that
   needs the files must ship the skill directory alongside the registry.
   Most imported skills have no holdout task in the current fixtures and
-  therefore remain PROPOSED; ingestion never schedules evaluation.
+  therefore remain PROPOSED; ingestion never schedules evaluation. The two
+  worked examples in `tools/skill_holdout.py` use a deterministic scripted
+  agent and test-custody keys: they prove the pipeline, not that a real
+  agent follows the skill. A prose skill with no observable artifact (for
+  example a greeting style) has nothing a holdout test can honestly assert
+  and should not be qualified.
 
 ## Not in scope (per charter)
 

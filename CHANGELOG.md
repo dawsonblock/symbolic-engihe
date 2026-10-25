@@ -17,7 +17,12 @@
   body) are advisory and reported, never a refusal or a qualification.
 - Candidate ids are derived from name + content digest, so re-ingesting
   identical content is a no-op and changed content is a new candidate.
-- Suite: **793 passed, 2 skipped**.
+- Added `tools/skill_holdout.py`: two worked examples (`write-skills`
+  artifact check, `php2shell-check` pinned-runtime check) that run the
+  full ingest → holdout probe (with and without guidance) → evaluator
+  evidence + operator decision → serve path, as a copyable template for
+  qualifying further skills.
+- Suite: **796 passed, 2 skipped**.
 
 ## 2026-10-25 — Authority/evidence binding and serving integrity hardening
 

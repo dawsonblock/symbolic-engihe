@@ -88,6 +88,36 @@ ignored. Nothing is executed, imported, or fetched over the network.
   decision (see `SECURITY_BOUNDARIES_V3_3.md`). Most imported skills have
   no holdout task in the current fixtures and therefore remain `PROPOSED`.
 
+## Worked holdout examples
+
+`tools/skill_holdout.py` is the template for turning an ingested skill into
+served guidance. It ships two complete examples and runs the whole path:
+
+| example | fixture (buggy state) | private acceptance test |
+|---|---|---|
+| `write-skills` | `SKILL.md` with no frontmatter | frontmatter has `name`/`description`, body has a heading and a bullet |
+| `php2shell-check` | `FROM php:8.4-fpm` (floating, vulnerable) | `Dockerfile` pins `php:8.4.27`, `findings.md` names CVE-2026-109618 |
+
+```bash
+python3 tools/skill_holdout.py \
+    --skills-root ../skills/skills-main/skills \
+    --skills-root "../skills/vskill-main 2/plugins" \
+    -o evidence/skills/holdout.json
+```
+
+Per skill it ingests at PROPOSED, moves to EVALUATING, runs a holdout probe
+with only that skill's guidance (arm E) and a no-guidance baseline (arm A),
+issues `CandidateEvidenceV1` + `CandidateDecisionV1`, qualifies, serves
+through the gateway, and records the outcome. The report shows `A=0, E=1`
+for both examples: the scripted stand-in writes the prescribed artifact only
+when the served guidance carries the skill's keyword, so the contrast is
+machinery evidence, not a claim about real-agent efficacy.
+
+Keys are test custody generated per run; the acceptance tests stay with the
+verifier and never enter the served repository. To add a skill, copy a
+`Holdout` entry: fixture repo, private test, the artifact a guided agent
+writes, and a keyword that appears in the skill's own steps.
+
 ## Limits
 
 - Step extraction is a deterministic heuristic: bullet/numbered lines,

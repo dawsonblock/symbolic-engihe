@@ -308,7 +308,14 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   20/21 `vskill` skills ingest at PROPOSED; the two rejections are
   skills whose body or resource set exceeds the record bound and are
   reported with reasons. Re-ingesting either tree is a no-op.
-- Suite: **793 passed, 2 skipped** (777 + 16 ingestion/registry tests).
+- **Worked holdout template.** `tools/skill_holdout.py` carries two
+  examples (`write-skills`, `php2shell-check`) with evaluator-private
+  acceptance tests and runs ingest → probe (arm E with the skill's
+  guidance, arm A without) → `CandidateEvidenceV1` + `CandidateDecisionV1`
+  → serve → recorded outcome. Both examples qualify and serve their
+  steps, with A=0/E=1; the deterministic agent makes this machinery
+  evidence, not an efficacy claim.
+- Suite: **796 passed, 2 skipped** (777 + 19 ingestion/holdout tests).
 
 ## Defects found and fixed during the build
 

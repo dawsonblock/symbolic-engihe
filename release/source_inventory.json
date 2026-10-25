@@ -13,8 +13,8 @@
       "sha256": "f4e9590f3ebad5ffec1d03da3db058375438693dbcd93f2738ff3ea66da17b8d"
     },
     "CHANGELOG.md": {
-      "bytes": 12989,
-      "sha256": "27c1f87d6ec73888891f0ed8f2acfae5c2fab09a94fb661898a7666cbbef1478"
+      "bytes": 14561,
+      "sha256": "5f8b5d43bb9b7ecf63f5633cb7370510e0b6ebec50f66c54e299850f5294e8cb"
     },
     "LICENSE": {
       "bytes": 1083,
@@ -209,8 +209,8 @@
       "sha256": "7d135620438ea48d5e85bbbcb060a1ef055abe6448ece8316bfaa132a8356a1c"
     },
     "docs/v3/QUALIFICATION_REPORT.md": {
-      "bytes": 4593,
-      "sha256": "8f9e52934d9c4e75f37672b87bc416e608ca6dedc92b3c7435786b86172f6a67"
+      "bytes": 4888,
+      "sha256": "536137810d35a8fe4dfabe18bd377ef5890d07c151a5b3f6ae0343aefc831928"
     },
     "docs/v3/RELEASE_NOTES_V3_3.md": {
       "bytes": 4403,
@@ -249,8 +249,8 @@
       "sha256": "34c36853056adb7bee45d7540b409c8ad61856329d85d11478e900a7b91e7779"
     },
     "docs/v3/V33_LIMITATIONS.md": {
-      "bytes": 3531,
-      "sha256": "250afde8d9d0a49ba697119ae36a9fb5d7393c4437d05f567b496d5c5b30074f"
+      "bytes": 4169,
+      "sha256": "83202e932628f0f6ad8c1946349cdf573d4c2243d231912173599ef23a757049"
     },
     "docs/v3/episodes/live-001/README.md": {
       "bytes": 1310,
@@ -313,8 +313,8 @@
       "sha256": "cf37dcf13a8cdca74cef5dddaee7ac972f3ee9feb3c316222d46b3d0f64d6986"
     },
     "evidence/benchmark/governed_evaluation.json": {
-      "bytes": 4602,
-      "sha256": "5c9126b2f70c6b749d97b777d530101e1865c43ba6d2231ee9fdf458b5575be8"
+      "bytes": 5010,
+      "sha256": "51e7ca997619e074e52beb6c12d64035a9e0f54a4f4351283488bae4faa324c6"
     },
     "evidence/benchmark/live-campaign/live_campaign_evidence.json": {
       "bytes": 22296,
@@ -1227,5 +1227,5 @@
   },
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "9d75de85a91233c968945fd608fe4512a9564964"
+  "source_commit": "5ba7b38027853a21b08794749b97eb6f2c736924"
 }

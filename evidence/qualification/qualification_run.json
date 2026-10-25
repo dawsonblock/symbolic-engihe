@@ -2,14 +2,14 @@
   "schema_version": 1,
   "kind": "qualification_run",
   "branch": "codex/sis-v3.3-governed-learning",
-  "generated_at": "2026-10-25T22:44:10Z",
-  "commit_at_generation": "cbfe5761ba25a995e58b12c2ce5db84530034c9c",
-  "note": "the suite, deterministic campaign, smoke and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
+  "generated_at": "2026-10-25T23:03:41Z",
+  "commit_at_generation": "98c2455f48631f5672b1c101b0283ffb1dbcfb8b",
+  "note": "the suite, deterministic campaign, smoke, ingestion smoke and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
   "commands": [
     {
       "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
       "result": {
-        "passed": 777,
+        "passed": 793,
         "skipped": 2,
         "failed": 0
       }
@@ -54,6 +54,21 @@
       }
     },
     {
+      "command": "PYTHONPATH=src python3 tools/ingest_skills.py --skills skills/skills-main/skills --registry <dir>/c.db --scope-kind family_id --scope-value skills",
+      "result": {
+        "exit_code": 1,
+        "discovered": 34,
+        "submitted": 33,
+        "rejected": 1,
+        "rejected_reasons": [
+          "graphics/isometric-motion: skill_body_too_large"
+        ],
+        "state_after_ingest": "proposed",
+        "second_run": "33 already_present, 0 submitted",
+        "verdict": "packaging smoke only; ingested skills are unqualified and were not evaluated"
+      }
+    },
+    {
       "command": "security failure injection (13 scenarios)",
       "result": {
         "scenarios_failing": 0,
@@ -63,7 +78,7 @@
       }
     },
     {
-      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 777 --skipped 2 --failed 0",
+      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 793 --skipped 2 --failed 0",
       "result": "see release/release_manifest.json and release/verification.json"
     }
   ],

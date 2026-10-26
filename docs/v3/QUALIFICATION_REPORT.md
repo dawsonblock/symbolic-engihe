@@ -28,7 +28,7 @@ planned.
 
 | Command | Result |
 |---|---|
-| `PYTHONPATH=src python3 -m pytest tests/ -q` | **796 passed, 2 skipped, 0 failed** |
+| `PYTHONPATH=src python3 -m pytest tests/ -q` | **801 passed, 2 skipped, 0 failed** |
 | `PYTHONPATH=src python3 tools/governed_campaign.py -o <dir>` | exit 0; A=0 B=2 C=2 D=0 E=2; 5 candidates qualified; revocation demo passed |
 | `PYTHONPATH=src python3 tools/governed_live_campaign.py -o <dir> --wall 120` | exit 0; authenticated `codex exec`; A=2 B=2 C=2 D=2 E=2 (ceiling hit) |
 | `PYTHONPATH=src python3 tools/live_study.py ... --wall 120` | A=4 B=3 C=3 D=5; D-vs-A 1W/0L, McNemar p=1.0 (underpowered) |

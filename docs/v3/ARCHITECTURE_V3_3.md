@@ -50,6 +50,7 @@ ingest_skills.py    --[learner]-->    CandidateRegistry (PROPOSED only)
 | `tools/governed_campaign.py` | deterministic end-to-end campaign CLI (M9) |
 | `tools/ingest_skills.py` | ingest a skill directory/tree/bundle into a candidate registry at PROPOSED (M10) |
 | `tools/skill_holdout.py` | worked holdout examples: ingest → probe (E vs A) → signed qualification → serve (M10) |
+| `tools/skill_holdouts.py` | holdout registry: worked examples, planned tiers, excluded skills with reasons (M10) |
 
 ## Learning tracks
 

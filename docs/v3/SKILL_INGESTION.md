@@ -91,12 +91,14 @@ ignored. Nothing is executed, imported, or fetched over the network.
 ## Worked holdout examples
 
 `tools/skill_holdout.py` is the template for turning an ingested skill into
-served guidance. It ships two complete examples and runs the whole path:
+served guidance. Examples live in the `tools/skill_holdouts.py` registry
+(`--list`, `--tier`, `--only`); see `SKILL_HOLDOUTS.md` for the full map.
 
 | example | fixture (buggy state) | private acceptance test |
 |---|---|---|
 | `write-skills` | `SKILL.md` with no frontmatter | frontmatter has `name`/`description`, body has a heading and a bullet |
 | `php2shell-check` | `FROM php:8.4-fpm` (floating, vulnerable) | `Dockerfile` pins `php:8.4.27`, `findings.md` names CVE-2026-109618 |
+| `write-tests` | `calc.py` with no tests | the submitted suite passes on the original and fails on a mutated implementation |
 
 ```bash
 python3 tools/skill_holdout.py \
@@ -109,14 +111,15 @@ Per skill it ingests at PROPOSED, moves to EVALUATING, runs a holdout probe
 with only that skill's guidance (arm E) and a no-guidance baseline (arm A),
 issues `CandidateEvidenceV1` + `CandidateDecisionV1`, qualifies, serves
 through the gateway, and records the outcome. The report shows `A=0, E=1`
-for both examples: the scripted stand-in writes the prescribed artifact only
+for every example: the scripted stand-in writes the prescribed artifact only
 when the served guidance carries the skill's keyword, so the contrast is
 machinery evidence, not a claim about real-agent efficacy.
 
 Keys are test custody generated per run; the acceptance tests stay with the
-verifier and never enter the served repository. To add a skill, copy a
-`Holdout` entry: fixture repo, private test, the artifact a guided agent
-writes, and a keyword that appears in the skill's own steps.
+verifier and never enter the served repository. To add a skill, add a
+`Holdout` entry in `tools/skill_holdouts.py`: fixture repo, private test,
+the artifact a guided agent writes, and a keyword that appears in the
+skill's own steps.
 
 This tool is the v3 candidate holdout template. The older
 `sis.skill_holdout` module and `tools/demo_skill_holdout.py` are the v2

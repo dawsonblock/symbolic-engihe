@@ -46,11 +46,11 @@ import hashlib
 import json
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sis.v3.benchmark import BenchmarkHarness, BudgetCaps  # noqa: E402
 from sis.v3.candidate_authority import (CandidateDecisionAuthority,  # noqa: E402
@@ -60,7 +60,8 @@ from sis.v3.composition import compose_guidance  # noqa: E402
 from sis.v3.contracts import (ContractError, GuidanceRequestV1,  # noqa: E402
                               GuidanceV1, TaskEnvelopeV1)
 from sis.v3.governed_eval import preregister, run_candidate_probe  # noqa: E402
-from sis.v3.runner import LocalSubprocessExecutor, tree_digest  # noqa: E402
+from sis.v3.runner import (LocalSubprocessExecutor,  # noqa: E402
+                           ResourceLimits, tree_digest)
 from sis.v3.serving import GovernedServingGateway  # noqa: E402
 from sis.v3.skill_ingest import (SkillIngestError, discover_skills,  # noqa: E402
                                  ingest_skill, load_skill)
@@ -74,87 +75,7 @@ EVALUATOR = "skill-holdout-evaluator"
 BASE_COMMIT = "a1b2c3d"
 
 
-@dataclass(frozen=True)
-class Holdout:
-    """One worked example: a skill, a fixture repo and a private test."""
-
-    skill: str
-    task_id: str
-    statement: str
-    keyword: str
-    fixture: dict
-    good: dict
-    test: str
-
-
-WRITE_SKILL = Holdout(
-    skill="write-skills",
-    task_id="task-write-skill",
-    statement=("Write a reusable agent skill that formats currency amounts "
-               "with half-up rounding and a fixed two-decimal string."),
-    keyword="description",
-    fixture={
-        "README.md": (
-            "# Currency skill\n\n"
-            "Write a reusable skill for formatting money in Python.\n"
-            "The skill file must be `SKILL.md` at the repo root.\n"),
-        "SKILL.md": "# currency-skill\n\nDo the rounding thing.\n",
-    },
-    good={
-        "SKILL.md": (
-            "---\n"
-            "name: currency-format\n"
-            "description: Use when formatting currency amounts for output.\n"
-            "---\n\n"
-            "# Currency format\n\n"
-            "## Workflow\n\n"
-            "- Use Decimal with ROUND_HALF_UP.\n"
-            "- Return a two-decimal string.\n"),
-    },
-    test=(
-        "from pathlib import Path\n\n"
-        "def test_frontmatter():\n"
-        "    text = Path('SKILL.md').read_text()\n"
-        "    assert text.startswith('---')\n"
-        "    assert 'name:' in text\n"
-        "    assert 'description:' in text\n\n"
-        "def test_body():\n"
-        "    text = Path('SKILL.md').read_text()\n"
-        "    assert '## ' in text\n"
-        "    assert '- ' in text\n"),
-)
-
-PHP_CHECK = Holdout(
-    skill="php2shell-check",
-    task_id="task-php-exposure",
-    statement=("Assess this service's PHP exposure and pin a fixed runtime."),
-    keyword="8.4.27",
-    fixture={
-        "Dockerfile": "FROM php:8.4-fpm\nCOPY app /app\nWORKDIR /app\n",
-        "app/index.php": "<?php echo 'ok';\n",
-    },
-    good={
-        "Dockerfile": "FROM php:8.4.27-fpm\nCOPY app /app\nWORKDIR /app\n",
-        "findings.md": (
-            "# PHP exposure\n\n"
-            "- php2shell: CVE-2026-109618 and CVE-2026-109619 affect every "
-            "web SAPI on 8.4 below 8.4.27.\n"
-            "- Pinned php:8.4.27-fpm; rebuild with --pull --no-cache and "
-            "restart workers.\n"),
-    },
-    test=(
-        "from pathlib import Path\n\n"
-        "def test_pinned_fixed_tag():\n"
-        "    text = Path('Dockerfile').read_text()\n"
-        "    assert 'php:8.4.27' in text\n"
-        "    assert 'php:8.4-fpm' not in text\n\n"
-        "def test_findings_name_the_cve():\n"
-        "    text = Path('findings.md').read_text()\n"
-        "    assert 'CVE-2026-109618' in text\n"
-        "    assert '8.4.27' in text\n"),
-)
-
-HOLDOUTS = (WRITE_SKILL, PHP_CHECK)
+from skill_holdouts import Holdout, describe, select  # noqa: E402
 
 
 def _utcnow() -> str:
@@ -191,6 +112,11 @@ def _agent(holdout: Holdout):
     return run
 
 
+def _family(holdout: Holdout) -> str:
+    """One scope per example: a serve must see only this skill."""
+    return "holdout-" + holdout.skill
+
+
 def _build_task(holdout: Holdout, root: Path, verifier, registry, seed):
     repo = root / "fixtures" / holdout.task_id
     repo.mkdir(parents=True)
@@ -200,7 +126,7 @@ def _build_task(holdout: Holdout, root: Path, verifier, registry, seed):
         target.write_text(content, encoding="utf-8")
     repo_tree = tree_digest(repo)
     register_repo(registry, seed, registry_id="repo-" + holdout.task_id,
-                  family_id=FAMILY, base_tree_digest=repo_tree)
+                  family_id=_family(holdout), base_tree_digest=repo_tree)
     statement_digest = hashlib.sha256(holdout.statement.encode()).hexdigest()
     verifier.register_task(
         actor_role="evaluator", task_id=holdout.task_id,
@@ -253,30 +179,47 @@ def _pass_receipts(report, arm, verifier) -> list:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skills-root", action="append", required=True,
-                        type=Path)
-    parser.add_argument("--output", "-o", required=True, type=Path)
+    parser.add_argument("--skills-root", action="append", type=Path)
+    parser.add_argument("--output", "-o", type=Path)
     parser.add_argument("--work", type=Path, default=None)
+    parser.add_argument("--list", action="store_true",
+                        help="print the registered/planned/excluded registry")
+    parser.add_argument("--tier", choices=("A", "B"), default=None)
+    parser.add_argument("--only", default=None)
     args = parser.parse_args()
+
+    if args.list:
+        print(json.dumps(describe(), indent=2, sort_keys=True))
+        return 0
+    if not args.skills_root or args.output is None:
+        parser.error("--skills-root and -o are required unless --list")
+    selected = select(tier=args.tier, only=args.only)
+    if not selected:
+        print(json.dumps({"error": "no_registered_holdouts_selected",
+                          "tier": args.tier, "only": args.only}))
+        return 2
 
     root = args.work or Path(tempfile.mkdtemp(prefix="sis-skill-holdout-"))
     root.mkdir(parents=True, exist_ok=True)
     index = _skill_index(args.skills_root)
-    missing = [h.skill for h in HOLDOUTS if h.skill not in index]
+    missing = [h.skill for h in selected if h.skill not in index]
 
     registry, reg_seed = make_registry()
     repo_registry, repo_seed = make_registry()
-    register_repo(repo_registry, repo_seed, registry_id="skill-holdout-repo",
-                  family_id=FAMILY)
     eval_seed, eval_pub, eval_key = evaluator_keypair()
     op_seed, op_pub, op_key = evaluator_keypair()
     evidence_authority = CandidateEvidenceAuthority(
         trusted_evaluator_keys={eval_key: eval_pub.hex()})
     decision_authority = CandidateDecisionAuthority(
         trusted_operator_keys={op_key: op_pub.hex()})
+    # The write-tests meta-test runs the submitted suite in a nested
+    # process, which RLIMIT_NPROC=64 blocks on platforms that count every
+    # process of the user (macOS). The limit is opt-out here only.
     verifier = OutcomeVerifier(
         executor=LocalSubprocessExecutor(root / "exec"),
-        key_dir=root / "eval-keys", registry_dir=root / "eval-reg")
+        key_dir=root / "eval-keys", registry_dir=root / "eval-reg",
+        limits=ResourceLimits(wall_seconds=120, cpu_seconds=60,
+                              process_count=None))
 
     def authenticated_receipt(digest):
         receipt = verifier.load_receipt(digest)
@@ -307,7 +250,7 @@ def main() -> int:
         receipt_authority=authenticated_receipt)
 
     results = []
-    for holdout in HOLDOUTS:
+    for holdout in selected:
         entry = {"skill": holdout.skill, "task_id": holdout.task_id}
         if holdout.skill not in index:
             entry.update(status="missing_skill")
@@ -316,10 +259,14 @@ def main() -> int:
         try:
             env, repo = _build_task(holdout, root, verifier, registry,
                                     reg_seed)
+            family = _family(holdout)
+            register_repo(repo_registry, repo_seed,
+                          registry_id="serve-" + holdout.task_id,
+                          family_id=family)
             ingested = ingest_skill(
                 index[holdout.skill], candidates,
-                scope_kind="family_id", scope_value=FAMILY,
-                target_task_family=FAMILY)
+                scope_kind="family_id", scope_value=family,
+                target_task_family=family)
             entry.update(candidate_id=ingested["candidate_id"],
                          candidate_digest=ingested["digest"],
                          scan_findings=ingested["scan_findings"])
@@ -370,8 +317,9 @@ def main() -> int:
                 evidence_refs=(evidence.digest,),
                 decision_ref=decision.digest,
                 note="skill holdout qualified")
-            served = gateway.serve(_request(env),
-                                   repository_id="skill-holdout-repo")
+            served = gateway.serve(
+                _request(env),
+                repository_id="serve-" + holdout.task_id)
             delivered = any(step in served.helpful_next_checks
                             for step in guidance.helpful_next_checks)
             gateway.record_outcome(
@@ -404,6 +352,9 @@ def main() -> int:
         "protocol_digest": protocol["protocol_digest"],
         "keys": {"evaluator": eval_key, "operator": op_key},
         "skills_roots": [str(path) for path in args.skills_root],
+        "selected": [h.skill for h in selected],
+        "tier": args.tier,
+        "only": args.only,
         "missing_skills": missing,
         "results": results,
         "serving_audit": serving_audit,
@@ -414,6 +365,7 @@ def main() -> int:
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps({
         "kind": report["kind"],
+        "selected": report["selected"],
         "missing_skills": missing,
         "results": [{k: r.get(k) for k in
                      ("skill", "status", "candidate_id", "probe")}

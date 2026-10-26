@@ -7,7 +7,7 @@ from pathlib import Path
 from sis.v3 import signatures
 from sis.v3.contracts import ContractError, OutcomeReceiptV1, TaskEnvelopeV1
 from sis.v3.policy import AuthorizationDenied
-from sis.v3.runner import LocalSubprocessExecutor
+from sis.v3.runner import LocalSubprocessExecutor, ResourceLimits
 from sis.v3.verifier import (
     EvaluationRejected,
     JournalIntegrityError,
@@ -73,6 +73,7 @@ class VerifierFixture(unittest.TestCase):
         )
 
 
+
 class SignaturePrimitiveTests(unittest.TestCase):
     def test_rfc8032_known_answer(self):
         seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
@@ -121,6 +122,24 @@ class SignaturePrimitiveTests(unittest.TestCase):
         self.assertTrue(signatures.verify(foreign_signature, b"cross-check", public))
         own_signature = signatures.sign(seed, b"cross-check")
         Ed25519PublicKey.from_public_bytes(public).verify(own_signature, b"cross-check")
+
+
+class EvaluatorLimitsTests(unittest.TestCase):
+    def test_evaluator_limits_are_configurable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            executor = LocalSubprocessExecutor(
+                root / "exec", use_seatbelt=False)
+            default = OutcomeVerifier(
+                executor=executor, key_dir=root / "keys",
+                registry_dir=root / "registry")
+            self.assertEqual(default.limits.process_count, 64)
+            relaxed = OutcomeVerifier(
+                executor=executor, key_dir=root / "relaxed-keys",
+                registry_dir=root / "relaxed-registry",
+                limits=ResourceLimits(wall_seconds=90, process_count=None))
+            self.assertIsNone(relaxed.limits.process_count)
+            self.assertEqual(relaxed.limits.wall_seconds, 90)
 
 
 class VerifierCustodyTests(VerifierFixture):

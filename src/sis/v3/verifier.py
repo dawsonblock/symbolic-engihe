@@ -129,9 +129,15 @@ class OutcomeVerifier:
         registry_dir: str | Path,
         identity: str = "sis-v3-evaluator",
         trusted_keys: Mapping[str, str] | None = None,
+        limits: ResourceLimits | None = None,
     ) -> None:
         self.executor = executor
         self.identity = identity
+        # Acceptance-suite resource envelope. A meta-test that runs the
+        # submitted suite in a nested process needs process_count=None on
+        # platforms where RLIMIT_NPROC counts every process of the user.
+        self.limits = limits or ResourceLimits(
+            wall_seconds=120, cpu_seconds=60)
         self.registry_dir = Path(registry_dir)
         self.registry_dir.mkdir(parents=True, exist_ok=True)
         self.keystore = EvaluatorKeyStore(key_dir)
@@ -239,7 +245,7 @@ class OutcomeVerifier:
                 target.write_bytes(data)
             receipt_exec = self.executor.run(
                 workspace,
-                CommandSpec(argv=registration.argv, limits=ResourceLimits(wall_seconds=120, cpu_seconds=60)),
+                CommandSpec(argv=registration.argv, limits=self.limits),
             )
         finally:
             self.executor.destroy(workspace)

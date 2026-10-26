@@ -36,11 +36,14 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
   directories (`SKILL.md` + resources) into bounded `skill_bundle`
   candidates at PROPOSED, with traversal/symlink/size limits and an
   advisory scan; qualification still requires signed holdout evidence.
-- **Skill holdout template** — `tools/skill_holdout.py` ships two worked
-  examples (`write-skills`, `php2shell-check`) that run ingest → holdout
-  probe with and without guidance → evaluator evidence + operator
-  decision → serving, so a new skill has a copyable path to qualified
-  guidance.
+- **Skill holdout registry** — `tools/skill_holdouts.py` + 
+  `tools/skill_holdout.py` ship three worked examples (`write-skills`,
+  `php2shell-check`, `write-tests`) that run ingest → holdout probe with
+  and without guidance → evaluator evidence + operator decision →
+  serving. The registry records planned tiers and excluded skills with
+  reasons; `--list`, `--tier` and `--only` select examples, and the
+  `write-tests` meta-test requires the submitted suite to catch a
+  mutated implementation.
 - **Migration and revocation hardening** — upgrading a v3.3 registry
   reseals its audit chain only after the old chain verifies against the
   old digest domain (recorded in `registry_migration`); a missing
@@ -62,7 +65,7 @@ deliberately not claimed. See `V33_LIMITATIONS.md`.
 ## Verification
 
 - `PYTHONPATH=src python3 -m pytest tests/ -q`
-- **796 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
+- **801 passed, 2 skipped** (v3.3 adds registry, memory, evolution,
   composition, serving, packaging, governed-eval, campaign and
   release-binding tests, plus authority/evidence-binding and serving
   integrity regressions).- Every module compiles (`python3 -m py_compile`).

@@ -1,11 +1,11 @@
 {
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
-    "path": "release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
-    "sha256": "6caa5f75f79060bf2844f7e9222030dee6aa416d9ed81911da8d0228e141355d",
-    "source_files": 326
+    "path": "release/SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
+    "sha256": "2ec138523a5a12ee49acdc0b180906aa39cc0b37a03b7a4905ff391f9c8cb1eb",
+    "source_files": 358
   },
-  "branch": "codex/sis-v3.3-governed-learning",
+  "branch": "codex/sis-v3.3.1-authority-closure",
   "docs": [
     "docs/v3/ARCHITECTURE_V3_3.md",
     "docs/v3/CODEX_ADAPTER.md",
@@ -36,24 +36,29 @@
     "docs/audits/BASELINE_INTEGRITY.md"
   ],
   "evidence": [
+    "evidence/adversarial/",
+    "evidence/authority/",
     "evidence/baseline/",
     "evidence/benchmark/",
+    "evidence/evaluation/",
+    "evidence/ingestion/",
     "evidence/integration/",
     "evidence/qualification/",
     "evidence/release/",
+    "evidence/sandbox/",
     "evidence/security/",
     "evidence/skills/"
   ],
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
-  "release": "SIS-v3.3.0-GOVERNED-LEARNING",
+  "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "a744b0e2a099c4ebe1d35f0b8316e54737aecc26",
+  "source_commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
     "failed": 0,
-    "passed": 804,
-    "skipped": 2
+    "passed": 923,
+    "skipped": 3
   }
 }

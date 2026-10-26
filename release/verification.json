@@ -1,33 +1,33 @@
 {
-  "archive": "SIS-v3.3.0-GOVERNED-LEARNING.zip",
+  "archive": "SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
   "fresh_extraction": {
     "compileall_src": true,
     "extracted_test_smoke": {
       "command": "pytest -q tests/v3/test_candidates.py",
       "returncode": 0,
-      "tail": "39 passed in 0.77s"
+      "tail": "39 passed in 0.93s"
     },
     "verify_tree": {
-      "files": 326
+      "files": 358
     }
   },
   "kind": "release_verification",
   "schema_version": 1,
   "source": {
-    "commit": "a744b0e2a099c4ebe1d35f0b8316e54737aecc26",
+    "commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3",
     "dirty": false,
     "dirty_paths": []
   },
   "source_binding": {
-    "files": 326,
+    "files": 358,
     "project": "sis-v2-authority-transfer",
     "source_bound": true
   },
   "zip_verify": {
     "manifest": "RELEASE_SHA256.json",
     "project": "sis-v2-authority-transfer",
-    "source_files": 326,
+    "source_files": 358,
     "valid": true,
-    "zip_sha256": "6caa5f75f79060bf2844f7e9222030dee6aa416d9ed81911da8d0228e141355d"
+    "zip_sha256": "2ec138523a5a12ee49acdc0b180906aa39cc0b37a03b7a4905ff391f9c8cb1eb"
   }
 }

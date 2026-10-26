@@ -5,7 +5,7 @@
     "extracted_test_smoke": {
       "command": "pytest -q tests/v3/test_candidates.py",
       "returncode": 0,
-      "tail": "39 passed in 0.51s"
+      "tail": "39 passed in 0.67s"
     },
     "verify_tree": {
       "files": 358
@@ -14,7 +14,7 @@
   "kind": "release_verification",
   "schema_version": 1,
   "source": {
-    "commit": "15e640dda5b96cb5253eca55497e90fbd07c1a5a",
+    "commit": "e3b638cac344fb36da25b9f755c5746b0960a404",
     "dirty": false,
     "dirty_paths": []
   },
@@ -28,6 +28,6 @@
     "project": "sis-v2-authority-transfer",
     "source_files": 358,
     "valid": true,
-    "zip_sha256": "701d12a9bc54145a8ecd82896e11cd85c82ccffafdb5d511283840416f1937fb"
+    "zip_sha256": "1b80cc89f8a8e0b2c5ba8823b9925fcda75abfeca02db9209bc1b06ba40ccebb"
   }
 }

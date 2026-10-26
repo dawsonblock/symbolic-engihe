@@ -1,8 +1,8 @@
 {
   "files": {
     ".github/workflows/ci.yml": {
-      "bytes": 994,
-      "sha256": "744ecce9762b1a9fd5604d55ab1a1afcccf592724462f74c3dc60574e48580da"
+      "bytes": 974,
+      "sha256": "19b2ecf6ab0159a5b773ecb5b4b9ab3fe0ea33c52d28baeaa7f484cf4b93360c"
     },
     ".gitignore": {
       "bytes": 169,
@@ -625,8 +625,8 @@
       "sha256": "19b6e2d24da17f77919d3ee70f0ff5e1cb8278f37bbb17c86e96c208335a6e73"
     },
     "pyproject.toml": {
-      "bytes": 744,
-      "sha256": "43f50f914d762fa52dd8bc15ffe4afe4a65ce03e71977b4a8457ab2a0c26b765"
+      "bytes": 774,
+      "sha256": "203498fe905046ef3f80d67fffbf0cfc925fd4e1a3515cf9c372df0a51410eea"
     },
     "scripts/v3/run_codex_episode.py": {
       "bytes": 5678,
@@ -729,8 +729,8 @@
       "sha256": "6db3c5bc24f10e45911dc13d7a10bf8e7490c7b71a5700c91a198400a7345c86"
     },
     "src/sis/server.py": {
-      "bytes": 8482,
-      "sha256": "606dfb22dcb8a08e1e8c6845cf41b121e20d0f4cbd762f27d315f10549c944bb"
+      "bytes": 8523,
+      "sha256": "6484c4e9e7133ee3c7c58ec86a0b8260453f1eaec25d054aabb6889a0e781571"
     },
     "src/sis/service.py": {
       "bytes": 11063,
@@ -1313,8 +1313,8 @@
       "sha256": "270a17e6f79d93903f085a7760932ee3374d87a22784c0c2647563ced27d87aa"
     },
     "tests/v3/test_skill_ingest_hardening.py": {
-      "bytes": 14717,
-      "sha256": "71811737fbf2b6562c86a1a0dd8cf551ceb5a86663c8afa0a53c59317a9253b1"
+      "bytes": 14820,
+      "sha256": "f206a0ae900a7e43aacd5a98d027d46c55a5d978f8a6853f990e2ad4da4c3c06"
     },
     "tests/v3/test_source_change.py": {
       "bytes": 4310,
@@ -1426,7 +1426,7 @@
     },
     "tools/smoke_integration.py": {
       "bytes": 5572,
-      "sha256": "f64fb97c29493f30ca7d096b708f8749de79aa3fe128f8053f04594d99b71455"
+      "sha256": "cb27641a4d6297d20aeb86ad19d3892e257b91699a85ffe4af3e07de21dc48d9"
     },
     "tools/verify_release.py": {
       "bytes": 11415,
@@ -1435,5 +1435,5 @@
   },
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "15e640dda5b96cb5253eca55497e90fbd07c1a5a"
+  "source_commit": "e3b638cac344fb36da25b9f755c5746b0960a404"
 }

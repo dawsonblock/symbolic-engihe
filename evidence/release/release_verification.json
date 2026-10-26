@@ -2,7 +2,8 @@
   "archive": {
     "path": "release/SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
     "project_dir": "sis-v2-authority-transfer",
-    "sha256": "2ec138523a5a12ee49acdc0b180906aa39cc0b37a03b7a4905ff391f9c8cb1eb",
+    "sha256": "646ff18c083a1e3e8dae9269e389a7abefe3f82efb3fd0f3b5e773dc87860e3e",
+    "sha256_verified_by": "tools/verify_release.py (streaming ZIP verification)",
     "source_files": 358,
     "verification": {
       "archive": "SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
@@ -11,7 +12,7 @@
         "extracted_test_smoke": {
           "command": "pytest -q tests/v3/test_candidates.py",
           "returncode": 0,
-          "tail": "39 passed in 0.93s"
+          "tail": "39 passed in 0.83s"
         },
         "verify_tree": {
           "files": 358
@@ -20,7 +21,7 @@
       "kind": "release_verification",
       "schema_version": 1,
       "source": {
-        "commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3",
+        "commit": "75fc0ca903048b74b2343790369b8605d46ec1a7",
         "dirty": false,
         "dirty_paths": []
       },
@@ -34,7 +35,7 @@
         "project": "sis-v2-authority-transfer",
         "source_files": 358,
         "valid": true,
-        "zip_sha256": "2ec138523a5a12ee49acdc0b180906aa39cc0b37a03b7a4905ff391f9c8cb1eb"
+        "zip_sha256": "646ff18c083a1e3e8dae9269e389a7abefe3f82efb3fd0f3b5e773dc87860e3e"
       }
     }
   },
@@ -117,7 +118,7 @@
     "learning_efficacy": "BLOCKED_NOT_EVALUATED",
     "sandbox": "IMPLEMENTED_DEFENSE_IN_DEPTH_NOT_A_VALIDATED_OS_BOUNDARY"
   },
-  "source_commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3",
+  "source_commit": "75fc0ca903048b74b2343790369b8605d46ec1a7",
   "tests": {
     "baseline_v33": {
       "failed": 0,

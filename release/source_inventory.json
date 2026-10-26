@@ -1333,16 +1333,16 @@
       "sha256": "840d9049ca985d65363abe693065e12745d623c68ca95cd4418e8cafd2d73eaf"
     },
     "tools/build_canonical_zip.py": {
-      "bytes": 3941,
-      "sha256": "e55194a8c37925f5b65b8d667098aa9f7ebaaa86079b09b8df06eb36ebdb48e9"
+      "bytes": 4006,
+      "sha256": "3487fb211e17ff342d67fe222afc782a2113fc22452525edda50ff6647904bf4"
     },
     "tools/build_release.py": {
       "bytes": 2672,
       "sha256": "e0454782992de58b7c68ed1c9fe4a77d7fd85621797f6cbfbfc8dfe8c757ad27"
     },
     "tools/check_source_manifest.py": {
-      "bytes": 7394,
-      "sha256": "450656d91fc46deca6246da0ed2a1915140a41b0dc15c51de43c0670c9f0cdce"
+      "bytes": 7463,
+      "sha256": "402f119d14de8b43e0812950228bc6e3b26d7214a85ddd0782341119244ad0f7"
     },
     "tools/demo_code_learning.py": {
       "bytes": 2349,
@@ -1435,5 +1435,5 @@
   },
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3"
+  "source_commit": "75fc0ca903048b74b2343790369b8605d46ec1a7"
 }

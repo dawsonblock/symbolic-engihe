@@ -1,9 +1,9 @@
 {
-  "base_commit": "a6ab287d489f49a4ddd84d5c5d866601ad152fb3",
+  "base_commit": "75fc0ca903048b74b2343790369b8605d46ec1a7",
   "branch": "codex/sis-v3.3.1-authority-closure",
   "builder": "tools/package_release.py -> tools/build_canonical_zip.py",
   "commit_binding": "every archive member is re-hashed against the working tree at build time (verify_against_tree); the source commit and dirty state are recorded in release/verification.json",
-  "generated_at": "2026-10-26T09:36:06Z",
+  "generated_at": "2026-10-26T09:36:49Z",
   "kind": "release_build_record",
   "manifest_scope": "all _included() source/evidence files; release/ and evidence/release/build_record.json are out-of-band and never inventoried into the archive",
   "post_build_verification": "release/verification.json \u2014 outside the archive by construction",

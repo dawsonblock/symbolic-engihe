@@ -32,7 +32,7 @@
   demonstration; the powered real-agent run is blocked in this release.
 - Added docs/V331_ARCHITECTURE.md and the v3.3.1 authority, certificate,
   identity, custody, ingestion, evaluation, threat-model, migration and
-  release documents. Suite: **923 passed, 3 skipped**.
+  release documents. Suite: **926 passed, 3 skipped**.
 
 ## 2026-10-25 — Skill ingestion (M10)
 

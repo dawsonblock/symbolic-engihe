@@ -92,10 +92,11 @@
 ## Test evidence
 
 - Baseline v3.3 branch: **804 passed, 2 skipped**.
-- v3.3.1: **923 passed, 3 skipped, 0 failed** (`PYTHONPATH=src python3 -m
-  pytest -q`).
-- New suites: authority checkpoints 23, evaluation certificates 20,
-  execution identity/custody 22, skill ingestion hardening 18 + 1 skip,
+- v3.3.1: **926 passed, 3 skipped, 0 failed**
+  (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src
+  python3 -m pytest -q`).
+- New suites: authority checkpoints 23, evaluation certificates 22,
+  execution identity/custody 22, skill ingestion hardening 19 + 1 skip,
   evaluator runtime 19, learning qualification 15.
 - Skill compatibility: 65/66 vskill `SKILL.md` files parse; the one
   rejection is an e2e fixture with no description and only an HTML
@@ -124,3 +125,6 @@
   provenance)
 - `evidence/` — baseline, authority, adversarial, ingestion, sandbox,
   evaluation and release evidence.
+- `evidence/release/release_verification.json` is out-of-band: it
+  contains the archive hash and therefore cannot be a member of the
+  archive it describes.

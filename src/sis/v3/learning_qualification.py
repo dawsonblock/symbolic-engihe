@@ -442,8 +442,10 @@ class CodexCliAgent:
         for event in turn:
             if event.event_type in {"tool_request", "tool_result"}:
                 tools += 1
-        self._adapter.close()
         return {"tokens_used": None, "tools_used": tools}
+
+    def close(self) -> None:
+        self._adapter.close()
 
 
 def write_report(report: Mapping, path: str | Path) -> Path:

@@ -78,7 +78,9 @@ def fresh_extraction_checks(tree: Path) -> dict:
     smoke = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", SMOKE_TEST],
         cwd=tree, capture_output=True, text=True,
-        env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin"},
+        env={"PYTHONPATH": "src", "PATH": "/usr/bin:/bin",
+             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+             "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1"},
     )
     lines = (smoke.stdout or smoke.stderr).strip().splitlines()
     tail = lines[-1] if lines else ""
@@ -179,7 +181,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
         ),
         "status": status,
         "test_result": {
-            "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
+            "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
             "passed": passed,
             "skipped": skipped,
             "failed": failed,

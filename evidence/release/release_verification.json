@@ -125,9 +125,9 @@
       "passed": 804,
       "skipped": 2
     },
-    "command": "PYTHONPATH=src python3 -m pytest -q",
+    "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 923,
+    "passed": 926,
     "skipped": 3
   }
 }

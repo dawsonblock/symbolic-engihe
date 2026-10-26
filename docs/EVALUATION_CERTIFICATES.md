@@ -115,6 +115,8 @@ cannot serve production.
 - sample count must match receipts;
 - unrelated task receipt rejected;
 - candidate digest mismatch rejected;
+- receipt from an unauthorized repository rejected;
+- high-risk skill security blocks production qualification;
 - missing delivery attestation blocks;
 - forged conformance flag cannot override evidence;
 - exploratory evidence retained but not production;

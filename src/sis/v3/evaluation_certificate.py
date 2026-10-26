@@ -380,6 +380,9 @@ class QualificationValidator:
         self._protocols = protocol_registry
         self._receipts = receipt_resolver
         self._delivery_resolver = delivery_resolver
+        if policy.required_evidence_class == PRODUCTION_EVIDENCE_CLASS \
+                and receipt_resolver is None:
+            raise CertificateError("receipt_resolver_required")
         self._revoked = frozenset(revoked_certificates)
         self._status = certificate_status
         self._now = now
@@ -460,10 +463,16 @@ class QualificationValidator:
         check("authorized_task_scope",
               not self.policy.authorized_task_ids
               or set(task_ids) <= set(self.policy.authorized_task_ids))
+        check("repository_snapshots_present",
+              bool(certificate.repository_snapshot_digests))
         check("authorized_repository_scope",
               not self.policy.authorized_repository_digests
               or set(certificate.repository_snapshot_digests)
               <= set(self.policy.authorized_repository_digests))
+        security = candidate.payload.get("security", {})
+        check("candidate_security_auto_qualification_allowed",
+              not (isinstance(security, Mapping)
+                   and security.get("auto_qualification_allowed") is False))
 
         interval = certificate.confidence_interval
         check("confidence_level",
@@ -494,6 +503,8 @@ class QualificationValidator:
         if self._receipts is not None:
             check("receipts_authenticate",
                   self._verify_receipts(certificate))
+            check("receipt_repository_scope",
+                  self._verify_receipt_repositories(certificate))
 
         return QualificationValidation(
             ok=not failures, failures=tuple(failures), checks=checks)
@@ -545,6 +556,24 @@ class QualificationValidator:
                 if getattr(receipt, "task_id", None) != item["task_id"]:
                     return False
                 if getattr(receipt, "outcome", None) != item["outcome"]:
+                    return False
+        except Exception:
+            return False
+        return True
+
+    def _verify_receipt_repositories(
+        self, certificate: EvaluationCertificateV1
+    ) -> bool:
+        """Every receipt must name a repository the certificate binds."""
+        allowed = set(certificate.repository_snapshot_digests)
+        if not allowed:
+            return False
+        try:
+            for item in certificate.individual_task_receipts:
+                receipt = self._receipts(item["receipt_digest"])
+                repository = getattr(
+                    receipt, "evaluated_repo_digest", None)
+                if repository not in allowed:
                     return False
         except Exception:
             return False

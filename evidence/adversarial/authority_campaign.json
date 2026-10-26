@@ -9,7 +9,7 @@
     },
     "tests/v3/test_evaluation_certificates.py": {
       "failed": 0,
-      "passed": 20
+      "passed": 22
     },
     "tests/v3/test_evaluation_runtime.py": {
       "failed": 0,
@@ -25,7 +25,7 @@
     },
     "tests/v3/test_skill_ingest_hardening.py": {
       "failed": 0,
-      "passed": 18,
+      "passed": 19,
       "skipped": 1
     }
   }

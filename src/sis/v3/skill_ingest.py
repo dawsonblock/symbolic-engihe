@@ -729,8 +729,7 @@ def discover_skills_page(
     if (root / SKILL_FILE).is_file():
         skills = [root] if offset == 0 else []
         return SkillDiscoveryResult(
-            skills, scanned=1, limit=limit, offset=offset,
-            complete=offset == 0)
+            skills, scanned=1, limit=limit, offset=offset, complete=True)
     found: list[Path] = []
     stop_at = offset + limit + 1
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -795,6 +794,9 @@ def ingest_tree(
     the report then states ``discovery.complete=False``.
     """
     root = Path(root)
+    if max_skills is not None and (
+            type(max_skills) is not int or max_skills < 1):
+        raise SkillIngestError("skill_max_skills_invalid")
     report = SkillIngestReport([], discovery={
         "complete": True, "scanned": 0, "pages": 0,
         "limit": MAX_SCAN_SKILLS, "next_offset": None})

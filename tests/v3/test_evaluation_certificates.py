@@ -90,6 +90,7 @@ class CertificateFixture:
             certificate_authority=self.cert_authority,
             delivery_authority=self.delivery_authority,
             protocol_registry=self.protocols,
+            receipt_resolver=lambda digest: self.stack.resolve_receipt(digest),
             delivery_resolver=self.deliveries.__getitem__,
         )
         self.stack = CandidateStack(
@@ -399,6 +400,7 @@ class QualificationTests(unittest.TestCase):
             certificate_authority=fixture.cert_authority,
             delivery_authority=fixture.delivery_authority,
             protocol_registry=fixture.protocols,
+            receipt_resolver=fixture.stack.resolve_receipt,
             delivery_resolver=fixture.deliveries.__getitem__,
             revoked_certificates={certificate.digest})
         validation = revoked.validate(certificate, fixture.candidate)
@@ -459,6 +461,47 @@ class QualificationTests(unittest.TestCase):
             forged, fixture.candidate)
         self.assertFalse(validation.ok)
         self.assertIn("certificate_signature", validation.failures)
+
+    def test_receipt_from_other_repository_is_rejected(self):
+        fixture = CertificateFixture(self.root)
+        self.addCleanup(fixture.stack.close)
+        certificate = fixture.certificate()
+
+        class _OtherRepositoryReceipt:
+            def __init__(self, task_id):
+                self.task_id = task_id
+                self.outcome = "pass"
+                self.evaluated_repo_digest = "b" * 64
+
+        target = fixture.entries[0]["receipt_digest"]
+        validator = QualificationValidator(
+            fixture.policy,
+            certificate_authority=fixture.cert_authority,
+            delivery_authority=fixture.delivery_authority,
+            protocol_registry=fixture.protocols,
+            receipt_resolver=lambda digest: (
+                _OtherRepositoryReceipt(fixture.entries[0]["task_id"])
+                if digest == target
+                else fixture.stack.resolve_receipt(digest)),
+            delivery_resolver=fixture.deliveries.__getitem__,
+        )
+        validation = validator.validate(certificate, fixture.candidate)
+        self.assertFalse(validation.ok)
+        self.assertIn("receipt_repository_scope", validation.failures)
+
+    def test_high_risk_skill_security_blocks_production_certificate(self):
+        fixture = CertificateFixture(self.root)
+        self.addCleanup(fixture.stack.close)
+        risky = make_candidate(
+            cid="risky-skill",
+            payload={"title": "t", "steps": ["do it"],
+                     "security": {"auto_qualification_allowed": False,
+                                  "highest_severity": "high"}})
+        certificate = fixture.certificate(candidate=risky)
+        validation = fixture.validator.validate(certificate, risky)
+        self.assertFalse(validation.ok)
+        self.assertIn("candidate_security_auto_qualification_allowed",
+                      validation.failures)
 
     def test_production_gateway_requires_checkpointed_registry(self):
         fixture = CertificateFixture(self.root)

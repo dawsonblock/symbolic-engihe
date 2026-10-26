@@ -29,7 +29,7 @@ MAX_HEADINGS = 64
 
 _FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})(.*)$")
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$")
-_LIST = re.compile(r"^(\s{0,6})([-*+]|\d{1,3}[.)])\s+(.+)$")
+_LIST = re.compile(r"^(\s{0,3})([-*+]|\d{1,3}[.)])\s+(.+)$")
 _QUOTE = re.compile(r"^\s{0,3}>\s?(.*)$")
 _THEMATIC = re.compile(r"^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$")
 _HTML = re.compile(r"^\s{0,3}<[A-Za-z!/]")

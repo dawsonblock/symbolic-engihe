@@ -679,7 +679,14 @@ class AuthorityJournal:
                 return {"action": "idempotent",
                         "sequence": latest.sequence,
                         "journal_sequence": latest.journal_sequence}
-            checkpoint = self.publish()
+            try:
+                checkpoint = self.publish()
+            except RollbackDetected as exc:
+                return {"action": "rollback_detected",
+                        "detail": str(exc),
+                        "local_sequence": local["sequence"],
+                        "checkpoint_journal_sequence":
+                            latest.journal_sequence}
             return {"action": "published", "sequence": checkpoint.sequence,
                     "journal_sequence": checkpoint.journal_sequence}
 

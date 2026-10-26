@@ -38,6 +38,13 @@ from .contracts import (
     canonical_digest,
     canonical_json,
 )
+from .evaluation_runtime import (
+    EVALUATOR_BOOTSTRAP_ERROR,
+    INFRASTRUCTURE_ERROR,
+    EvaluationRuntimeProfile,
+    bootstrap_check,
+    classify_execution,
+)
 from .policy import require_permission
 from .runner import CommandSpec, ResourceLimits, WorkspaceExecutor, tree_digest
 
@@ -130,18 +137,34 @@ class OutcomeVerifier:
         identity: str = "sis-v3-evaluator",
         trusted_keys: Mapping[str, str] | None = None,
         limits: ResourceLimits | None = None,
+        runtime_profile: EvaluationRuntimeProfile | None = None,
+        protected_paths=(),
     ) -> None:
         self.executor = executor
         self.identity = identity
-        # Acceptance-suite resource envelope. A meta-test that runs the
-        # submitted suite in a nested process needs process_count=None on
-        # platforms where RLIMIT_NPROC counts every process of the user.
-        self.limits = limits or ResourceLimits(
-            wall_seconds=120, cpu_seconds=60)
+        self.runtime_profile = runtime_profile or EvaluationRuntimeProfile()
+        # Acceptance-suite resource envelope. The 2 GiB default covers
+        # pytest plus plugin imports; a meta-test that runs the submitted
+        # suite in a nested process needs process_count=None on platforms
+        # where RLIMIT_NPROC counts every process of the user.
+        self.limits = limits or self.runtime_profile.task_limits
         self.registry_dir = Path(registry_dir)
         self.registry_dir.mkdir(parents=True, exist_ok=True)
         self.keystore = EvaluatorKeyStore(key_dir)
         self.keystore.load_or_create()
+        # Hostile submitted code must not read signing material, the
+        # evaluator's task registry or sealed datasets. The local
+        # executor enforces this with seatbelt when available; elsewhere
+        # the receipt records that isolation is unverified.
+        protect = getattr(self.executor, "protect", None)
+        if callable(protect):
+            protect(self.keystore.key_dir)
+            protect(self.registry_dir)
+            for path in protected_paths:
+                protect(path)
+        self._bootstrap = None
+        self.last_outcome_class: str | None = None
+        self.last_bootstrap = None
         self._tasks_path = self.registry_dir / "tasks.json"
         self._journal_path = self.registry_dir / "receipts.jsonl"
         self._tasks: dict[str, RegisteredTask] = {}
@@ -203,6 +226,23 @@ class OutcomeVerifier:
         self._persist_tasks()
         return task
 
+    def bootstrap(self):
+        """Run the evaluator bootstrap probe once (cached)."""
+        if self._bootstrap is None:
+            from .evaluation_runtime import BootstrapResult
+            try:
+                self.runtime_profile.assert_pinned()
+            except Exception as exc:
+                self._bootstrap = BootstrapResult(
+                    ok=False, reason="runtime_pin_mismatch",
+                    detail=f"{type(exc).__name__}: {exc}")
+            else:
+                self._bootstrap = bootstrap_check(
+                    self.executor, self.runtime_profile,
+                    root=self.registry_dir)
+        self.last_bootstrap = self._bootstrap
+        return self._bootstrap
+
     def evaluate(
         self,
         *,
@@ -237,6 +277,15 @@ class OutcomeVerifier:
         if marker in self._evaluated:
             raise EvaluationRejected("duplicate_evaluation", registration.task_id)
 
+        bootstrap = self.bootstrap()
+        if not bootstrap.ok:
+            self.last_outcome_class = EVALUATOR_BOOTSTRAP_ERROR
+            raise EvaluationRejected(
+                "evaluator_bootstrap_error", bootstrap.reason)
+
+        argv = registration.argv
+        if len(argv) >= 3 and argv[1] == "-m" and argv[2] == "pytest":
+            argv = self.runtime_profile.pytest_argv(argv)
         workspace = self.executor.prepare(submission, label="eval")
         try:
             for name, data in registration.files.items():
@@ -245,17 +294,37 @@ class OutcomeVerifier:
                 target.write_bytes(data)
             receipt_exec = self.executor.run(
                 workspace,
-                CommandSpec(argv=registration.argv, limits=self.limits),
+                CommandSpec(
+                    argv=argv, limits=self.limits,
+                    env=self.runtime_profile.environment()),
             )
+        except Exception as exc:
+            self.last_outcome_class = INFRASTRUCTURE_ERROR
+            raise EvaluationRejected(
+                "evaluator_infrastructure_error",
+                f"{type(exc).__name__}: {exc}") from exc
         finally:
             self.executor.destroy(workspace)
 
-        if receipt_exec.timeout:
-            outcome = "error"
-        elif receipt_exec.exit_status == 0:
+        stderr_tail = ""
+        output = getattr(self.executor, "output", None)
+        if callable(output):
+            try:
+                _, stderr = output(receipt_exec.execution_id)
+                stderr_tail = stderr.decode("utf-8", "replace")[-800:]
+            except Exception:
+                pass
+        outcome_class = classify_execution(
+            receipt_exec, bootstrap_ok=True, stderr_tail=stderr_tail)
+        self.last_outcome_class = outcome_class
+        if outcome_class == "TASK_PASS":
             outcome = "pass"
-        else:
+        elif outcome_class == "TASK_FAIL":
             outcome = "fail"
+        else:
+            # Bootstrap/resource/timeout/sandbox/infrastructure failures
+            # are not evidence that the candidate is ineffective.
+            outcome = "error"
 
         unsigned = {
             "schema_version": 1,
@@ -274,7 +343,10 @@ class OutcomeVerifier:
             _SIGNATURE_DOMAIN + canonical_json(unsigned),
         ).hex()
         receipt = OutcomeReceiptV1.from_dict({**unsigned, "signature": signature})
-        self._record(receipt, evaluation_nonce, receipt_exec.digest)
+        self._record(receipt, evaluation_nonce, receipt_exec.digest,
+                     outcome_class=outcome_class,
+                     runtime_digest=self.runtime_profile.digest,
+                     bootstrap_digest=bootstrap.import_receipt_digest)
         return receipt
 
     def verify_receipt(self, receipt: OutcomeReceiptV1 | Mapping) -> bool:
@@ -305,7 +377,10 @@ class OutcomeVerifier:
         except OSError as exc:
             raise JournalIntegrityError("receipt_missing") from exc
 
-    def _record(self, receipt: OutcomeReceiptV1, nonce: str, execution_digest: str) -> None:
+    def _record(self, receipt: OutcomeReceiptV1, nonce: str,
+                execution_digest: str, *, outcome_class: str | None = None,
+                runtime_digest: str | None = None,
+                bootstrap_digest: str | None = None) -> None:
         entry = {
             "receipt_digest": receipt.digest,
             "receipt_id": receipt.receipt_id,
@@ -316,6 +391,12 @@ class OutcomeVerifier:
             "execution_digest": execution_digest,
             "nonce": nonce,
             "issued_at": _utcnow(),
+            "outcome_class": outcome_class or (
+                "TASK_PASS" if receipt.outcome == "pass"
+                else "TASK_FAIL" if receipt.outcome == "fail"
+                else "INFRASTRUCTURE_ERROR"),
+            "runtime_digest": runtime_digest,
+            "bootstrap_digest": bootstrap_digest,
         }
         with open(self._journal_path, "ab") as handle:
             handle.write(canonical_json(entry) + b"\n")

@@ -41,6 +41,10 @@ _CANDIDATE_STATES = {
     "proposed", "validated", "evaluating", "rejected", "inconclusive",
     "qualified", "revoked",
 }
+_EVIDENCE_CLASSES = {
+    "exploratory", "demonstration", "confirmatory", "invalid",
+}
+_PARTITIONS = {"development", "holdout", "monitoring"}
 _DECISIONS = {"recommend", "abstain"}
 _REASONS = {
     "unverified_task_intent", "precondition_failed", "no_reproducible_failure",
@@ -651,6 +655,138 @@ class CandidateDecisionV1(V1Record):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ExecutionIdentityV1(V1Record):
+    """Trusted harness attestation of one agent execution context.
+
+    Repository names, commits and tree digests supplied in task text are
+    untrusted. This record is issued by the trusted agent adapter and
+    binds the requester, the registry-resolved repository, the exact
+    commit/tree, workspace, task, family, harness and a session nonce.
+    Serving verifies it instead of trusting caller-supplied identity.
+    """
+
+    identity_id: str
+    requester_identity: str
+    repository_id: str
+    repository_commit: str | None
+    repository_tree_digest: str
+    workspace_identity: str
+    task_id: str
+    task_family: str
+    harness_identity: str
+    session_nonce: str
+    issued_at: str
+    expires_at: str
+    signer_key_id: str
+    attestation: str
+
+    RECORD_TYPE: ClassVar[str] = "execution_identity"
+
+
+@dataclass(frozen=True, kw_only=True)
+class CandidateDeliveryAttestationV1(V1Record):
+    """Harness-signed proof that one exact candidate was delivered.
+
+    A candidate id supplied by an optimizer is not evidence that its
+    instructions reached the agent. This record binds the candidate
+    record/content digests to the digest of the guidance actually
+    delivered for one task, the evaluator receipt produced for that
+    task, and a harness session nonce.
+    """
+
+    attestation_id: str
+    candidate_id: str
+    candidate_digest: str
+    content_digest: str
+    delivery_digest: str
+    task_id: str
+    receipt_digest: str
+    harness_identity: str
+    session_nonce: str
+    issued_at: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "candidate_delivery_attestation"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvaluationCertificateV1(V1Record):
+    """Evaluator-issued certificate for one exact candidate evaluation.
+
+    The certificate is the only artifact that can authorize production
+    qualification. It binds the candidate artifact, the actual delivery
+    of that artifact, the baseline/agent configuration, the
+    preregistered protocol and task set, per-task receipts and delivery
+    attestations, the statistical result, negative transfer, protocol
+    conformance, the qualification policy, the evidence class and the
+    evaluator's signature.
+    """
+
+    certificate_id: str
+    certificate_version: str
+    evidence_class: str
+    candidate_id: str
+    candidate_digest: str
+    candidate_content_digest: str
+    candidate_delivery_digest: str
+    baseline_model_digest: str
+    agent_configuration_digest: str
+    evaluation_protocol_digest: str
+    preregistration_digest: str
+    evaluation_taskset_digest: str
+    repository_snapshot_digests: tuple[str, ...]
+    individual_task_receipts: tuple[Mapping[str, Any], ...]
+    grader_identity: str
+    evaluator_identity: str
+    sample_count: int
+    primary_metric: str
+    confidence_interval: Mapping[str, Any]
+    negative_transfer_results: Mapping[str, Any]
+    protocol_conformance: Mapping[str, Any]
+    qualification_policy_digest: str
+    partition: str
+    issued_at: str
+    expires_at: str | None
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "evaluation_certificate"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AuthorityCheckpointV1(V1Record):
+    """Signed, independently stored anchor for the candidate journal.
+
+    A checkpoint is the *external* witness that a particular candidate
+    database state existed. It binds the authority epoch, a monotonic
+    publication sequence, the previous checkpoint digest, the local
+    transition-journal head and sequence, and a digest over every
+    candidate's current state (including serving states). An attacker
+    who can rewrite the candidate SQLite database cannot produce a newer
+    checkpoint, so deleting the final revocation or restoring an older
+    database is detectable at serving time.
+    """
+
+    checkpoint_id: str
+    authority_epoch: int
+    sequence: int
+    journal_sequence: int
+    previous_digest: str
+    journal_head: str
+    candidate_revision_digest: str
+    candidate_count: int
+    qualified_count: int
+    issuer_identity: str
+    policy_version: str
+    issued_at: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "authority_checkpoint"
+
+
+@dataclass(frozen=True, kw_only=True)
 class ExperienceRecordV1(V1Record):
     """Verified experience episode (v3.3 memory plane).
 
@@ -975,6 +1111,140 @@ def _validate_record(record: V1Record) -> None:
         _timestamp(d["issued_at"], "issued_at")
         if d["expires_at"] is not None:
             _timestamp(d["expires_at"], "expires_at")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, ExecutionIdentityV1):
+        for name in ("identity_id", "requester_identity", "repository_id",
+                     "workspace_identity", "task_id", "task_family",
+                     "harness_identity", "session_nonce", "signer_key_id"):
+            _identifier(d[name], name)
+        for name in ("repository_tree_digest",):
+            _digest(d[name], name)
+        _revision(d["repository_commit"], "repository_commit", optional=True)
+        _timestamp(d["issued_at"], "issued_at")
+        _timestamp(d["expires_at"], "expires_at")
+        _require(isinstance(d["attestation"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["attestation"])),
+            "attestation must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, CandidateDeliveryAttestationV1):
+        for name in ("attestation_id", "candidate_id", "task_id",
+                     "harness_identity", "session_nonce", "signer_key_id"):
+            _identifier(d[name], name)
+        for name in ("candidate_digest", "content_digest",
+                     "delivery_digest", "receipt_digest"):
+            _digest(d[name], name)
+        _timestamp(d["issued_at"], "issued_at")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, EvaluationCertificateV1):
+        for name in ("certificate_id", "candidate_id", "grader_identity",
+                     "evaluator_identity", "signer_key_id"):
+            _identifier(d[name], name)
+        _text(d["certificate_version"], "certificate_version", maximum=16)
+        _enum(d["evidence_class"], _EVIDENCE_CLASSES, "evidence_class")
+        for name in ("candidate_digest", "candidate_content_digest",
+                     "candidate_delivery_digest", "baseline_model_digest",
+                     "agent_configuration_digest",
+                     "evaluation_protocol_digest", "preregistration_digest",
+                     "evaluation_taskset_digest",
+                     "qualification_policy_digest"):
+            _digest(d[name], name)
+        for ref in _sequence(d["repository_snapshot_digests"],
+                             "repository_snapshot_digests", maximum=64):
+            _digest(ref, "repository_snapshot_digests[]")
+        receipts = _sequence(d["individual_task_receipts"],
+                             "individual_task_receipts", maximum=128)
+        for item in receipts:
+            _require(isinstance(item, Mapping) and set(item) == {
+                "task_id", "receipt_digest", "delivery_digest",
+                "attestation_digest", "outcome"},
+                "individual_task_receipts entries must carry task_id,"
+                " receipt_digest, delivery_digest, attestation_digest"
+                " and outcome")
+            _identifier(item["task_id"], "individual_task_receipts.task_id")
+            _digest(item["receipt_digest"],
+                    "individual_task_receipts.receipt_digest")
+            _digest(item["delivery_digest"],
+                    "individual_task_receipts.delivery_digest")
+            _digest(item["attestation_digest"],
+                    "individual_task_receipts.attestation_digest")
+            _enum(item["outcome"], _OUTCOMES,
+                  "individual_task_receipts.outcome")
+        _require(type(d["sample_count"]) is int and
+                 0 <= d["sample_count"] <= 100_000,
+                 "sample_count must be an integer in [0,100000]")
+        _text(d["primary_metric"], "primary_metric", maximum=256)
+        interval = d["confidence_interval"]
+        _require(isinstance(interval, Mapping) and set(interval) == {
+            "method", "confidence_milli", "lower_milli", "upper_milli",
+            "point_estimate_milli"},
+            "confidence_interval must carry method and milli-scaled bounds")
+        _text(interval["method"], "confidence_interval.method", maximum=128)
+        for name in ("confidence_milli", "lower_milli", "upper_milli",
+                     "point_estimate_milli"):
+            _require(type(interval[name]) is int and
+                     -1_000_000 <= interval[name] <= 1_000_000,
+                     f"confidence_interval.{name} is outside its bound")
+        _require(0 <= interval["confidence_milli"] <= 1000,
+                 "confidence_milli must be in [0,1000]")
+        _require(interval["lower_milli"] <= interval["upper_milli"],
+                 "confidence interval lower bound exceeds upper bound")
+        negative = d["negative_transfer_results"]
+        _require(isinstance(negative, Mapping) and set(negative) == {
+            "evaluated", "regressions", "negative_transfer_count",
+            "rate_milli"},
+            "negative_transfer_results has an unexpected shape")
+        for name in ("evaluated", "regressions", "negative_transfer_count"):
+            _require(type(negative[name]) is int and negative[name] >= 0,
+                     f"negative_transfer_results.{name} must be nonnegative")
+        _require(negative["regressions"] <= negative["evaluated"],
+                 "regressions cannot exceed evaluated tasks")
+        _require(type(negative["rate_milli"]) is int and
+                 0 <= negative["rate_milli"] <= 1000,
+                 "negative transfer rate_milli must be in [0,1000]")
+        conformance = d["protocol_conformance"]
+        _require(isinstance(conformance, Mapping) and set(conformance) == {
+            "conforms", "executed_task_count", "declared_sample_size",
+            "mismatches"},
+            "protocol_conformance has an unexpected shape")
+        _require(type(conformance["conforms"]) is bool,
+                 "protocol_conformance.conforms must be Boolean")
+        for name in ("executed_task_count", "declared_sample_size"):
+            _require(type(conformance[name]) is int and
+                     conformance[name] >= 0,
+                     f"protocol_conformance.{name} must be nonnegative")
+        for mismatch in _sequence(conformance["mismatches"],
+                                  "protocol_conformance.mismatches",
+                                  maximum=16):
+            _text(mismatch, "protocol_conformance.mismatches[]",
+                  maximum=256)
+        _enum(d["partition"], _PARTITIONS, "partition")
+        _timestamp(d["issued_at"], "issued_at")
+        if d["expires_at"] is not None:
+            _timestamp(d["expires_at"], "expires_at")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, AuthorityCheckpointV1):
+        _identifier(d["checkpoint_id"], "checkpoint_id")
+        _identifier(d["issuer_identity"], "issuer_identity")
+        for name in ("previous_digest", "journal_head",
+                     "candidate_revision_digest"):
+            _digest(d[name], name)
+        for name in ("authority_epoch", "sequence", "journal_sequence",
+                     "candidate_count", "qualified_count"):
+            _require(type(d[name]) is int and d[name] >= 0,
+                     f"{name} must be a nonnegative integer")
+        _require(d["authority_epoch"] >= 1,
+                 "authority_epoch must be at least 1")
+        _require(d["sequence"] >= 1, "sequence must be at least 1")
+        _require(d["qualified_count"] <= d["candidate_count"],
+                 "qualified_count cannot exceed candidate_count")
+        _text(d["policy_version"], "policy_version", maximum=64)
+        _timestamp(d["issued_at"], "issued_at")
+        _identifier(d["signer_key_id"], "signer_key_id")
         _require(isinstance(d["signature"], str) and bool(
             re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
             "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")

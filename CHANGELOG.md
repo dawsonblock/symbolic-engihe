@@ -1,3 +1,39 @@
+## 2026-10-26 — SIS v3.3.1 authority closure
+
+- Added external signed authority checkpoints (`sis.v3.checkpoints`):
+  monotonic sequence, authority epoch, previous-digest chain, journal
+  head/sequence, candidate-revision digest, compare-and-append, atomic
+  file store, crash recovery, and fail-closed serving. A deleted final
+  revocation, stale database restoration or journal-head substitution is
+  detected against independent custody; a local-only database is not
+  treated as rollback resistant.
+- Added candidate-specific evaluation certificates
+  (`sis.v3.evaluation_certificate`): evidence classes, qualification
+  policy, harness-signed delivery attestations, protocol registry and a
+  validator that re-derives sample size, conformance, statistics,
+  negative transfer, revocation and scope. Two-task runs cannot satisfy
+  a 29-task protocol; demonstration runs cannot serve production.
+- Added authenticated execution identity (`sis.v3.execution_identity`)
+  and durable evidence custody (`sis.v3.evidence_custody`): immutable
+  objects, dependency links, signed revocation/supersession logs,
+  offline policy, and fail-closed status checks on every qualified read.
+- Hardened skill ingestion: scope-aware candidate ids, structured
+  Markdown parsing (code/quotes/example commands never become steps),
+  high-severity findings block automatic qualification, explicit
+  discovery completeness/pagination, bounded large documents, and
+  frontmatter variants.
+- Added pinned evaluator runtime and outcome taxonomy
+  (`sis.v3.evaluation_runtime`): 2 GiB default envelope, bootstrap probe,
+  plugin policy, protected-path/network denial, and infrastructure
+  failures that never count as task pass/fail.
+- Added five-arm learning qualification (`sis.v3.learning_qualification`)
+  with exact McNemar, Wilson/Newcombe intervals, negative transfer,
+  resource overhead and a real-agent gate. The scripted demo is labelled
+  demonstration; the powered real-agent run is blocked in this release.
+- Added docs/V331_ARCHITECTURE.md and the v3.3.1 authority, certificate,
+  identity, custody, ingestion, evaluation, threat-model, migration and
+  release documents. Suite: **923 passed, 3 skipped**.
+
 ## 2026-10-25 — Skill ingestion (M10)
 
 - Added `sis.v3.skill_ingest` + `tools/ingest_skills.py`: real skill

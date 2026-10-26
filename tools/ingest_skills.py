@@ -30,29 +30,66 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from sis.v3.candidates import (CandidateError,  # noqa: E402
                                CandidateRegistry)
 from sis.v3.contracts import CandidateV1, loads_json  # noqa: E402
-from sis.v3.skill_ingest import (SkillIngestError,  # noqa: E402
-                                 discover_skills, ingest_path, load_skill,
-                                 scan_findings, skill_candidate)
+from sis.v3.skill_ingest import (MAX_SCAN_SKILLS,  # noqa: E402
+                                 SkillIngestError, SkillIngestReport,
+                                 discover_skills_page, ingest_path,
+                                 load_skill, scan_findings, skill_candidate)
 
 
-def _dry_run(root: Path, args) -> list[dict]:
-    report: list[dict] = []
+def _discover_all(root: Path, *, max_skills: int | None):
+    skills = []
+    offset = 0
+    pages = 0
+    complete = True
+    while True:
+        page = discover_skills_page(root, offset=offset)
+        pages += 1
+        skills.extend(page)
+        if page.complete:
+            break
+        offset = page.next_offset
+        if max_skills is not None and len(skills) >= max_skills:
+            complete = False
+            break
+    return skills[:max_skills] if max_skills is not None else skills, {
+        "complete": complete,
+        "scanned": len(skills),
+        "pages": pages,
+        "limit": MAX_SCAN_SKILLS,
+        "next_offset": len(skills) if not complete else None,
+    }
+
+
+def _dry_run(root: Path, args) -> SkillIngestReport:
+    report = SkillIngestReport([], discovery={
+        "complete": True, "scanned": 0, "pages": 0})
     if (root / "manifest.json").is_file() and \
             (root / "payload.json").is_file():
         try:
             candidate = CandidateV1.from_dict(
                 loads_json((root / "payload.json").read_bytes()))
         except Exception as exc:  # noqa: BLE001 - reported, not raised
-            return [{"path": root.name, "status": "rejected",
-                     "error": f"bundle_payload_unreadable:{exc}"}]
-        return [{"path": root.name, "status": "dry_run",
-                 "candidate_id": candidate.candidate_id,
-                 "digest": candidate.digest, "state": None,
-                 "name": candidate.candidate_id,
-                 "steps": len(candidate.payload.get("steps", ())),
-                 "resources": 0,
-                 "scan_findings": scan_findings(candidate)}]
-    for skill_dir in discover_skills(root):
+            report.append({"path": root.name, "status": "rejected",
+                           "error": f"bundle_payload_unreadable:{exc}"})
+            return report
+        report.append({
+            "path": root.name, "status": "dry_run",
+            "candidate_id": candidate.candidate_id,
+            "digest": candidate.digest, "state": None,
+            "name": candidate.candidate_id,
+            "steps": len(candidate.payload.get("steps", ())),
+            "resources": 0,
+            "scan_findings": scan_findings(candidate),
+            "security": candidate.payload.get("security"),
+            "auto_qualification_allowed": (
+                candidate.payload.get("security", {}) or {}).get(
+                    "auto_qualification_allowed", True)})
+        report.discovery.update({"complete": True, "scanned": 1,
+                                 "pages": 1})
+        return report
+    skills, discovery = _discover_all(root, max_skills=args.max_skills)
+    report.discovery.update(discovery)
+    for skill_dir in skills:
         relative = skill_dir.relative_to(root).as_posix() \
             if skill_dir != root else skill_dir.name
         try:
@@ -73,7 +110,10 @@ def _dry_run(root: Path, args) -> list[dict]:
             "digest": candidate.digest, "state": None,
             "name": source["name"], "steps": len(source["steps"]),
             "resources": len(source["resources"]),
-            "scan_findings": scan_findings(candidate)})
+            "scan_findings": scan_findings(candidate),
+            "security": source["security"],
+            "auto_qualification_allowed":
+                source["security"]["auto_qualification_allowed"]})
     return report
 
 
@@ -90,6 +130,10 @@ def main() -> int:
     parser.add_argument("--actor-role", default="learner")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--output", "-o", type=Path)
+    parser.add_argument("--audit", type=Path, default=None,
+                        help="append ingestion/security evidence JSONL")
+    parser.add_argument("--max-skills", type=int, default=None,
+                        help="explicit hard cap; report marks discovery incomplete")
     args = parser.parse_args()
 
     if args.scope_kind == "global" and args.scope_value:
@@ -114,7 +158,8 @@ def main() -> int:
                 scope_kind=args.scope_kind, scope_value=args.scope_value,
                 target_agent=args.agent,
                 target_task_family=args.task_family,
-                created_at=args.created_at)
+                created_at=args.created_at, audit_path=args.audit,
+                max_skills=args.max_skills)
         except (CandidateError, SkillIngestError) as exc:
             print(json.dumps({"error": str(exc)}, indent=2))
             return 2
@@ -127,6 +172,7 @@ def main() -> int:
         "skills_root": str(root),
         "scope": {"kind": args.scope_kind, "value": args.scope_value},
         "dry_run": bool(args.dry_run),
+        "discovery": results.discovery,
         "results": results,
         "summary": {
             "discovered": len(results),
@@ -136,6 +182,9 @@ def main() -> int:
                                    if r["status"] == "already_present"),
             "rejected": sum(1 for r in results if r["status"] == "rejected"),
             "flagged": sum(1 for r in results if r.get("scan_findings")),
+            "auto_qualification_blocked": sum(
+                1 for r in results
+                if r.get("auto_qualification_allowed") is False),
         },
     }
     text = json.dumps(report, indent=2, sort_keys=True)

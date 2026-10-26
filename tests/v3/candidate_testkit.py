@@ -53,7 +53,15 @@ class CandidateStack:
     """A candidate registry wired to test-custody signed authorities."""
 
     def __init__(self, path: str | Path, *, protocol: str = "e" * 64,
-                 expected_protocol: bool = True) -> None:
+                 expected_protocol: bool = True,
+                 qualification_policy=None,
+                 qualification_validator=None,
+                 certificate_resolver=None,
+                 delivery_resolver=None,
+                 evidence_custody=None,
+                 require_evidence_custody: bool = False,
+                 offline_evidence_policy=None,
+                 production_serving: bool = False) -> None:
         self.eval_seed, eval_public, self.eval_key = keypair("eval")
         self.op_seed, op_public, self.op_key = keypair("op")
         self.protocol = protocol
@@ -67,7 +75,15 @@ class CandidateStack:
             receipt_authority=self.resolve_receipt,
             evidence_authority=self.evidence_authority,
             decision_authority=self.decision_authority,
-            expected_evaluation_protocol_digest=protocol if expected_protocol else None)
+            expected_evaluation_protocol_digest=protocol if expected_protocol else None,
+            qualification_policy=qualification_policy,
+            qualification_validator=qualification_validator,
+            certificate_resolver=certificate_resolver,
+            delivery_resolver=delivery_resolver,
+            evidence_custody=evidence_custody,
+            require_evidence_custody=require_evidence_custody,
+            offline_evidence_policy=offline_evidence_policy,
+            production_serving=production_serving)
 
     def close(self) -> None:
         self.registry.close()
@@ -116,7 +132,8 @@ class CandidateStack:
                                  actor_role="evaluator")
 
     def qualify(self, candidate, *, receipt=None, partition: str = "holdout",
-                actor_identity: str = "test-operator", protocol: str | None = None):
+                actor_identity: str = "test-operator", protocol: str | None = None,
+                certificate_ref: str | None = None):
         """Issue real evidence + a decision and qualify ``candidate``."""
         receipt = receipt or self.receipt(task_id="task-" + candidate.candidate_id,
                                           outcome="pass")
@@ -129,7 +146,8 @@ class CandidateStack:
         self.registry.qualify(
             candidate.candidate_id, actor_role="operator",
             actor_identity=actor_identity, receipt_refs=(receipt.digest,),
-            evidence_refs=(evidence.digest,), decision_ref=decision.digest)
+            evidence_refs=(evidence.digest,), decision_ref=decision.digest,
+            certificate_ref=certificate_ref)
         return receipt, evidence, decision
 
     def revoke(self, candidate, *, actor_identity: str = "test-operator"):

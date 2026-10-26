@@ -154,7 +154,8 @@ class SkillIngestTests(unittest.TestCase):
         self.assertIsNone(read_skill_name(self.root / "absent"))
 
     def test_oversized_body_and_control_characters_refused(self):
-        big = _skill(self.root, name="big-skill", body="x" * (24 * 1024 + 1))
+        big = _skill(self.root, name="big-skill",
+                     body="x" * (96 * 1024 + 1))
         with self.assertRaisesRegex(SkillIngestError,
                                     "skill_body_too_large"):
             load_skill(big)
@@ -163,6 +164,17 @@ class SkillIngestTests(unittest.TestCase):
         with self.assertRaisesRegex(SkillIngestError,
                                     "skill_body_control_characters"):
             load_skill(control)
+
+    def test_large_bounded_body_is_accepted_with_explicit_truncation(self):
+        body = "\n\n".join(
+            f"Paragraph {index}. " + "x" * 500 for index in range(90))
+        skill = _skill(self.root, name="large-skill", body=body)
+        source = load_skill(skill)
+        self.assertTrue(source["instructions_truncated"])
+        self.assertEqual(len(source["body_sha256"]), 64)
+        self.assertEqual(source["body_bytes"], len(body.strip().encode()))
+        self.assertTrue(all(len(chunk) <= 4000
+                            for chunk in source["instructions"]))
 
     def test_symlinks_refused(self):
         outside = self.root / "outside.txt"

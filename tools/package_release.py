@@ -4,7 +4,7 @@
 One command produces every artifact under ``release/`` from the current
 source tree:
 
-    SIS-v3.3.0-GOVERNED-LEARNING.zip   archive (single project dir)
+    SIS-v3.3.1-AUTHORITY-CLOSURE.zip   archive (single project dir)
     RELEASE_SHA256.json                archive-internal manifest (repo root)
     release/release_manifest.json      release identity + source commit
     release/source_inventory.json      per-file hash + size
@@ -216,7 +216,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path,
                         default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--release", default="SIS-v3.3.0-GOVERNED-LEARNING")
+    parser.add_argument("--release", default="SIS-v3.3.1-AUTHORITY-CLOSURE")
     parser.add_argument("--status", required=True)
     parser.add_argument("--passed", type=int, required=True)
     parser.add_argument("--skipped", type=int, default=0)

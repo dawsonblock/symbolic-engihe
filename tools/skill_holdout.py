@@ -62,6 +62,7 @@ from sis.v3.candidates import CandidateError, CandidateRegistry  # noqa: E402
 from sis.v3.composition import compose_guidance  # noqa: E402
 from sis.v3.contracts import (ContractError, GuidanceRequestV1,  # noqa: E402
                               GuidanceV1, TaskEnvelopeV1)
+from sis.v3.evaluation_runtime import EvaluationRuntimeProfile  # noqa: E402
 from sis.v3.governed_eval import preregister, run_candidate_probe  # noqa: E402
 from sis.v3.runner import (LocalSubprocessExecutor,  # noqa: E402
                            ResourceLimits, tree_digest)
@@ -242,11 +243,18 @@ def main() -> int:
     # The write-tests meta-test runs the submitted suite in a nested
     # process, which RLIMIT_NPROC=64 blocks on platforms that count every
     # process of the user (macOS). The limit is opt-out here only.
+    runtime_profile = EvaluationRuntimeProfile(
+        cpu_seconds=60, wall_seconds=120, process_count=None)
     verifier = OutcomeVerifier(
-        executor=LocalSubprocessExecutor(root / "exec"),
+        executor=LocalSubprocessExecutor(
+            root / "exec",
+            protected_paths=(root / "eval-keys", root / "eval-reg",
+                             root / "candidates.db", root / "memory.db")),
         key_dir=root / "eval-keys", registry_dir=root / "eval-reg",
         limits=ResourceLimits(wall_seconds=120, cpu_seconds=60,
-                              process_count=None))
+                              memory_bytes=runtime_profile.task_memory_bytes,
+                              process_count=None),
+        runtime_profile=runtime_profile)
 
     def authenticated_receipt(digest):
         receipt = verifier.load_receipt(digest)
@@ -378,6 +386,8 @@ def main() -> int:
         "evidence": ("deterministic scripted agent; machinery evidence only, "
                      "not a claim about real-agent efficacy"),
         "protocol_digest": protocol["protocol_digest"],
+        "evaluator_runtime": runtime_profile.as_dict(),
+        "evaluator_runtime_digest": runtime_profile.digest,
         "keys": {"evaluator": eval_key, "operator": op_key},
         "skills_roots": [str(path) for path in args.skills_root],
         "selected": [h.skill for h in selected],

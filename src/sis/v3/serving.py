@@ -87,8 +87,23 @@ class GovernedServingGateway:
         token_budget: int = 400,
         audit_sink: Callable[[Mapping], None] | None = None,
         receipt_authority: Callable[[str], object] | None = None,
+        production: bool = False,
+        execution_identity_authority=None,
+        require_execution_identity: bool | None = None,
+        used_session_nonces: set | None = None,
     ) -> None:
         self._candidates = registry
+        self._identity_authority = execution_identity_authority
+        self._require_identity = (
+            bool(require_execution_identity)
+            if require_execution_identity is not None else bool(production))
+        self._used_nonces = used_session_nonces \
+            if used_session_nonces is not None else set()
+        # Production serving requires an independently checkpointed
+        # registry. Development/tests may run uncheckpointed, but the
+        # audit record says so explicitly; it is never presented as
+        # production-qualified serving.
+        self._production = bool(production)
         self._registry = repository_registry
         self._strict = strict_gateway
         self._allow_global = allow_global_scope
@@ -114,6 +129,7 @@ class GovernedServingGateway:
         files_present=(),
         symbols_extra=(),
         task_family: str | None = None,
+        execution_identity=None,
         now=None,
     ) -> GuidanceV1:
         served_map = {"candidates": [], "rejections": [],
@@ -122,7 +138,48 @@ class GovernedServingGateway:
             if not isinstance(request, GuidanceRequestV1):
                 request = GuidanceRequestV1.from_dict(request)
             served_map["task_id"] = request.task_id
-            resolved = self._resolve_repository(repository_id)
+            if self._production:
+                # Deny before any candidate text is composed: an
+                # uncheckpointed or rolled-back catalog is not a
+                # production authority, and a registry without a
+                # certificate policy holds demonstration evidence only.
+                if getattr(self._candidates, "qualification_mode",
+                           "demonstration") != "production":
+                    raise CandidateError(
+                        "production_qualification_required")
+                authority = self._candidates.authority_status()
+                if authority.get("mode") != "checkpoint_verified":
+                    raise CandidateError(
+                        "authority_checkpoint_unconfigured")
+                served_map["authority"] = authority
+            identity_result = None
+            if self._require_identity or execution_identity is not None:
+                if self._identity_authority is None:
+                    raise CandidateError(
+                        "execution_identity_authority_unconfigured")
+                identity_result = self._identity_authority.verify(
+                    execution_identity,
+                    used_nonces=self._used_nonces,
+                    expected_repository_id=repository_id or None,
+                    expected_tree_digest=request.repo_snapshot_digest,
+                    expected_commit=request.base_commit,
+                    expected_task_id=request.task_id,
+                    expected_task_family=task_family,
+                )
+                if not identity_result.ok:
+                    served_map["identity_error"] = identity_result.reason
+                    out = _abstain("catalog_unavailable", (
+                        "Execution identity could not be authenticated.",))
+                    self._emit(served_map, out)
+                    return out
+                self._used_nonces.add(
+                    identity_result.identity.session_nonce)
+                served_map["execution_identity"] = \
+                    identity_result.identity.digest
+            if identity_result is not None:
+                resolved = identity_result.repository_identity.registry_id
+            else:
+                resolved = self._resolve_repository(repository_id)
             served_map["repository_id"] = resolved
             if resolved is None:
                 out = _abstain("insufficient_support", (
@@ -362,7 +419,14 @@ class GovernedServingGateway:
             "rejections": served_map.get("rejections", []),
             "resolutions": served_map.get("resolutions", []),
             "served_digest": guidance.digest,
+            "serving_mode": "production" if self._production else "development",
         }
+        if served_map.get("authority"):
+            record["authority"] = served_map["authority"]
+        if served_map.get("execution_identity"):
+            record["execution_identity"] = served_map["execution_identity"]
+        if served_map.get("identity_error"):
+            record["identity_error"] = served_map["identity_error"]
         if served_map.get("integrity_error"):
             record["integrity_error"] = served_map["integrity_error"]
         self._audit_record(record)

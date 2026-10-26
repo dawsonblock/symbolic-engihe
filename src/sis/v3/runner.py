@@ -70,7 +70,10 @@ class ResourceLimits:
 
     cpu_seconds: int = 30
     wall_seconds: int = 60
-    memory_bytes: int = 536_870_912
+    # 2 GiB: pytest plus installed plugins exceed the old 512 MiB
+    # address-space limit during interpreter/bootstrap initialization.
+    # That failure is an evaluator bootstrap error, never a task failure.
+    memory_bytes: int = 2 * 1024 * 1024 * 1024
     output_bytes: int = 1_048_576
     disk_bytes: int = 67_108_864
     process_count: int | None = 64
@@ -259,23 +262,60 @@ def _seatbelt_binary() -> str | None:
     return binary
 
 
-def _seatbelt_profile(workspace: Path, scratch: Path) -> str | None:
-    """Deny-by-default profile: workspace + scratch writes, no network.
+def _sensitive_paths() -> list[Path]:
+    """Host credential stores that must never be visible to a child."""
+    home = Path.home()
+    candidates = [
+        home / ".ssh", home / ".aws", home / ".gnupg", home / ".config",
+        home / ".docker", home / ".kube", home / ".netrc",
+        home / "Library" / "Keychains", Path("/etc/ssh"),
+        Path("/private/etc/ssh"),
+    ]
+    return [path.resolve() for path in candidates if path.exists()]
+
+
+def _seatbelt_profile(
+    workspace: Path,
+    scratch: Path,
+    protected_paths: tuple[Path, ...] = (),
+) -> str | None:
+    """Deny-by-default profile: workspace writes, no network, protected reads.
+
+    macOS Python startup and site-package discovery touch many system and
+    home paths (including editable-install finders), so reads are broad.
+    Signing keys, the authority database, checkpoint credentials, sealed
+    evaluation datasets and host credential stores are explicitly denied
+    after the read allow, which Seatbelt evaluates as a veto. Production
+    deployments should still use a dedicated rootless worker/microVM with
+    a minimal runtime image; this local backend is defense-in-depth, not a
+    validated security boundary.
 
     Returns None when a path cannot be safely embedded in the profile
     language; the caller then runs without seatbelt and flags the receipt.
     """
     allowed_write = {workspace.resolve(), scratch.resolve()}
-    rendered = [str(p) for p in allowed_write]
+    denied_read = {
+        *(path.resolve() for path in protected_paths),
+        *_sensitive_paths(),
+    }
+    rendered = [str(p) for p in [*allowed_write, *denied_read]]
     if any('"' in path or "\\" in path or "\n" in path for path in rendered):
         return None
-    literals = "\n".join(f'(subpath "{path}")' for path in sorted(rendered))
+    if any(path == workspace.resolve() or
+           workspace.resolve().is_relative_to(path) for path in denied_read):
+        return None
+    write_literals = "\n".join(
+        f'(subpath "{path}")' for path in sorted(allowed_write, key=str))
+    deny_literals = "\n".join(
+        f'(subpath "{path}")' for path in sorted(denied_read, key=str))
     return (
         "(version 1)(deny default)"
-        "(allow process*)(allow mach-lookup)(allow sysctl-read)(allow ipc-posix-shm)"
+        "(allow process*)(allow mach-lookup)(allow sysctl-read)"
+        "(allow ipc-posix-shm)"
         "(allow file-read*)"
-        f"(allow file-write* {literals} (literal \"/dev/null\"))"
-        "(deny network*)"
+        f"(allow file-write* {write_literals} (literal \"/dev/null\"))"
+        + (f"(deny file-read* {deny_literals})" if deny_literals else "")
+        + "(deny network*)"
     )
 
 
@@ -292,17 +332,31 @@ class LocalSubprocessExecutor:
         *,
         worker_identity: str = "local-subprocess-v1",
         use_seatbelt: bool | None = None,
+        protected_paths=(),
     ) -> None:
         self.root = Path(root) if root is not None else Path(tempfile.mkdtemp(prefix="sis-v3-exec-"))
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "workspaces").mkdir(exist_ok=True)
         self.worker_identity = worker_identity
         self._seatbelt = None if use_seatbelt is False else _seatbelt_binary()
+        self._protected: set[Path] = {
+            Path(path).resolve() for path in protected_paths}
         self._workspaces: dict[str, Workspace] = {}
         self._live: dict[str, subprocess.Popen] = {}
         self._live_ws: dict[str, str] = {}
         self._outputs: dict[str, tuple[bytes, bytes]] = {}
         self._lock = threading.Lock()
+
+    def protect(self, path: str | Path) -> None:
+        """Deny the child read access to a key/authority/dataset path."""
+        resolved = Path(path).resolve()
+        with self._lock:
+            self._protected.add(resolved)
+
+    @property
+    def protected_paths(self) -> tuple[Path, ...]:
+        with self._lock:
+            return tuple(sorted(self._protected, key=str))
 
     @property
     def network_isolation(self) -> str:
@@ -336,8 +390,8 @@ class LocalSubprocessExecutor:
 
         security_errors: list[str] = ["isolation:unverified_local"]
         security_errors.append(
-            "network:seatbelt_denied" if self._seatbelt else "network:not_enforced"
-        )
+            "network:seatbelt_denied" if self._seatbelt
+            else "network:not_enforced")
         limits = spec.limits
         preexec = None
         if resource is not None and hasattr(os, "setsid"):
@@ -350,11 +404,16 @@ class LocalSubprocessExecutor:
         if self._seatbelt:
             scratch = workspace.path / ".scratch"
             scratch.mkdir(exist_ok=True)
-            profile = _seatbelt_profile(workspace.path, scratch)
+            profile = _seatbelt_profile(
+                workspace.path, scratch, self.protected_paths)
             if profile is not None:
                 argv = [self._seatbelt, "-p", profile, *argv]
+                security_errors.append("isolation:seatbelt")
             else:
-                security_errors[1] = "network:not_enforced"
+                security_errors = [
+                    error for error in security_errors
+                    if error != "network:seatbelt_denied"]
+                security_errors.append("network:not_enforced")
                 security_errors.append("seatbelt:profile_unembeddable_path")
 
         env = _minimal_env(workspace.path)
@@ -528,6 +587,7 @@ class LocalSubprocessExecutor:
             "python": platform.python_version(),
             "posix_rlimits": resource is not None,
             "seatbelt": bool(self._seatbelt),
+            "protected_paths": len(self.protected_paths),
         })
 
     @staticmethod

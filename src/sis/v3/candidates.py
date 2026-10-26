@@ -51,9 +51,17 @@ from pathlib import Path
 
 from .candidate_authority import (QUALIFICATION_PARTITION,
                                   CandidateAuthorityError)
+from .checkpoints import (AuthorityJournal, AuthorityStateVerifier,
+                          revision_digest)
 from .contracts import (CandidateDecisionV1, CandidateEvidenceV1,
-                        CandidateV1, ContractError, canonical_digest,
+                        CandidateV1, ContractError,
+                        EvaluationCertificateV1, canonical_digest,
                         loads_json)
+from .evaluation_certificate import (CertificateError,
+                                     QualificationPolicy,
+                                     QualificationValidator)
+from .evidence_custody import (EvidenceCustodyError, EvidenceCustodyStore,
+                               OfflineEvidencePolicy)
 from .policy import require_permission
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
@@ -124,6 +132,14 @@ CREATE TABLE IF NOT EXISTS candidate_evidence (
     signer_key_id TEXT NOT NULL,
     stored_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS candidate_certificate (
+    certificate_digest TEXT PRIMARY KEY,
+    certificate_json TEXT NOT NULL,
+    candidate_id TEXT NOT NULL UNIQUE,
+    signer_key_id TEXT NOT NULL,
+    evidence_class TEXT NOT NULL,
+    stored_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS registry_migration (
     migration TEXT PRIMARY KEY,
     applied_at TEXT NOT NULL,
@@ -156,6 +172,18 @@ class CandidateError(RuntimeError):
 
 class CandidateConflict(CandidateError):
     """A write conflicts with committed state or an illegal transition."""
+
+
+class CandidatePublicationPending(CandidateError):
+    """A committed transition has not reached the independent checkpoint.
+
+    The database write is durable; the authoritative checkpoint is not.
+    Serving fails closed until the trusted authority publishes or
+    recovers. Retrying the transition is wrong (it is already committed);
+    call ``CandidateRegistry.publish_pending()`` instead.
+    """
+
+    committed = True
 
 
 def _permitted(role: str, action: str) -> bool:
@@ -234,6 +262,16 @@ class CandidateRegistry:
         evidence_authority=None,
         decision_authority=None,
         expected_evaluation_protocol_digest: str | None = None,
+        checkpoint_verifier: AuthorityStateVerifier | None = None,
+        authority_journal: AuthorityJournal | None = None,
+        production_serving: bool = False,
+        qualification_policy: QualificationPolicy | None = None,
+        qualification_validator: QualificationValidator | None = None,
+        certificate_resolver=None,
+        delivery_resolver=None,
+        evidence_custody: EvidenceCustodyStore | None = None,
+        require_evidence_custody: bool = False,
+        offline_evidence_policy: OfflineEvidencePolicy | None = None,
     ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +287,30 @@ class CandidateRegistry:
             _check_digest(expected_evaluation_protocol_digest,
                           "expected_evaluation_protocol_digest")
         self._expected_protocol = expected_evaluation_protocol_digest
+        # Independent authority witness. A local-only database is not
+        # rollback resistant, so production serving refuses to read a
+        # qualified state without a verifier.
+        self._checkpoint_verifier = checkpoint_verifier
+        self._authority_journal: AuthorityJournal | None = None
+        self._production_serving = bool(production_serving)
+        self._last_publication_error = ""
+        # Production qualification is certificate-gated. A registry
+        # without a policy can still hold demonstration evidence, but it
+        # is explicitly not production-qualified.
+        self._qualification_policy = qualification_policy
+        self._qualification_validator = qualification_validator
+        self._certificate_resolver = certificate_resolver
+        self._delivery_resolver = delivery_resolver
+        if qualification_policy is not None and qualification_validator is None:
+            raise CandidateError("qualification_validator_required")
+        if qualification_validator is not None and \
+                qualification_policy is None:
+            raise CandidateError("qualification_policy_required")
+        self._evidence_custody = evidence_custody
+        self._require_evidence_custody = bool(require_evidence_custody)
+        self._offline_evidence_policy = offline_evidence_policy
+        if self._require_evidence_custody and evidence_custody is None:
+            raise CandidateError("evidence_custody_required")
         self._lock = threading.RLock()
         self._con = sqlite3.connect(
             str(self.path), isolation_level=None, timeout=15.0,
@@ -267,6 +329,45 @@ class CandidateRegistry:
             con.close()
             self._con = None
             raise
+        if authority_journal is not None:
+            self.bind_authority_journal(authority_journal)
+
+    def bind_authority_journal(self, journal: AuthorityJournal) -> None:
+        """Attach the trusted publisher that anchors this registry."""
+        if journal.registry is not self:
+            raise CandidateError("authority_journal_registry_mismatch")
+        self._authority_journal = journal
+
+    def bind_checkpoint_verifier(
+        self, verifier: AuthorityStateVerifier, *,
+        production_serving: bool = False,
+    ) -> None:
+        """Attach the independent checkpoint verifier used for serving."""
+        self._checkpoint_verifier = verifier
+        self._production_serving = bool(production_serving)
+
+    def bind_evidence_custody(
+        self, custody: EvidenceCustodyStore, *,
+        require: bool = False,
+        offline_policy: OfflineEvidencePolicy | None = None,
+        delivery_resolver=None,
+    ) -> None:
+        """Attach durable evidence custody used for qualification/serving."""
+        self._evidence_custody = custody
+        self._require_evidence_custody = bool(require)
+        self._offline_evidence_policy = offline_policy
+        if delivery_resolver is not None:
+            self._delivery_resolver = delivery_resolver
+
+    @property
+    def last_publication_error(self) -> str:
+        return self._last_publication_error
+
+    @property
+    def qualification_mode(self) -> str:
+        """``production`` only when a certificate policy is enforced."""
+        return "production" if self._qualification_policy is not None \
+            else "demonstration"
 
     def close(self) -> None:
         with self._lock:
@@ -345,6 +446,7 @@ class CandidateRegistry:
             except Exception:
                 _safe_rollback(con)
                 raise
+            self._publish_after_commit()
             return candidate.digest
 
     # ------------------------------------------------------------------ #
@@ -352,7 +454,9 @@ class CandidateRegistry:
     # ------------------------------------------------------------------ #
     def transition(self, candidate_id: str, target: str, *,
                    actor_role: str, actor_identity: str = "",
-                   receipt_refs=(), evidence_refs=(), decision_ref: str | None = None,
+                   receipt_refs=(), evidence_refs=(),
+                   decision_ref: str | None = None,
+                   certificate_ref: str | None = None,
                    note: str = "") -> None:
         """Move ``candidate_id`` along a legal edge; role-gated + audited.
 
@@ -374,6 +478,8 @@ class CandidateRegistry:
             _check_digest(ref, "evidence_refs[]")
         if decision_ref is not None:
             _check_digest(decision_ref, "decision_ref")
+        if certificate_ref is not None:
+            _check_digest(certificate_ref, "certificate_ref")
 
         with self._lock:
             con = self._conn()
@@ -411,6 +517,16 @@ class CandidateRegistry:
                 if target != "qualified" and erefs:
                     raise CandidateConflict(
                         "evidence_only_for_qualification")
+                if target == "qualified" and \
+                        self._qualification_policy is not None and \
+                        certificate_ref is None:
+                    raise CandidateConflict(
+                        "qualification_requires_evaluation_certificate")
+                if certificate_ref is not None and \
+                        (target != "qualified"
+                         or self._qualification_policy is None):
+                    raise CandidateConflict(
+                        "certificate_only_for_production_qualification")
                 needs_decision = target in {"qualified", "revoked"} or \
                     decision_ref is not None
                 if needs_decision and not actor_identity:
@@ -423,6 +539,9 @@ class CandidateRegistry:
                         raise CandidateConflict(
                             "qualification_requires_expected_protocol")
                     self._authenticate_evidence(record, erefs, refs, con)
+                if certificate_ref is not None:
+                    self._authenticate_certificate(
+                        record, refs, erefs, certificate_ref, con)
                 decision = None
                 if needs_decision:
                     decision = self._authenticate_decision(
@@ -446,17 +565,116 @@ class CandidateRegistry:
             except Exception:
                 _safe_rollback(con)
                 raise
+            self._publish_after_commit()
+
+    def _publish_after_commit(self) -> None:
+        """Anchor a committed write in independent authority storage.
+
+        The database commit is already durable. If publication fails the
+        registry is ahead of the checkpoint and serving must fail closed;
+        callers get a distinct "committed but pending" error so they do
+        not mistake it for a rolled-back transition.
+        """
+        if self._authority_journal is None:
+            return
+        try:
+            self._authority_journal.publish()
+        except Exception as exc:
+            self._last_publication_error = f"{type(exc).__name__}: {exc}"
+            raise CandidatePublicationPending(
+                "authority_publication_pending:"
+                f"{self._last_publication_error}") from exc
+        self._last_publication_error = ""
+
+    def publish_pending(self):
+        """Publish the current local state after an interrupted write."""
+        if self._authority_journal is None:
+            raise CandidateError("authority_journal_unconfigured")
+        checkpoint = self._authority_journal.publish()
+        self._last_publication_error = ""
+        return checkpoint
+
+    # ------------------------------------------------------------------ #
+    # authority state — the independently witnessed projection
+    # ------------------------------------------------------------------ #
+    def _authority_state(self, con) -> dict:
+        states, _ = self._project(con)
+        tail = con.execute(
+            "SELECT seq, entry_digest FROM candidate_transition"
+            " ORDER BY seq DESC LIMIT 1").fetchone()
+        rows = con.execute(
+            "SELECT candidate_id, candidate_digest, state"
+            " FROM candidate ORDER BY candidate_id").fetchall()
+        revision = revision_digest([
+            {"candidate_id": cid, "candidate_digest": digest,
+             "state": states.get(cid, state)}
+            for cid, digest, state in rows])
+        return {
+            "sequence": tail[0] if tail is not None else 0,
+            "head": tail[1] if tail is not None else _GENESIS,
+            "revision_digest": revision,
+            "candidate_count": len(rows),
+            "qualified_count": sum(
+                1 for cid, _, _ in rows
+                if states.get(cid) == "qualified"),
+        }
+
+    def authority_state(self) -> dict:
+        """Journal sequence/head plus a digest over every candidate state."""
+        with self._read() as con:
+            return self._authority_state(con)
+
+    def journal_head_at(self, sequence: int) -> str | None:
+        """Return the sealed head at ``sequence`` (0 is genesis)."""
+        if type(sequence) is not int or sequence < 0:
+            raise ContractError("journal sequence must be nonnegative")
+        if sequence == 0:
+            return _GENESIS
+        with self._read() as con:
+            self._project(con)
+            row = con.execute(
+                "SELECT entry_digest FROM candidate_transition WHERE seq=?",
+                (sequence,)).fetchone()
+            return row[0] if row is not None else None
+
+    def _authority_gate(self, con=None) -> dict:
+        """Fail closed unless local state matches the trusted checkpoint."""
+        if self._checkpoint_verifier is None:
+            if self._production_serving:
+                raise CandidateError("authority_checkpoint_unconfigured")
+            return {
+                "ok": True,
+                "mode": "uncheckpointed_development",
+                "reason": "no_independent_checkpoint_configured",
+            }
+        local = self._authority_state(con) if con is not None \
+            else self.authority_state()
+        result = self._checkpoint_verifier.verify_local_state(local)
+        if not result.ok:
+            raise CandidateError(
+                "authority_checkpoint_rejected:" + result.reason)
+        return {"ok": True, "mode": "checkpoint_verified",
+                **result.as_dict()}
+
+    def authority_status(self) -> dict:
+        """Current authority verification result (raises when it fails)."""
+        with self._read() as con:
+            return self._authority_gate(con)
 
     def qualify(self, candidate_id: str, *,
                 actor_role: str, actor_identity: str = "",
-                receipt_refs, evidence_refs=(), decision_ref: str | None = None,
+                receipt_refs, evidence_refs=(),
+                decision_ref: str | None = None,
+                certificate_ref: str | None = None,
                 note: str = "") -> None:
-        """Explicit qualification — operator decision + bound evidence."""
+        """Explicit qualification — decision, evidence, and (production)
+        a candidate-specific evaluation certificate."""
         self.transition(candidate_id, "qualified", actor_role=actor_role,
                         actor_identity=actor_identity,
                         receipt_refs=receipt_refs,
                         evidence_refs=evidence_refs,
-                        decision_ref=decision_ref, note=note)
+                        decision_ref=decision_ref,
+                        certificate_ref=certificate_ref, note=note)
 
     def revoke(self, candidate_id: str, *,
                actor_role: str, actor_identity: str = "",
@@ -481,6 +699,12 @@ class CandidateRegistry:
             if receipt is None or getattr(receipt, "outcome", None) != "pass":
                 raise CandidateConflict(
                     f"qualification_requires_pass_receipt:{ref[:12]}")
+            if self._evidence_custody is not None:
+                try:
+                    self._evidence_custody.put(receipt)
+                except EvidenceCustodyError as exc:
+                    raise CandidateConflict(
+                        f"evidence_custody_rejected:{exc.reason}") from exc
 
     def _authenticate_evidence(self, record, erefs, refs, con) -> None:
         """Every cited binding must authenticate and name this candidate."""
@@ -509,6 +733,12 @@ class CandidateRegistry:
                 raise CandidateConflict("evidence_protocol_mismatch")
             covered.update(evidence.receipt_refs)
             self._store_evidence(con, evidence)
+            if self._evidence_custody is not None:
+                try:
+                    self._evidence_custody.put(evidence)
+                except EvidenceCustodyError as exc:
+                    raise CandidateConflict(
+                        f"evidence_custody_rejected:{exc.reason}") from exc
         if not set(refs) <= covered:
             raise CandidateConflict("evidence_receipt_not_bound")
 
@@ -556,6 +786,91 @@ class CandidateRegistry:
             "  signer_key_id, stored_at) VALUES (?, ?, ?, ?, ?)",
             (evidence.digest, evidence.canonical_bytes().decode("utf-8"),
              evidence.candidate_id, evidence.signer_key_id, _utcnow()))
+
+    def _authenticate_certificate(self, record, refs, erefs, certificate_ref,
+                                  con) -> EvaluationCertificateV1:
+        """Require a signed, policy-conforming certificate for this candidate."""
+        if self._certificate_resolver is None:
+            raise CandidateConflict("certificate_resolver_required")
+        try:
+            certificate = self._certificate_resolver(certificate_ref)
+        except CertificateError as exc:
+            raise CandidateConflict(
+                f"certificate_rejected:{exc.reason}") from exc
+        except Exception as exc:
+            raise CandidateConflict(
+                f"certificate_rejected:{certificate_ref[:12]}") from exc
+        if not isinstance(certificate, EvaluationCertificateV1):
+            raise CandidateConflict("certificate_rejected:wrong_type")
+        if certificate.digest != certificate_ref:
+            raise CandidateConflict("certificate_rejected:digest_mismatch")
+        validation = self._qualification_validator.validate(
+            certificate, record)
+        if not validation.ok:
+            raise CandidateConflict(
+                "certificate_rejected:" + ",".join(validation.failures))
+        certificate_receipts = {
+            item["receipt_digest"]
+            for item in certificate.individual_task_receipts}
+        if set(refs) != certificate_receipts:
+            raise CandidateConflict("certificate_receipt_mismatch")
+        if self._evidence_custody is not None:
+            try:
+                self._evidence_custody.put(certificate)
+                if self._delivery_resolver is None:
+                    raise CandidateConflict("delivery_resolver_required")
+                for item in certificate.individual_task_receipts:
+                    attestation = self._delivery_resolver(
+                        item["attestation_digest"])
+                    if attestation.digest != item["attestation_digest"] or \
+                            attestation.delivery_digest != item["delivery_digest"]:
+                        raise CandidateConflict(
+                            "delivery_attestation_digest_mismatch")
+                    self._evidence_custody.put(attestation)
+                self._evidence_custody.link(
+                    certificate.digest,
+                    candidate_digest=record.digest,
+                    receipts=refs, evidence=erefs,
+                    deliveries=tuple(
+                        item["attestation_digest"]
+                        for item in certificate.individual_task_receipts))
+            except EvidenceCustodyError as exc:
+                raise CandidateConflict(
+                    f"evidence_custody_rejected:{exc.reason}") from exc
+        elif self._require_evidence_custody:
+            raise CandidateConflict("evidence_custody_required")
+        self._store_certificate(con, certificate)
+        return certificate
+
+    @staticmethod
+    def _store_certificate(con, certificate: EvaluationCertificateV1) -> None:
+        con.execute(
+            "INSERT OR REPLACE INTO candidate_certificate"
+            " (certificate_digest, certificate_json, candidate_id,"
+            "  signer_key_id, evidence_class, stored_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (certificate.digest,
+             certificate.canonical_bytes().decode("utf-8"),
+             certificate.candidate_id, certificate.signer_key_id,
+             certificate.evidence_class, _utcnow()))
+
+    @staticmethod
+    def _load_certificate(con, candidate_id: str) -> EvaluationCertificateV1:
+        row = con.execute(
+            "SELECT certificate_digest, certificate_json"
+            " FROM candidate_certificate WHERE candidate_id=?",
+            (candidate_id,)).fetchone()
+        if row is None:
+            raise CandidateError(f"certificate_missing:{candidate_id}")
+        try:
+            certificate = EvaluationCertificateV1.from_dict(
+                loads_json(row[1].encode("utf-8")))
+        except ContractError as exc:
+            raise CandidateError(
+                f"certificate_tampered:{candidate_id}") from exc
+        if certificate.digest != row[0]:
+            raise CandidateError(f"certificate_tampered:{candidate_id}")
+        return certificate
 
     def _migrate(self, con) -> None:
         """Seal legacy audit rows and add signed-artifact columns.
@@ -813,8 +1128,35 @@ class CandidateRegistry:
             covered.update(evidence.receipt_refs)
         if not set(refs) <= covered:
             raise CandidateError("evidence_receipt_not_bound")
-        return {"decision_digest": dd, "receipt_refs": refs,
-                "evidence_refs": erefs}
+        basis = {"decision_digest": dd, "receipt_refs": refs,
+                 "evidence_refs": erefs}
+        if self._qualification_policy is not None:
+            certificate = self._load_certificate(con, candidate_id)
+            validation = self._qualification_validator.validate(
+                certificate, record)
+            if not validation.ok:
+                raise CandidateError(
+                    "certificate_rejected:"
+                    + ",".join(validation.failures))
+            certificate_receipts = {
+                item["receipt_digest"]
+                for item in certificate.individual_task_receipts}
+            if certificate_receipts != set(refs):
+                raise CandidateError("certificate_receipt_mismatch")
+            basis["certificate_digest"] = certificate.digest
+            if self._evidence_custody is not None:
+                try:
+                    status = self._evidence_custody.status(
+                        certificate.digest)
+                except EvidenceCustodyError as exc:
+                    raise CandidateError(
+                        f"evidence_custody_unavailable:{exc.reason}") from exc
+                if status != "active":
+                    raise CandidateError(f"evidence_{status}")
+                basis["evidence_custody"] = status
+            elif self._require_evidence_custody:
+                raise CandidateError("evidence_custody_unconfigured")
+        return basis
 
     @staticmethod
     def _load_decision(con, digest: str) -> CandidateDecisionV1:
@@ -875,6 +1217,7 @@ class CandidateRegistry:
                 if candidate_id in unbacked:
                     raise CandidateError(
                         f"{unbacked[candidate_id]}:{candidate_id}")
+                self._authority_gate(con)
                 self._verify_serving_basis(candidate_id, state, con)
             return record, state
 
@@ -921,6 +1264,7 @@ class CandidateRegistry:
             if stale:
                 cid = stale[0]
                 raise CandidateError(f"{unbacked[cid]}:{cid}")
+            self._authority_gate(con)
             rows = con.execute(
                 "SELECT candidate_id, candidate_digest, candidate_json"
                 " FROM candidate ORDER BY candidate_id").fetchall()
@@ -939,7 +1283,43 @@ class CandidateRegistry:
             state = states.get(candidate_id)
             if state != "qualified" or candidate_id in unbacked:
                 raise CandidateError("candidate_not_qualified")
+            self._authority_gate(con)
             return self._verify_serving_basis(candidate_id, state, con)
+
+    def check_offline_serving(self, *, offline: bool, now=None) -> dict:
+        """Apply the configured offline/revocation-freshness policy."""
+        if self._evidence_custody is None:
+            if self._require_evidence_custody or offline:
+                raise CandidateError("evidence_custody_unconfigured")
+            return {"ok": True, "mode": "custody_unconfigured"}
+        if self._offline_evidence_policy is None:
+            if offline:
+                raise CandidateError("offline_evidence_policy_required")
+            return {"ok": True, "mode": "online"}
+        try:
+            return self._evidence_custody.check_offline_serving(
+                self._offline_evidence_policy, offline=offline, now=now)
+        except EvidenceCustodyError as exc:
+            raise CandidateError(f"evidence_custody_rejected:{exc.reason}") \
+                from exc
+
+    def evidence_custody_status(self, digest: str) -> str:
+        if self._evidence_custody is None:
+            raise CandidateError("evidence_custody_unconfigured")
+        try:
+            return self._evidence_custody.status(digest)
+        except EvidenceCustodyError as exc:
+            raise CandidateError(
+                f"evidence_custody_unavailable:{exc.reason}") from exc
+
+    def certificate_for(self, candidate_id: str) -> EvaluationCertificateV1:
+        """Return the stored certificate for a qualified candidate.
+
+        The certificate is re-parsed and re-digested; a tampered row
+        fails closed. Signature/policy validation happens on serving.
+        """
+        with self._read() as con:
+            return self._load_certificate(con, candidate_id)
 
     def audit(self, candidate_id: str | None = None) -> list[dict]:
         """Return the transition log after verifying the hash chain."""
@@ -994,9 +1374,21 @@ class CandidateRegistry:
                         self._verify_serving_basis(cid, state, con)
                     except CandidateError as exc:
                         problems.append(str(exc))
+            try:
+                authority = self._authority_gate(con)
+            except CandidateError as exc:
+                authority = {"ok": False, "reason": str(exc)}
+                problems.append(str(exc))
+            custody = None
+            if self._evidence_custody is not None:
+                custody = self._evidence_custody.verify()
+                if not custody["ok"]:
+                    problems.append("evidence_custody_integrity")
             return {"ok": not problems, "entries": len(rows),
                     "head": head, "problems": problems,
-                    "migrations": migrations}
+                    "migrations": migrations, "authority": authority,
+                    "qualification_mode": self.qualification_mode,
+                    "evidence_custody": custody}
 
     @staticmethod
     def _verify_chain(rows) -> None:

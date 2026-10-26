@@ -1,0 +1,14 @@
+{
+  "codex_gate": {
+    "agent": "codex-cli",
+    "authenticated": true,
+    "available": true,
+    "binary": "/Users/dawsonblock/.nvm/versions/node/v24.16.0/bin/codex",
+    "reason": "ok"
+  },
+  "evidence_class": "invalid",
+  "kind": "five_arm_learning_qualification_real_gate",
+  "note": "Codex is available, but no task manifest was supplied. The manifest must provide repository paths, prompts, evaluator acceptance tests, base commits and a preregistered protocol.",
+  "release_gate": "BLOCKED_MANIFEST",
+  "schema_version": 1
+}

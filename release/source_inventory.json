@@ -1,8 +1,8 @@
 {
   "files": {
     ".github/workflows/ci.yml": {
-      "bytes": 974,
-      "sha256": "19b2ecf6ab0159a5b773ecb5b4b9ab3fe0ea33c52d28baeaa7f484cf4b93360c"
+      "bytes": 1245,
+      "sha256": "45e32398759a5c24fef7e0380d2d0a9e1c040fa8af6ba51f22f754019b98f9f1"
     },
     ".gitignore": {
       "bytes": 169,
@@ -73,8 +73,8 @@
       "sha256": "607d68637f60043f1bef59463291c794804085dc33e1d60ae87d6611d8b5be3e"
     },
     "docs/RELEASE_NOTES.md": {
-      "bytes": 5890,
-      "sha256": "d4db43e297a3ae5c836c635b7dca28196a7f5b3dacb9da8eb491ce144a4917bf"
+      "bytes": 6073,
+      "sha256": "d0af6df1c70a7185fd5b3b3f62009694bb731af7379eea2f43cab73ff103873a"
     },
     "docs/ROADMAP.md": {
       "bytes": 4165,
@@ -1177,8 +1177,8 @@
       "sha256": "871cd32361cfbd5a09ba6d52750e503207272d3038649a5edb0d4e67944b9d87"
     },
     "tests/v3/test_execution_identity_custody.py": {
-      "bytes": 15839,
-      "sha256": "85e807b08621a76e42da9c28aa29f46dbff19eb82072a1394c08a7cab4416eef"
+      "bytes": 16139,
+      "sha256": "2ad05550d6f01c56560e60e137c7512b2a9ad9b16c4b1375a7fcc39586f6540d"
     },
     "tests/v3/test_execution_qualification.py": {
       "bytes": 7284,
@@ -1403,5 +1403,5 @@
   },
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "4ea184e3f73787b1211d8661b92d09e5863e5e00"
+  "source_commit": "e4d1e34b1262b12e865c13d26f5209d2d1fd6ef4"
 }

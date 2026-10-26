@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
-    "sha256": "646ff18c083a1e3e8dae9269e389a7abefe3f82efb3fd0f3b5e773dc87860e3e",
+    "sha256": "701d12a9bc54145a8ecd82896e11cd85c82ccffafdb5d511283840416f1937fb",
     "source_files": 358
   },
   "branch": "codex/sis-v3.3.1-authority-closure",
@@ -52,13 +52,13 @@
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "75fc0ca903048b74b2343790369b8605d46ec1a7",
+  "source_commit": "15e640dda5b96cb5253eca55497e90fbd07c1a5a",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
-    "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
+    "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 923,
+    "passed": 926,
     "skipped": 3
   }
 }

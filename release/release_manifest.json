@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.0-GOVERNED-LEARNING.zip",
-    "sha256": "1746ede9f3a7dca60167135ad5c93d402b082f4e668b272f5cbeb354ef9dcfe8",
+    "sha256": "6caa5f75f79060bf2844f7e9222030dee6aa416d9ed81911da8d0228e141355d",
     "source_files": 326
   },
   "branch": "codex/sis-v3.3-governed-learning",
@@ -47,13 +47,13 @@
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.0-GOVERNED-LEARNING",
   "schema_version": 1,
-  "source_commit": "c85603114a99d2db76252e530c85c1cf8ca3baf7",
+  "source_commit": "a744b0e2a099c4ebe1d35f0b8316e54737aecc26",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
     "failed": 0,
-    "passed": 801,
+    "passed": 804,
     "skipped": 2
   }
 }

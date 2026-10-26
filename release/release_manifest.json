@@ -2,8 +2,8 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
-    "sha256": "1b80cc89f8a8e0b2c5ba8823b9925fcda75abfeca02db9209bc1b06ba40ccebb",
-    "source_files": 358
+    "sha256": "a6ead1b5d6e6ea283ed31b40062b09ac18a61006a545b4b9dd17f3f332c92066",
+    "source_files": 350
   },
   "branch": "codex/sis-v3.3.1-authority-closure",
   "docs": [
@@ -52,7 +52,7 @@
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "e3b638cac344fb36da25b9f755c5746b0960a404",
+  "source_commit": "4ea184e3f73787b1211d8661b92d09e5863e5e00",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {

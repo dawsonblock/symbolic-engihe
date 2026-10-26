@@ -8,38 +8,6 @@
       "bytes": 169,
       "sha256": "f99a18c92faf8321ced3336ee89b3b48e40e31e393b2e104d1ff056861377e95"
     },
-    ".ruff_cache/.gitignore": {
-      "bytes": 35,
-      "sha256": "9e3a60f1e6ec4ae60215c11d54b171392745ec25e9dded433d5bd921363af316"
-    },
-    ".ruff_cache/0.16.0/13221897937685359828": {
-      "bytes": 596,
-      "sha256": "75a249f664a7cf54bffd2f789c9dc78edb525b50ac112f37d93c4e33a659a772"
-    },
-    ".ruff_cache/0.16.0/14941880782620019407": {
-      "bytes": 364,
-      "sha256": "d999537166ae6d99fe22f874ecd839d9b29698c978adccca64f58108a947e8ac"
-    },
-    ".ruff_cache/0.16.0/15189960163274773580": {
-      "bytes": 324,
-      "sha256": "41b1980bf72354f562efdf6115a9a5e6ce3ad3ff63fe6b3ddc4ffcfd44ad40d0"
-    },
-    ".ruff_cache/0.16.0/16828773719330662556": {
-      "bytes": 420,
-      "sha256": "80a8a5774fc822c6de1a03fccec2db5c608120c9d85207e8b1ef3584ec88d1d4"
-    },
-    ".ruff_cache/0.16.0/17131822394971821070": {
-      "bytes": 564,
-      "sha256": "4bd7fdd9071db670397382c60c9edb16db9e936a80e246240da3b542df873288"
-    },
-    ".ruff_cache/0.16.0/17619336669058638793": {
-      "bytes": 276,
-      "sha256": "3b6782c880f825b7b2531e806173244bb98aab025afc551cf279bf06ff156cac"
-    },
-    ".ruff_cache/CACHEDIR.TAG": {
-      "bytes": 43,
-      "sha256": "5953156d7e0c564a427251316eaf26f8870e6483ae2197f916b630e4f93e31ae"
-    },
     "AUTHORITY_RECOVERY_RELEASE_NOTES.md": {
       "bytes": 5397,
       "sha256": "f4e9590f3ebad5ffec1d03da3db058375438693dbcd93f2738ff3ea66da17b8d"
@@ -1341,8 +1309,8 @@
       "sha256": "e0454782992de58b7c68ed1c9fe4a77d7fd85621797f6cbfbfc8dfe8c757ad27"
     },
     "tools/check_source_manifest.py": {
-      "bytes": 7463,
-      "sha256": "402f119d14de8b43e0812950228bc6e3b26d7214a85ddd0782341119244ad0f7"
+      "bytes": 7531,
+      "sha256": "db55548c7c2d9c0e885a158927da8323a60123c1853a93bcd292a2934eac1380"
     },
     "tools/demo_code_learning.py": {
       "bytes": 2349,
@@ -1435,5 +1403,5 @@
   },
   "release": "SIS-v3.3.1-AUTHORITY-CLOSURE",
   "schema_version": 1,
-  "source_commit": "e3b638cac344fb36da25b9f755c5746b0960a404"
+  "source_commit": "4ea184e3f73787b1211d8661b92d09e5863e5e00"
 }

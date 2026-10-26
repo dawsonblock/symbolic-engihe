@@ -2,9 +2,9 @@
   "archive": {
     "path": "release/SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
     "project_dir": "sis-v2-authority-transfer",
-    "sha256": "1b80cc89f8a8e0b2c5ba8823b9925fcda75abfeca02db9209bc1b06ba40ccebb",
+    "sha256": "a6ead1b5d6e6ea283ed31b40062b09ac18a61006a545b4b9dd17f3f332c92066",
     "sha256_verified_by": "tools/verify_release.py (streaming ZIP verification)",
-    "source_files": 358,
+    "source_files": 350,
     "verification": {
       "archive": "SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
       "fresh_extraction": {
@@ -12,30 +12,30 @@
         "extracted_test_smoke": {
           "command": "pytest -q tests/v3/test_candidates.py",
           "returncode": 0,
-          "tail": "39 passed in 0.67s"
+          "tail": "39 passed in 0.63s"
         },
         "verify_tree": {
-          "files": 358
+          "files": 350
         }
       },
       "kind": "release_verification",
       "schema_version": 1,
       "source": {
-        "commit": "e3b638cac344fb36da25b9f755c5746b0960a404",
+        "commit": "4ea184e3f73787b1211d8661b92d09e5863e5e00",
         "dirty": false,
         "dirty_paths": []
       },
       "source_binding": {
-        "files": 358,
+        "files": 350,
         "project": "sis-v2-authority-transfer",
         "source_bound": true
       },
       "zip_verify": {
         "manifest": "RELEASE_SHA256.json",
         "project": "sis-v2-authority-transfer",
-        "source_files": 358,
+        "source_files": 350,
         "valid": true,
-        "zip_sha256": "1b80cc89f8a8e0b2c5ba8823b9925fcda75abfeca02db9209bc1b06ba40ccebb"
+        "zip_sha256": "a6ead1b5d6e6ea283ed31b40062b09ac18a61006a545b4b9dd17f3f332c92066"
       }
     }
   },
@@ -118,7 +118,7 @@
     "learning_efficacy": "BLOCKED_NOT_EVALUATED",
     "sandbox": "IMPLEMENTED_DEFENSE_IN_DEPTH_NOT_A_VALIDATED_OS_BOUNDARY"
   },
-  "source_commit": "e3b638cac344fb36da25b9f755c5746b0960a404",
+  "source_commit": "4ea184e3f73787b1211d8661b92d09e5863e5e00",
   "tests": {
     "baseline_v33": {
       "failed": 0,

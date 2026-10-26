@@ -321,7 +321,7 @@ Ledger of the governed-learning build, milestone by milestone, on branch
   unchanged). The holdout tool sets `process_count=None` because the
   `write-tests` meta-test forks a nested test run, which `RLIMIT_NPROC=64`
   blocks on macOS.
-- Suite: **801 passed, 2 skipped** (777 + 24 ingestion/holdout tests).
+- Suite: **804 passed, 2 skipped** (777 + 27 ingestion/holdout tests).
 
 ## Defects found and fixed during the build
 

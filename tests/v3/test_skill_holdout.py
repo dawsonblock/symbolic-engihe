@@ -139,6 +139,22 @@ class SkillHoldoutCLITests(unittest.TestCase):
                              ["write-tests"])
             self.assertEqual(report["results"][0]["status"], "qualified")
 
+    def test_planned_and_excluded_selections_are_explained(self):
+        planned = self._run("--only", "implement-spec")
+        self.assertEqual(planned.returncode, 2)
+        self.assertEqual(json.loads(planned.stdout)["error"],
+                         "holdout_not_registered")
+        excluded = self._run("--only", "greet-anton-abyzov")
+        self.assertEqual(excluded.returncode, 2)
+        self.assertEqual(json.loads(excluded.stdout)["error"],
+                         "holdout_excluded")
+        tier = self._run("--tier", "B")
+        self.assertEqual(tier.returncode, 2)
+        payload = json.loads(tier.stdout)
+        self.assertEqual(payload["error"],
+                         "no_registered_holdouts_in_tier")
+        self.assertTrue(payload["planned"])
+
     def test_missing_skill_is_reported_and_fails_the_run(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

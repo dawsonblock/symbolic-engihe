@@ -28,7 +28,7 @@
   unchanged) so a meta-test that runs the submitted suite in a nested
   process can opt out of `RLIMIT_NPROC=64`, which blocks the nested fork
   on platforms that count every process of the user.
-- Suite: **801 passed, 2 skipped**.
+- Suite: **804 passed, 2 skipped**.
 
 ## 2026-10-25 — Authority/evidence binding and serving integrity hardening
 

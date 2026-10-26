@@ -13,7 +13,7 @@ from sis.v3.contracts import GuidanceRequestV1
 from sis.v3.serving import GovernedServingGateway
 from sis.v3.skill_ingest import (SkillIngestError, discover_skills,
                                  ingest_path, ingest_skill, ingest_tree,
-                                 load_skill)
+                                 load_skill, read_skill_name)
 from sis.v3.skill_package import export_bundle
 from tests.v3.authority_testkit import make_registry, register_repo
 from tests.v3.candidate_testkit import CandidateStack
@@ -127,6 +127,31 @@ class SkillIngestTests(unittest.TestCase):
         with self.assertRaisesRegex(SkillIngestError,
                                     "skill_description_missing"):
             load_skill(no_description)
+
+    def test_block_scalar_frontmatter_is_folded(self):
+        folded = self.root / "folded-skill"
+        folded.mkdir()
+        (folded / "SKILL.md").write_text(
+            "---\nname: folded-skill\ndescription: >\n"
+            "  Use when the description\n  spans several lines.\n"
+            "---\n\n# Body\n\n- Do the thing.\n", encoding="utf-8")
+        self.assertEqual(
+            load_skill(folded)["description"],
+            "Use when the description spans several lines.")
+        literal = self.root / "literal-skill"
+        literal.mkdir()
+        (literal / "SKILL.md").write_text(
+            "---\nname: literal-skill\ndescription: |\n"
+            "  First line.\n  Second line.\n---\n\n# Body\n",
+            encoding="utf-8")
+        self.assertEqual(load_skill(literal)["description"],
+                         "First line.\nSecond line.")
+
+    def test_read_skill_name_does_not_need_resources(self):
+        skill = _skill(self.root, name="named-skill",
+                       files={"assets/payload.bin": "x" * 1024})
+        self.assertEqual(read_skill_name(skill), "named-skill")
+        self.assertIsNone(read_skill_name(self.root / "absent"))
 
     def test_oversized_body_and_control_characters_refused(self):
         big = _skill(self.root, name="big-skill", body="x" * (24 * 1024 + 1))

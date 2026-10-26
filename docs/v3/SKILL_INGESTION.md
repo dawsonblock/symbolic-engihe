@@ -69,6 +69,7 @@ extras) and `source` (kind + relative path).
 | resources | 64 files, 16 MiB hashed total | `skill_too_many_resources` / `skill_resources_too_large` |
 | discovery | depth 6, 500 skills | truncated silently at the cap |
 | text | UTF-8, no control characters | `skill_not_utf8` / `skill_control_characters` |
+| frontmatter syntax | scalar values, quoted scalars, and `>`/`|` block scalars; nested maps/lists are ignored | — |
 
 Symlinks anywhere in a skill (the directory, `SKILL.md`, or any resource)
 are refused with `skill_symlink_refused`; hidden files and directories are

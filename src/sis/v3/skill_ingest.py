@@ -90,7 +90,10 @@ def _check_text(text: str, name: str) -> str:
 
 def _parse_frontmatter(header: list[str]) -> dict[str, str]:
     fields: dict[str, str] = {}
-    for line in header:
+    index = 0
+    while index < len(header):
+        line = header[index]
+        index += 1
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if line[:1].isspace() or line.lstrip().startswith("-"):
@@ -100,7 +103,16 @@ def _parse_frontmatter(header: list[str]) -> dict[str, str]:
         if match is None:
             raise SkillIngestError("skill_frontmatter_malformed")
         key, value = match.group(1), match.group(2).strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        if value in (">", "|", ">-", "|-", ">+", "|+"):
+            # Folded/literal block scalar: take the indented continuation.
+            block: list[str] = []
+            while index < len(header) and (
+                    header[index][:1].isspace() or not header[index].strip()):
+                block.append(header[index].strip())
+                index += 1
+            joiner = "\n" if value.startswith("|") else " "
+            value = joiner.join(part for part in block if part)
+        elif len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
         if key in fields:
             raise SkillIngestError("skill_frontmatter_duplicate_key")
@@ -110,6 +122,19 @@ def _parse_frontmatter(header: list[str]) -> dict[str, str]:
         if len(fields) > 32:
             raise SkillIngestError("skill_frontmatter_too_large")
     return fields
+
+
+def read_skill_name(path: str | Path) -> str | None:
+    """Read only the frontmatter name; never hashes resources."""
+    skill_file = Path(path) / SKILL_FILE
+    if skill_file.is_symlink() or not skill_file.is_file():
+        return None
+    try:
+        frontmatter, _ = _split_skill_text(skill_file.read_bytes())
+    except (OSError, SkillIngestError):
+        return None
+    return frontmatter.get("name") or None
+
 
 
 def _split_skill_text(raw: bytes) -> tuple[dict[str, str], str]:

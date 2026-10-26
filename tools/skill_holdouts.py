@@ -180,7 +180,6 @@ PLANNED = {
     "review": "B",
     "write-docs": "B",
     "write-spec": "B",
-    "scout": "B",
 }
 
 # Skills that cannot be honestly tested offline, with the reason.
@@ -213,10 +212,11 @@ EXCLUDED = {
     "greet-anton-abyzov": "advisory only; no observable artifact",
     "obsidian-brain": "local vault dependency",
     "stripe-refund-auditor": "external service (Stripe API)",
-    "tax-filing": "local data and external filing",
+    "tax-filing": "external services and local data (Xero/Gmail/Drive)",
     "survey-passing": "external expert-network platforms",
+    "scout": "external catalog (verified-skill.com); installs skills",
     "social-media-posting": "exceeds the record bound; external APIs",
-    "skill-builder": "installs other skills; no testable artifact",
+    "skill-builder": "harness-dependent (vskill CLI/Studio or Claude)",
 }
 
 

@@ -28,8 +28,10 @@ python3 tools/skill_holdout.py --skills-root <root> --tier A -o out.json
 ```
 
 Exit `0` only when every selected skill is present, qualified, verifies,
-and beats the no-guidance baseline; `1` otherwise; `2` for an unknown
-selection.
+and beats the no-guidance baseline; `1` otherwise; `2` when the selection
+names a planned (`holdout_not_registered`), excluded
+(`holdout_excluded`) or unregistered tier (`no_registered_holdouts_in_tier`)
+entry.
 
 ## Registered examples
 
@@ -63,7 +65,7 @@ default and use a different meta-test strategy.
   `write-spec`, `close-spec`, `handoff-spec`, `retro`, `write-docs`,
   `audit-agents`, `audit-tests`, `audit-choices`, `audit-performance`,
   `auto-research`, `explore-unknowns`, `marketing-pages`,
-  `ratchet-files`, `refactor-clean`, `review`, `scout`.
+  `ratchet-files`, `refactor-clean`, `review`.
 - **Excluded** — with a reason each: external services (`gws`,
   `slack-messaging`, `blotato`, `apify-data-gathering`, `kie-gemini-omni`,
   `appstore`, `stripe-refund-auditor`, `survey-passing`,

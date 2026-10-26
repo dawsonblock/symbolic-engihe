@@ -10,7 +10,8 @@ For each example it runs the whole governed path:
         -> CandidateEvidenceV1 (evaluator) + CandidateDecisionV1 (operator)
         -> qualified -> GovernedServingGateway -> recorded outcome
 
-Two worked examples ship with it:
+Examples live in ``tools/skill_holdouts.py`` (``--list`` shows the
+registry, planned tiers and exclusions); registered today:
 
 - ``write-skills``: the fixture asks for a skill file; the evaluator's
   private test asserts the artifact the skill prescribes (frontmatter
@@ -18,6 +19,8 @@ Two worked examples ship with it:
 - ``php2shell-check``: the fixture is a Dockerfile on a vulnerable,
   floating PHP tag; the private test asserts a pinned fixed tag and a
   findings file naming the CVE.
+- ``write-tests``: the private test requires the submitted suite to pass
+  on the original module and fail on a mutated implementation.
 
 The acceptance tests live with the evaluator (registered with the
 verifier) and are never placed in the served repository. The agent is a
@@ -64,7 +67,7 @@ from sis.v3.runner import (LocalSubprocessExecutor,  # noqa: E402
                            ResourceLimits, tree_digest)
 from sis.v3.serving import GovernedServingGateway  # noqa: E402
 from sis.v3.skill_ingest import (SkillIngestError, discover_skills,  # noqa: E402
-                                 ingest_skill, load_skill)
+                                 ingest_skill, read_skill_name)
 from sis.v3.verifier import OutcomeVerifier  # noqa: E402
 from tests.v3.authority_testkit import (evaluator_keypair,  # noqa: E402
                                         make_registry, register_repo)
@@ -75,7 +78,8 @@ EVALUATOR = "skill-holdout-evaluator"
 BASE_COMMIT = "a1b2c3d"
 
 
-from skill_holdouts import Holdout, describe, select  # noqa: E402
+from skill_holdouts import (EXCLUDED, PLANNED, Holdout,  # noqa: E402
+                            describe, select)
 
 
 def _utcnow() -> str:
@@ -155,16 +159,22 @@ def _request(env: TaskEnvelopeV1) -> GuidanceRequestV1:
         semantic_contract_digest="c" * 64)
 
 
-def _skill_index(roots) -> dict[str, Path]:
-    index: dict[str, Path] = {}
+def _skill_index(roots):
+    """Index by directory name; parse frontmatter names only if needed."""
+    by_dir: dict[str, Path] = {}
+    paths: list[Path] = []
     for root in roots:
         for path in discover_skills(root):
-            index.setdefault(path.name, path)
-            try:
-                index.setdefault(load_skill(path)["name"], path)
-            except SkillIngestError:
-                continue
-    return index
+            paths.append(path)
+            by_dir.setdefault(path.name, path)
+    return by_dir, paths
+
+
+def _resolve(index, paths, name) -> Path | None:
+    if name in index:
+        return index[name]
+    return next((path for path in paths
+                 if read_skill_name(path) == name), None)
 
 
 def _pass_receipts(report, arm, verifier) -> list:
@@ -191,18 +201,35 @@ def main() -> int:
     if args.list:
         print(json.dumps(describe(), indent=2, sort_keys=True))
         return 0
-    if not args.skills_root or args.output is None:
-        parser.error("--skills-root and -o are required unless --list")
     selected = select(tier=args.tier, only=args.only)
     if not selected:
-        print(json.dumps({"error": "no_registered_holdouts_selected",
-                          "tier": args.tier, "only": args.only}))
+        if args.only in PLANNED:
+            print(json.dumps({"error": "holdout_not_registered",
+                              "skill": args.only,
+                              "planned_tier": PLANNED[args.only]}))
+        elif args.only in EXCLUDED:
+            print(json.dumps({"error": "holdout_excluded",
+                              "skill": args.only,
+                              "reason": EXCLUDED[args.only]}))
+        elif args.tier is not None:
+            print(json.dumps({
+                "error": "no_registered_holdouts_in_tier",
+                "tier": args.tier,
+                "planned": sorted(name for name, tier in PLANNED.items()
+                                  if tier == args.tier)}))
+        else:
+            print(json.dumps({"error": "no_registered_holdouts_selected",
+                              "tier": args.tier, "only": args.only}))
         return 2
+    if not args.skills_root or args.output is None:
+        parser.error("--skills-root and -o are required unless --list")
 
     root = args.work or Path(tempfile.mkdtemp(prefix="sis-skill-holdout-"))
     root.mkdir(parents=True, exist_ok=True)
-    index = _skill_index(args.skills_root)
-    missing = [h.skill for h in selected if h.skill not in index]
+    by_dir, paths = _skill_index(args.skills_root)
+    resolved = {holdout.skill: _resolve(by_dir, paths, holdout.skill)
+                for holdout in selected}
+    missing = [name for name, path in resolved.items() if path is None]
 
     registry, reg_seed = make_registry()
     repo_registry, repo_seed = make_registry()
@@ -252,7 +279,8 @@ def main() -> int:
     results = []
     for holdout in selected:
         entry = {"skill": holdout.skill, "task_id": holdout.task_id}
-        if holdout.skill not in index:
+        skill_path = resolved[holdout.skill]
+        if skill_path is None:
             entry.update(status="missing_skill")
             results.append(entry)
             continue
@@ -264,7 +292,7 @@ def main() -> int:
                           registry_id="serve-" + holdout.task_id,
                           family_id=family)
             ingested = ingest_skill(
-                index[holdout.skill], candidates,
+                skill_path, candidates,
                 scope_kind="family_id", scope_value=family,
                 target_task_family=family)
             entry.update(candidate_id=ingested["candidate_id"],

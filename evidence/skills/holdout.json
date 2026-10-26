@@ -1,10 +1,10 @@
 {
   "custody": "test-custody keys generated for this run; not production",
   "evidence": "deterministic scripted agent; machinery evidence only, not a claim about real-agent efficacy",
-  "generated_at": "2026-10-26T00:07:40Z",
+  "generated_at": "2026-10-26T08:03:15Z",
   "keys": {
-    "evaluator": "key-49caec14938e646451b999fa",
-    "operator": "key-4699d42d1a4ce066949bef2b"
+    "evaluator": "key-d5a2b445f9c56ce9a27b70bb",
+    "operator": "key-55d4219299a948f91b0d4ca0"
   },
   "kind": "skill_holdout",
   "missing_skills": [],
@@ -15,9 +15,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-write-skills-252ae34659e6",
-        "committed_at": "2026-10-26T00:07:27Z",
+        "committed_at": "2026-10-26T08:03:07Z",
         "decision_digest": "",
-        "entry_digest": "3b2442f1184cb87c488e98140a46f84bccd014c1b8b8eb820e354915a6d71e78",
+        "entry_digest": "5b1682d2f74b275b3cc99f442cd7962b714773f8e4e5f8eac8d1ecc2febb9aab",
         "evidence_refs": [],
         "from_state": "",
         "note": "submitted",
@@ -28,9 +28,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-write-skills-252ae34659e6",
-        "committed_at": "2026-10-26T00:07:27Z",
+        "committed_at": "2026-10-26T08:03:07Z",
         "decision_digest": "",
-        "entry_digest": "c933d7dfb5c647721409fa009daf218d52ae4dc14876f9ff5e9775b85b809292",
+        "entry_digest": "4c605c34105cfa4c625878ae9068ae66c8faac71afc2be547b5c5011eb626ca5",
         "evidence_refs": [],
         "from_state": "proposed",
         "note": "",
@@ -41,9 +41,9 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "skill-write-skills-252ae34659e6",
-        "committed_at": "2026-10-26T00:07:27Z",
+        "committed_at": "2026-10-26T08:03:07Z",
         "decision_digest": "",
-        "entry_digest": "7cfda7e5aeab984a788cb3a2e7d0f53b026eaa9c70ea38c8d8f7e50cf9fb6ff6",
+        "entry_digest": "6f26c73ce672887ce82d6954af7544ef292832d427accd022c571e1bf3d3763c",
         "evidence_refs": [],
         "from_state": "validated",
         "note": "",
@@ -54,16 +54,16 @@
       {
         "actor_identity": "skill-holdout-operator",
         "candidate_id": "skill-write-skills-252ae34659e6",
-        "committed_at": "2026-10-26T00:07:30Z",
-        "decision_digest": "7acaaf226911227563b8dd7eb8c8058757b61bc56d57f9673c29c92ebd101288",
-        "entry_digest": "0e00c4718dba166e0ce4ef0767fa19a8c89c6b044ef1e303d8524c916a1c930d",
+        "committed_at": "2026-10-26T08:03:09Z",
+        "decision_digest": "58a7a4978f20f170ed2cf13f91b91efd839911becba489033d9096a69bfb92ab",
+        "entry_digest": "a30a2dd7522185710ccd0b9f662d15db212976ff835a5b43d327d99f18b7a5be",
         "evidence_refs": [
-          "c1ce6e7c4ef03df55e3e728947d3b804652cc985731625b9d0e2cf8993b07472"
+          "47622b7ac8b53fd0ebb79c5af88c147bc848355ffc785c2de743f15422e6e9da"
         ],
         "from_state": "evaluating",
         "note": "skill holdout qualified",
         "receipt_refs": [
-          "63e1be49d562be7b1718961bbd6aa7529bfce1087d9747c12563642d674d00cc"
+          "7b1edb18a4d341915271543cfdd9a6e4eb163ecebbf9560057a5cd7cd711f40b"
         ],
         "seq": 4,
         "to_state": "qualified"
@@ -71,9 +71,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-php2shell-check-624f520189ff",
-        "committed_at": "2026-10-26T00:07:30Z",
+        "committed_at": "2026-10-26T08:03:09Z",
         "decision_digest": "",
-        "entry_digest": "98f91af18434fa3cafda93bd1cdb106769cb12a4482498e2ea55abc537150b91",
+        "entry_digest": "04261c45846c8aa510e43083cd15ba34e18c3a5e0a6db2e7d85804af242b200b",
         "evidence_refs": [],
         "from_state": "",
         "note": "submitted",
@@ -84,9 +84,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-php2shell-check-624f520189ff",
-        "committed_at": "2026-10-26T00:07:30Z",
+        "committed_at": "2026-10-26T08:03:09Z",
         "decision_digest": "",
-        "entry_digest": "3d65c8a3f9ca86f82d7a34aab436cea98a454a6e14cbcd90bdf98dd5bee71dfd",
+        "entry_digest": "eafc0f7388df34fd9d5168cedb7f9da6b97ada1039c476250d7e26f784f42fb0",
         "evidence_refs": [],
         "from_state": "proposed",
         "note": "",
@@ -97,9 +97,9 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "skill-php2shell-check-624f520189ff",
-        "committed_at": "2026-10-26T00:07:30Z",
+        "committed_at": "2026-10-26T08:03:09Z",
         "decision_digest": "",
-        "entry_digest": "85bf59f8a1ffac1ddc320b592ec946c005e1bd774fda1e31c63ce5853fea87fa",
+        "entry_digest": "e33862397559c7e0663441ed38cb3febd613e0d780d3900130ba372c945ca2b0",
         "evidence_refs": [],
         "from_state": "validated",
         "note": "",
@@ -110,16 +110,16 @@
       {
         "actor_identity": "skill-holdout-operator",
         "candidate_id": "skill-php2shell-check-624f520189ff",
-        "committed_at": "2026-10-26T00:07:33Z",
-        "decision_digest": "90f5ac0bd842716921e2b859684a0ce3a01ccf9ad516df00e1dc1693e5b1517a",
-        "entry_digest": "dac96f87ae69a84bc0b8f9911ade975217c9433a748a01dddbed22acd2924a20",
+        "committed_at": "2026-10-26T08:03:11Z",
+        "decision_digest": "fe9f68073797abff7883c3be52e691161816e579b7c8800d54cbbad6693b087a",
+        "entry_digest": "454b45bfa36473095540ddd2bffe29ec14e8b0e35f256662502b93a4cd5bbc73",
         "evidence_refs": [
-          "e4406d5b78743faa5caacf1c235ef38a40836d3dcc1c76dadd7566ec3ece24c0"
+          "8529d560c309ccf05eeca7322fe80aa11580dc58f6e19819a7f1763ce8cf732c"
         ],
         "from_state": "evaluating",
         "note": "skill holdout qualified",
         "receipt_refs": [
-          "52a6a0fa5de16283cdf209afb3536c91734e1c101051faeee5162246665533a4"
+          "60b145b6ebdee4e6cd134fcee809c42d033f3f6e30e77c0e9dcbba057f0848e1"
         ],
         "seq": 8,
         "to_state": "qualified"
@@ -127,9 +127,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-write-tests-b79ef655978a",
-        "committed_at": "2026-10-26T00:07:34Z",
+        "committed_at": "2026-10-26T08:03:11Z",
         "decision_digest": "",
-        "entry_digest": "7a4516a29988bb58cc00c86252398fa7846277d405fe5c5b06f8be038b201ac5",
+        "entry_digest": "6c2a77a4ca8865094b685f37705d67077ff9f23bbf06263387b164bce0478b48",
         "evidence_refs": [],
         "from_state": "",
         "note": "submitted",
@@ -140,9 +140,9 @@
       {
         "actor_identity": "learner",
         "candidate_id": "skill-write-tests-b79ef655978a",
-        "committed_at": "2026-10-26T00:07:34Z",
+        "committed_at": "2026-10-26T08:03:11Z",
         "decision_digest": "",
-        "entry_digest": "10ffc2570a46eccb6b3cee5144d3086afc9f27e6c8c6e44bb62574dfb9c6e09e",
+        "entry_digest": "62c97bf73d6375c878e1c46a15c67554785dcd9df48444965fcead9d5f570330",
         "evidence_refs": [],
         "from_state": "proposed",
         "note": "",
@@ -153,9 +153,9 @@
       {
         "actor_identity": "evaluator",
         "candidate_id": "skill-write-tests-b79ef655978a",
-        "committed_at": "2026-10-26T00:07:34Z",
+        "committed_at": "2026-10-26T08:03:11Z",
         "decision_digest": "",
-        "entry_digest": "a7cd661709d6b1f185babd80ca39aae198aff69526ede833b4de62b135844a8a",
+        "entry_digest": "8a4a65d31494c7f8e490bc7cf04cbbc6b4cc61db86ec4ce8a1768bb20f402bd4",
         "evidence_refs": [],
         "from_state": "validated",
         "note": "",
@@ -166,16 +166,16 @@
       {
         "actor_identity": "skill-holdout-operator",
         "candidate_id": "skill-write-tests-b79ef655978a",
-        "committed_at": "2026-10-26T00:07:40Z",
-        "decision_digest": "1afeb7ff810c28982a941543910de35fd340260cd1fde3f948c3d6b0284ed400",
-        "entry_digest": "62d1381c6a80472adcfe7e4abfd3df19418c55261e542dd9901f24696a867625",
+        "committed_at": "2026-10-26T08:03:15Z",
+        "decision_digest": "956a2e1feaf35c8541b7b8222eb446acd0d6d8295f382041f5b89946421919f6",
+        "entry_digest": "fd4e87ed3baba10a9ae783f537c65a4546ca3062dd7ff3540f61eab01eff3359",
         "evidence_refs": [
-          "7b408e71844858e56b67d7c3f971bce71a2daa40e59fd43ddb5d405b81331e06"
+          "8393434f05b680b6ea3ac3dea13f18195e447394c6f211c2e3542d935d771992"
         ],
         "from_state": "evaluating",
         "note": "skill holdout qualified",
         "receipt_refs": [
-          "fa37c83db7ca1feef3440d5347be25ba7962ba0a08b9b27d35dcbc0cd6b5e281"
+          "875623afa2900b7d0c7cc3b3703b8da96e9f281b0da1498052fa132459fa817b"
         ],
         "seq": 12,
         "to_state": "qualified"
@@ -183,7 +183,7 @@
     ],
     "verify": {
       "entries": 12,
-      "head": "62d1381c6a80472adcfe7e4abfd3df19418c55261e542dd9901f24696a867625",
+      "head": "fd4e87ed3baba10a9ae783f537c65a4546ca3062dd7ff3540f61eab01eff3359",
       "migrations": [],
       "ok": true,
       "problems": []
@@ -193,8 +193,8 @@
     {
       "candidate_digest": "2f1456c789c11b54bda08e2f2fd2109945603f4ee3581fa9552544572a6c4115",
       "candidate_id": "skill-write-skills-252ae34659e6",
-      "decision_digest": "7acaaf226911227563b8dd7eb8c8058757b61bc56d57f9673c29c92ebd101288",
-      "evidence_digest": "c1ce6e7c4ef03df55e3e728947d3b804652cc985731625b9d0e2cf8993b07472",
+      "decision_digest": "58a7a4978f20f170ed2cf13f91b91efd839911becba489033d9096a69bfb92ab",
+      "evidence_digest": "47622b7ac8b53fd0ebb79c5af88c147bc848355ffc785c2de743f15422e6e9da",
       "probe": {
         "conformance": {
           "conforms": true,
@@ -211,7 +211,7 @@
         }
       },
       "receipt_refs": [
-        "63e1be49d562be7b1718961bbd6aa7529bfce1087d9747c12563642d674d00cc"
+        "7b1edb18a4d341915271543cfdd9a6e4eb163ecebbf9560057a5cd7cd711f40b"
       ],
       "scan_findings": [],
       "served": {
@@ -233,8 +233,8 @@
     {
       "candidate_digest": "1868edf95dbaf532546ba53d82c5ad8d04fe5de94c0a9b12e58a71524e85ab76",
       "candidate_id": "skill-php2shell-check-624f520189ff",
-      "decision_digest": "90f5ac0bd842716921e2b859684a0ce3a01ccf9ad516df00e1dc1693e5b1517a",
-      "evidence_digest": "e4406d5b78743faa5caacf1c235ef38a40836d3dcc1c76dadd7566ec3ece24c0",
+      "decision_digest": "fe9f68073797abff7883c3be52e691161816e579b7c8800d54cbbad6693b087a",
+      "evidence_digest": "8529d560c309ccf05eeca7322fe80aa11580dc58f6e19819a7f1763ce8cf732c",
       "probe": {
         "conformance": {
           "conforms": true,
@@ -251,7 +251,7 @@
         }
       },
       "receipt_refs": [
-        "52a6a0fa5de16283cdf209afb3536c91734e1c101051faeee5162246665533a4"
+        "60b145b6ebdee4e6cd134fcee809c42d033f3f6e30e77c0e9dcbba057f0848e1"
       ],
       "scan_findings": [],
       "served": {
@@ -273,8 +273,8 @@
     {
       "candidate_digest": "388c51946aeaee9b8d5b5e0a51557ac07b8a8b27a998900208dcbce5562b68a0",
       "candidate_id": "skill-write-tests-b79ef655978a",
-      "decision_digest": "1afeb7ff810c28982a941543910de35fd340260cd1fde3f948c3d6b0284ed400",
-      "evidence_digest": "7b408e71844858e56b67d7c3f971bce71a2daa40e59fd43ddb5d405b81331e06",
+      "decision_digest": "956a2e1feaf35c8541b7b8222eb446acd0d6d8295f382041f5b89946421919f6",
+      "evidence_digest": "8393434f05b680b6ea3ac3dea13f18195e447394c6f211c2e3542d935d771992",
       "probe": {
         "conformance": {
           "conforms": true,
@@ -291,7 +291,7 @@
         }
       },
       "receipt_refs": [
-        "fa37c83db7ca1feef3440d5347be25ba7962ba0a08b9b27d35dcbc0cd6b5e281"
+        "875623afa2900b7d0c7cc3b3703b8da96e9f281b0da1498052fa132459fa817b"
       ],
       "scan_findings": [],
       "served": {
@@ -334,7 +334,7 @@
     {
       "kind": "serving_outcome",
       "outcome": "pass",
-      "receipt_digest": "63e1be49d562be7b1718961bbd6aa7529bfce1087d9747c12563642d674d00cc",
+      "receipt_digest": "7b1edb18a4d341915271543cfdd9a6e4eb163ecebbf9560057a5cd7cd711f40b",
       "schema_version": 1,
       "served_digest": "47f9a75170bbee39c38abcdaa0586f0dc5325ec142689b2b091c4b7f7957c8b5",
       "task_id": "task-write-skill"
@@ -360,7 +360,7 @@
     {
       "kind": "serving_outcome",
       "outcome": "pass",
-      "receipt_digest": "52a6a0fa5de16283cdf209afb3536c91734e1c101051faeee5162246665533a4",
+      "receipt_digest": "60b145b6ebdee4e6cd134fcee809c42d033f3f6e30e77c0e9dcbba057f0848e1",
       "schema_version": 1,
       "served_digest": "7d2584e4e9696376b96f8ab691e2a8775a02af1e29e9fc86b2402c5fde445e0f",
       "task_id": "task-php-exposure"
@@ -390,7 +390,7 @@
     {
       "kind": "serving_outcome",
       "outcome": "pass",
-      "receipt_digest": "fa37c83db7ca1feef3440d5347be25ba7962ba0a08b9b27d35dcbc0cd6b5e281",
+      "receipt_digest": "875623afa2900b7d0c7cc3b3703b8da96e9f281b0da1498052fa132459fa817b",
       "schema_version": 1,
       "served_digest": "219be2ff78f0569a37b87cb01825ab8e8d1539683eedb01ec6b2188769a19fec",
       "task_id": "task-write-tests"

@@ -8,6 +8,7 @@ certificate or delivery attestation prevents trusted serving.
 from __future__ import annotations
 
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -242,6 +243,16 @@ class EvidenceCustodyTests(unittest.TestCase):
         base = self.fixture.custody.root / "objects" / digest[:2]
         return (base / f"{digest}.json", base / f"{digest}.meta.json")
 
+    @staticmethod
+    def _unlink(path):
+        # Custody objects are read-only on POSIX; Windows also needs the
+        # read-only attribute cleared before deletion.
+        try:
+            os.chmod(path, 0o666)
+        except OSError:
+            pass
+        path.unlink()
+
     def test_custody_records_certificate_dependencies(self):
         certificate = self.fixture.certificate
         link = self.fixture.custody.link_for(certificate.digest)
@@ -255,7 +266,7 @@ class EvidenceCustodyTests(unittest.TestCase):
     def test_deleted_certificate_blocks_serving(self):
         certificate = self.fixture.certificate
         for path in self._object_paths(certificate.digest):
-            path.unlink()
+            self._unlink(path)
         with self.assertRaisesRegex(CandidateError, "evidence_missing"):
             self.fixture.registry.get(self.fixture.cert.candidate.candidate_id)
         guidance = self.fixture.gateway.serve(
@@ -333,7 +344,7 @@ class EvidenceCustodyTests(unittest.TestCase):
     def test_custody_verification_reports_missing_dependency(self):
         receipt = self.fixture.cert.receipts[0]
         for path in self._object_paths(receipt.digest):
-            path.unlink()
+            self._unlink(path)
         report = self.fixture.custody.verify()
         self.assertFalse(report["ok"])
         self.assertTrue(any("missing" in problem

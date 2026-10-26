@@ -107,6 +107,9 @@
 
 ## Known limitations
 
+- Windows is an experimental CI target. The local vault ACL and SQLite
+  lifecycle tests are POSIX-specific; Linux/macOS POSIX is the supported
+  evaluator platform for this release.
 - Local sandbox is not a validated hostile-code boundary.
 - Checkpoint/custody separation is a deployment requirement; a principal
   that can write both the candidate DB and the checkpoint store defeats

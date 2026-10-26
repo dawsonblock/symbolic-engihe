@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -288,6 +289,8 @@ class CompatibilityTests(unittest.TestCase):
         self.assertEqual(source["frontmatter"], {})
 
     def test_executable_resource_is_recorded_never_run(self):
+        if os.name != "posix":
+            self.skipTest("executable bit is POSIX-specific")
         skill = _skill(
             self.root, name="script-skill",
             files={"scripts/install.sh": "#!/bin/sh\necho hi\n"})

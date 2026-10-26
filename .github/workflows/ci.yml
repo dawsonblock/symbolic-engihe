@@ -25,8 +25,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest tests/ -q
-      - name: Verify pinned pristine source baseline separately from development changes
-        run: python tools/check_source_manifest.py --baseline-ref daf0cccea495f4e62f1e3ddde3f9a3a68e2e1b08
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONNOUSERSITE: "1"
+      - name: Verify release inventory
+        run: python tools/verify_release.py .
       - name: Run CLI and HTTP integration smoke
         if: runner.os == 'Linux'
         run: python tools/smoke_integration.py

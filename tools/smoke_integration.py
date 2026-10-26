@@ -57,7 +57,7 @@ def main():
                     raise RuntimeError('HTTP server exited before readiness')
                 try:
                     with urlopen(Request(base+'/health', headers={'X-SIS-Key':api_key}), timeout=0.2) as conn:
-                        assert json.load(conn)['version']=='2.4.0'
+                        assert json.load(conn)['version']=='3.3.1'
                     break
                 except OSError:
                     time.sleep(0.05)

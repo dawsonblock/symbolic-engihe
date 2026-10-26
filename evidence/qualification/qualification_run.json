@@ -2,14 +2,14 @@
   "schema_version": 1,
   "kind": "qualification_run",
   "branch": "codex/sis-v3.3-governed-learning",
-  "generated_at": "2026-10-25T23:45:27Z",
-  "commit_at_generation": "73509708bd11358a2a83c501d50519930996a3b3",
+  "generated_at": "2026-10-26T00:20:23Z",
+  "commit_at_generation": "1771bceac676230dc5b6d56624ed2d39742e0aa7",
   "note": "the suite, deterministic campaign, smoke, ingestion smoke, skill-holdout and packaging rows were re-run at commit_at_generation; the live codex campaign and the v3.2 failure-injection rows are carried over from 980dd34e945821e2d46f748d4f1b2fa8adaa5608 and are marked as such. The exact source commit of the packaged archive is recorded in release/release_manifest.json",
   "commands": [
     {
       "command": "PYTHONPATH=src python3 -m pytest tests/ -q",
       "result": {
-        "passed": 796,
+        "passed": 801,
         "skipped": 2,
         "failed": 0
       }
@@ -74,7 +74,8 @@
         "exit_code": 0,
         "qualified": [
           "write-skills",
-          "php2shell-check"
+          "php2shell-check",
+          "write-tests"
         ],
         "solved": {
           "A": 0,
@@ -94,7 +95,7 @@
       }
     },
     {
-      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 796 --skipped 2 --failed 0",
+      "command": "python3 tools/package_release.py --status IMPLEMENTED_NOT_EFFICACY_QUALIFIED --passed 801 --skipped 2 --failed 0",
       "result": "see release/release_manifest.json and release/verification.json"
     }
   ],

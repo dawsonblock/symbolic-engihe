@@ -23,7 +23,8 @@ from verify_release import verify, verify_against_tree
 from build_release import write_manifest
 
 GENERATED_PATHS = {"RELEASE_SHA256.json",
-                   "evidence/release/build_record.json"}
+                   "evidence/release/build_record.json",
+                   "evidence/release/release_verification.json"}
 
 
 def source_binding(root: Path) -> dict:

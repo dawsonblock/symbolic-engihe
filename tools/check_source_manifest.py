@@ -23,7 +23,8 @@ SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log"}
 OUT_OF_BAND_DIRS = {"release"}
 # The build record describes the build, not the source. It is rewritten by
 # every packaging run, so it cannot be part of the archive it describes.
-OUT_OF_BAND_FILES = {"evidence/release/build_record.json"}
+OUT_OF_BAND_FILES = {"evidence/release/build_record.json",
+                       "evidence/release/release_verification.json"}
 
 
 def _valid_manifest(document):

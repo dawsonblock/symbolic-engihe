@@ -5,29 +5,29 @@
     "extracted_test_smoke": {
       "command": "pytest -q tests/v3/test_candidates.py",
       "returncode": 0,
-      "tail": "39 passed in 0.80s"
+      "tail": "39 passed in 2.47s"
     },
     "verify_tree": {
-      "files": 324
+      "files": 326
     }
   },
   "kind": "release_verification",
   "schema_version": 1,
   "source": {
-    "commit": "0354390c587d8449ef449dc0415599465df4fce6",
+    "commit": "c85603114a99d2db76252e530c85c1cf8ca3baf7",
     "dirty": false,
     "dirty_paths": []
   },
   "source_binding": {
-    "files": 324,
+    "files": 326,
     "project": "sis-v2-authority-transfer",
     "source_bound": true
   },
   "zip_verify": {
     "manifest": "RELEASE_SHA256.json",
     "project": "sis-v2-authority-transfer",
-    "source_files": 324,
+    "source_files": 326,
     "valid": true,
-    "zip_sha256": "a327863d8512ae9c1cb74b697681b8a340dd2fed9c8f16011b65baf3797d74c0"
+    "zip_sha256": "1746ede9f3a7dca60167135ad5c93d402b082f4e668b272f5cbeb354ef9dcfe8"
   }
 }

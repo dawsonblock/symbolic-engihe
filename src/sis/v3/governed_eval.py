@@ -98,8 +98,13 @@ def preregister(
     budget: Mapping[str, int],
     arms: Sequence[str] = GOVERNED_ARMS,
     notes: str = "",
+    expected_baseline: float = 0.6,
+    expected_treatment: float = 0.4,
+    power: float = 0.8,
 ) -> dict:
     """Freeze the analysis plan; the digest proves it preceded the run."""
+    required_n = required_sample_size(
+        expected_baseline, expected_treatment, power=power, alpha=alpha)
     doc = {
         "schema_version": 1,
         "primary_metric": primary_metric,
@@ -110,6 +115,12 @@ def preregister(
         "budget": dict(budget),
         "arms": list(arms),
         "notes": notes,
+        "power_analysis": {
+            "expected_baseline": expected_baseline,
+            "expected_treatment": expected_treatment,
+            "power": power,
+            "required_n": required_n,
+        },
     }
     # canonical_json rejects floats; digest a deterministic normalized copy
     normalized = json.loads(

@@ -28,6 +28,7 @@ from typing import Callable, Mapping, Sequence
 
 from .benchmark import BenchmarkHarness, BudgetCaps
 from .contracts import GuidanceV1, TaskEnvelopeV1, canonical_digest
+from .runner import tree_digest
 from .governed_eval import (GOVERNED_ARMS, assert_partition_disjoint,
                             compute_metrics, preregister,
                             required_sample_size, run_governed_evaluation)
@@ -217,7 +218,13 @@ def analyze_report(
     decisive = paired_contrast(report, baseline="A", treatment="E")
     alpha = protocol.get("alpha", 0.05)
     sample_size = protocol.get("sample_size")
-    underpowered = (type(sample_size) is int and n_tasks < sample_size)
+    declared_power = protocol.get("power_analysis") or {}
+    required_n = declared_power.get("required_n")
+    if type(required_n) is not int or required_n < 1:
+        required_n = required_sample_size(0.6, 0.4)
+    minimum_n = max(
+        sample_size if type(sample_size) is int else 0, required_n)
+    underpowered = n_tasks < minimum_n
     if not real_agent:
         evidence_class = DEMONSTRATION
     elif not hidden_holdout or not conformance.get("conforms"):
@@ -267,12 +274,15 @@ def analyze_report(
         "sample_size_preregistered": sample_size,
         "required_sample_size_0_6_vs_0_4": required_sample_size(0.6, 0.4),
         "power_analysis": {
-            "assumed_baseline": 0.6,
-            "assumed_treatment": 0.4,
-            "power": 0.8,
-            "alpha": 0.05,
-            "required_n": required_sample_size(0.6, 0.4),
+            "expected_baseline": declared_power.get(
+                "expected_baseline", 0.6),
+            "expected_treatment": declared_power.get(
+                "expected_treatment", 0.4),
+            "power": declared_power.get("power", 0.8),
+            "alpha": alpha,
+            "required_n": required_n,
             "preregistered_n": sample_size,
+            "minimum_n": minimum_n,
         },
         "underpowered": underpowered,
         "hidden_holdout": hidden_holdout,
@@ -435,13 +445,21 @@ class CodexCliAgent:
         if guidance is not None and guidance.helpful_next_checks:
             prompt += "\n\nGoverned SIS guidance (advisory, untrusted):\n" + \
                 "\n".join(f"- {step}" for step in guidance.helpful_next_checks)
+        before = tree_digest(ctx.workspace)
         turn = self._adapter.start_task(
             prompt, ctx.workspace, model=self._model,
             sandbox="workspace_write")
         tools = 0
+        error_event = False
         for event in turn:
             if event.event_type in {"tool_request", "tool_result"}:
                 tools += 1
+            if event.event_type == "error":
+                error_event = True
+        if error_event:
+            raise RuntimeError("real_agent_error_event")
+        if tools == 0 or tree_digest(ctx.workspace) == before:
+            raise RuntimeError("real_agent_no_action")
         return {"tokens_used": None, "tools_used": tools}
 
     def close(self) -> None:

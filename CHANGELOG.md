@@ -29,7 +29,9 @@
 - Added five-arm learning qualification (`sis.v3.learning_qualification`)
   with exact McNemar, Wilson/Newcombe intervals, negative transfer,
   resource overhead and a real-agent gate. The scripted demo is labelled
-  demonstration; the powered real-agent run is blocked in this release.
+  demonstration. An eight-task real five-arm Codex attempt was executed
+  until the Codex quota blocked four tasks; the gate is recorded as
+  `BLOCKED_EXTERNAL_AGENT_QUOTA`, not as a task failure.
 - Added docs/V331_ARCHITECTURE.md and the v3.3.1 authority, certificate,
   identity, custody, ingestion, evaluation, threat-model, migration and
   release documents. Suite: **926 passed, 3 skipped**.

@@ -79,14 +79,20 @@ counts tool events and returns usage. The evaluator independently
 verifies the resulting tree.
 
 `tools/five_arm_campaign.py --real-agent` writes a
-`BLOCKED_REAL_AGENT` / `BLOCKED_MANIFEST` /
-`BLOCKED_REAL_RUN_NOT_EXECUTED` report when a powered run is not
-actually executed. This release does not claim learning efficacy.
+`BLOCKED_REAL_AGENT` / `BLOCKED_MANIFEST` report when a real run cannot
+be started. `tools/real_agent_campaign.py` is the executable runner used
+for the v3.3.1 attempt; it fails closed on error/no-action events so a
+quota failure cannot be scored as a task failure.
 
 ## v3.3.1 result
 
 The scripted five-arm demo (2 tasks) shows the machinery and statistics:
 A 0/2, B–E 2/2, paired wins 2, losses 0, exact p=0.5, 95% Newcombe
 interval [0.07, 1.0]. It is labelled `demonstration`; the p-value shows
-why a 2-task run cannot support an efficacy claim. The powered
-real-agent run is gated and blocked in this release.
+why a 2-task run cannot support an efficacy claim.
+
+The v3.3.1 real-agent attempt ran eight preregistered synthetic tasks
+across five Codex arms. Codex hit its usage limit after 20 of 40 arm
+runs; four tasks had zero tool events and are infrastructure failures.
+The attempt is recorded as `INVALID_INFRASTRUCTURE` and the gate as
+`BLOCKED_EXTERNAL_AGENT_QUOTA`. No efficacy claim is made.

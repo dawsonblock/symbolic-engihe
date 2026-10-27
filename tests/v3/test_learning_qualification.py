@@ -105,9 +105,9 @@ class StatisticsTests(unittest.TestCase):
 
 class AnalysisTests(unittest.TestCase):
     def test_confirmatory_requires_real_agent_hidden_and_conforming(self):
-        report = synthetic_report(29, a_pass=False, e_pass=True)
+        report = synthetic_report(103, a_pass=False, e_pass=True)
         analysis = analyze_report(
-            report, protocol={"sample_size": 29, "alpha": 0.05},
+            report, protocol={"sample_size": 103, "alpha": 0.05},
             real_agent=True, hidden_holdout=True)
         self.assertEqual(analysis["evidence_class"], CONFIRMATORY)
         self.assertEqual(analysis["efficacy_claim"], "supported")
@@ -137,9 +137,9 @@ class AnalysisTests(unittest.TestCase):
                             for item in analysis["limitations"]))
 
     def test_regression_is_preserved(self):
-        report = synthetic_report(29, a_pass=True, e_pass=False)
+        report = synthetic_report(103, a_pass=True, e_pass=False)
         analysis = analyze_report(
-            report, protocol={"sample_size": 29, "alpha": 0.05},
+            report, protocol={"sample_size": 103, "alpha": 0.05},
             real_agent=True, hidden_holdout=True)
         self.assertEqual(analysis["efficacy_claim"], "regressed")
         self.assertEqual(analysis["release_gate"], "NO_EFFICACY_CLAIM")

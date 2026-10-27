@@ -10,9 +10,12 @@
   resource limits, protected-path denial, network denial). It is **not**
   a validated OS boundary; production hostile-code evaluation requires a
   rootless worker or microVM.
-- The powered real-agent five-arm efficacy run was **not executed** in
-  this release. The working interface and gate are present; the real
-  gate is marked blocked. No learning-efficacy claim is made.
+- A real five-arm Codex run was **attempted** (8 preregistered tasks).
+  Codex hit its usage limit after 20 of 40 arm runs; the final four
+  tasks had zero tool events and are classified as infrastructure
+  failures, not task failures. The real-agent gate is therefore
+  `BLOCKED_EXTERNAL_AGENT_QUOTA`; no efficacy claim is made. The runner
+  now fails closed on no-action/error events.
 
 ## What changed
 
@@ -87,7 +90,8 @@
   analysis, negative transfer, resource overhead, failure categories,
   integration-vs-components.
 - Scripted demo is labelled demonstration and cannot claim efficacy.
-  Real-agent gate is implemented; powered run blocked in this release.
+  The real-agent runner is implemented and was executed until the Codex
+  quota blocked it; the gate remains externally blocked.
 
 ## Test evidence
 
@@ -117,7 +121,8 @@
 - A compromised authority or evaluator key defeats its corresponding
   gate.
 - Pattern-based injection scanning is advisory, not proof of safety.
-- No powered real-agent efficacy result; no claim of improvement.
+- No valid powered real-agent efficacy result: the Codex quota blocked
+  the attempt after four of eight tasks; no claim of improvement.
 
 ## Artifacts
 

@@ -61,9 +61,12 @@
   and a PostgreSQL CI job.
 - Added `docs/V332_OPERATIONS.md`, `docs/V332_ACCEPTANCE_MATRIX.md` and
   `docs/V332_EFFICACY_STATUS.md`.
+- Regenerated `RELEASE_SHA256.json` (374 files) and built
+  `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip`; the ZIP and its signed
+  DSSE provenance verify. The provenance key is labelled
+  `qualification-only`, not a production trust root.
 - Not qualified: evaluator isolation (M6), full SLSA level conformance,
   real-agent efficacy (M9), and a real multi-host PostgreSQL deployment.
-  `RELEASE_SHA256.json` is not yet regenerated.
 
 ## 2026-10-26 — SIS v3.3.1 authority closure
 

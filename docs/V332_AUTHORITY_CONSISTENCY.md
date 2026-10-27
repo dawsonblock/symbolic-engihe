@@ -138,13 +138,23 @@ Not qualified:
 - **M6 evaluator isolation** — untrusted evaluation code is still not
   executed inside an independently validated OS sandbox. Hostile-code
   execution must stay disabled in production.
-- **M7–M8** — schema migrations, key rotation, disaster recovery,
-  canonical ZIP verification, dependency locking and SLSA-aligned
-  provenance are not implemented here. `RELEASE_SHA256.json` has not
-  been regenerated for 3.3.2.
+- **M7–M8** — control-plane schema versioning, full automated key
+  rotation, a tested disaster-recovery drill and SLSA *level*
+  conformance remain open. The canonical ZIP, regenerated inventory,
+  dependency lock and signed in-toto/SLSA-shaped provenance are in
+  place: `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (374 files)
+  verifies against `RELEASE_SHA256.json`, and the provenance envelope
+  verifies against the archive. The exact archive digest is recorded in
+  `release/release_manifest.json`. The signing key is labelled
+  `qualification-only`; a production trust root must be supplied by the
+  release custodian.
 - **M9 efficacy** — no real-agent benchmark improvement is claimed. The
   prior Codex quota block is unchanged; see
   `docs/V332_EFFICACY_STATUS.md`.
+- **Release artifact** — `tools/verify_release.py .` reports 374 files
+  matched; the ZIP and DSSE provenance both verify. CI now has a
+  PostgreSQL job.
+
 - **PostgreSQL** — the adapter was exercised against a disposable
   PostgreSQL 14.20 cluster: duplicate nonce rejection, four concurrent
   replicas producing exactly one commit, two replicas sharing one head

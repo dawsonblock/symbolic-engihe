@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
-    "sha256": "aeaf1aa629d21b40e91568d03c41c091818bfa40c4e99ab592064f20f056fa5f",
+    "sha256": "cef166da68816aacfc2f9a814d2d1a27f81fb029a1395506543d83b4ec05f83c",
     "source_files": 374
   },
   "branch": "codex/sis-v3.3.1-authority-closure",
@@ -56,19 +56,19 @@
     "path": "release/provenance.dsse.json",
     "public_key_path": "release/provenance_public_key.hex",
     "signed": true,
-    "statement_sha256": "27d94d148c480d646a4f87123d5dfcd2e9ddcc35fb371a53991cf9460736380c",
-    "subject_sha256": "aeaf1aa629d21b40e91568d03c41c091818bfa40c4e99ab592064f20f056fa5f",
+    "statement_sha256": "7ec503b4c4909457ee0949fc379451869c21b82df17e6993eae41aaf5756286f",
+    "subject_sha256": "cef166da68816aacfc2f9a814d2d1a27f81fb029a1395506543d83b4ec05f83c",
     "trust_root": "qualification-only"
   },
   "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
   "schema_version": 1,
-  "source_commit": "b3b7bccd1bbf077b90b3c329a72f504e25607747",
+  "source_commit": "f22f5183f17ac2a74085e62e2e4f2afad5a61775",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 977,
+    "passed": 981,
     "skipped": 8
   }
 }

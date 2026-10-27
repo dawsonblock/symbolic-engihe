@@ -14,7 +14,7 @@
     },
     "CHANGELOG.md": {
       "bytes": 26211,
-      "sha256": "639e49dc072e77f25e80b6f202fc8b03d5c9c31acf1c3b6d6227fe2539f6b21c"
+      "sha256": "3ba825d944589b027c64ee571127dbdc16bcb79fafbbe778bb12a08d17dcb1ef"
     },
     "LICENSE": {
       "bytes": 1083,
@@ -193,20 +193,20 @@
       "sha256": "ef710e82e451d4fefa02ee97900b49e4b5f18e36fb1bd7e1e2c86f5dd4ec4ca7"
     },
     "docs/V332_ACCEPTANCE_MATRIX.md": {
-      "bytes": 4354,
-      "sha256": "a406e4600a5004171b4955af39c7e2ac11e996f016a52e63ce130b7451c6ccc8"
+      "bytes": 4348,
+      "sha256": "ffa33c4da56b78215b4f0ed4c559eb082f72eec53a40bec5ad14881d37039072"
     },
     "docs/V332_AUTHORITY_CONSISTENCY.md": {
       "bytes": 7754,
-      "sha256": "c3eabfbd24f40577e89038840fb99f23021e6f1a8045950465f7d82f9a65a7ba"
+      "sha256": "5392e853f94eabf812fabaab30a5fa55b26233ac303a5e3409698826b8693ec2"
     },
     "docs/V332_EFFICACY_STATUS.md": {
       "bytes": 1349,
       "sha256": "9bbfbcb17cea2c0d9cb568b54538506eda5b28bf9096e62e9fb046233f9bf347"
     },
     "docs/V332_OPERATIONS.md": {
-      "bytes": 5026,
-      "sha256": "3990d1f0761ef4d499145d12d495987d1a99adbd30df181a68027c55a75de110"
+      "bytes": 5116,
+      "sha256": "99476dba44e80feb5d334d55c2c8b808915f161709a507fe733cc0f425e50a80"
     },
     "docs/audits/BASELINE_INTEGRITY.md": {
       "bytes": 2052,
@@ -490,7 +490,7 @@
     },
     "evidence/v332/qualification.json": {
       "bytes": 1625,
-      "sha256": "5a843cadf63e8d3dcd4c40da4219cad7f5a9cc7ef50e480919c663618fc26d4a"
+      "sha256": "756fd9aa6b7f542293a6b0e6745c00e93454d65d3358744368d7ded60ca6d21f"
     },
     "evidence/v332/reproduce_v331_baseline.py": {
       "bytes": 5904,
@@ -861,8 +861,8 @@
       "sha256": "c15d86ed16c4ffa1f087d99fb7c35368d6a31fa5070261212afd5832f812521d"
     },
     "src/sis/v3/control_plane.py": {
-      "bytes": 30421,
-      "sha256": "554e94f9d8f0d5b12b5e356501efab02dd3e7ea2bf0245528b31595d2e483fec"
+      "bytes": 32318,
+      "sha256": "da79ae5cbb6d669c7790e74169a5da41698f81bc7f2e5d7e4d55c3d72c989904"
     },
     "src/sis/v3/counterexamples.py": {
       "bytes": 2326,
@@ -1373,8 +1373,8 @@
       "sha256": "b6a8954d14a954a531df379ae2a0e92e8596ca9f1cada6087dcfebdf7d86605e"
     },
     "tests/v3/test_v332_security_regressions.py": {
-      "bytes": 31899,
-      "sha256": "c0d2d9fb1f2d55e7110c6ce08da22507dfa2878e2f8d996ec13ba33de9921a11"
+      "bytes": 34680,
+      "sha256": "0aee4104cefad7f5c5be0ec6c7fff59b8861324edd256645d817bb442a40c7ea"
     },
     "tests/v3/test_verified_episode.py": {
       "bytes": 7702,
@@ -1499,5 +1499,5 @@
   },
   "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
   "schema_version": 1,
-  "source_commit": "b3b7bccd1bbf077b90b3c329a72f504e25607747"
+  "source_commit": "f22f5183f17ac2a74085e62e2e4f2afad5a61775"
 }

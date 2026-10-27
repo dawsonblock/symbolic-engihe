@@ -26,7 +26,9 @@ jobs:
       - run: python -m pip install -e .
       - run: python -m unittest discover -s tests -v
       - name: Verify pinned pristine source baseline separately from development changes
-        run: python tools/check_source_manifest.py --baseline-ref daf0cccea495f4e62f1e3ddde3f9a3a68e2e1b08
+        # 9591d2d is the v4.0.0 closure commit with the 231-file manifest.
+        # The previous daf0ccc revision is not present in this repository.
+        run: python tools/check_source_manifest.py --baseline-ref 9591d2d
       - name: Run CLI and HTTP integration smoke
         if: runner.os == 'Linux'
         run: python tools/smoke_integration.py

@@ -5,6 +5,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import MappingProxyType
 from urllib.parse import parse_qs, urlsplit
+from . import __version__
 from .errors import SISError, InvalidInput
 from .service import Service
 from .validation import canonical
@@ -71,7 +72,7 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
     service = Service(db_path, enable_llm=os.getenv("SIS_ENABLE_LLM") == "1")
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "SIS/2.4"
+        server_version = f"SIS/{__version__}"
 
         def log_message(self, fmt, *args):
             # Avoid logging request bodies, examples, prediction inputs, or authentication tokens.
@@ -107,7 +108,7 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
                     return self.respond(401, {"error": "unauthorized"})
                 u = urlsplit(self.path)
                 if u.path == "/health":
-                    return self.respond(200, {"status": "ok", "service": "symbolic-induction", "version": "2.4.0"})
+                    return self.respond(200, {"status": "ok", "service": "symbolic-induction", "version": __version__})
                 if u.path == "/v1/tools":
                     return self.respond(200, {'tools':service.tools()})
                 if u.path == "/v1/rules":

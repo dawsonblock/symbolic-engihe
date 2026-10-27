@@ -15,7 +15,9 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {"__pycache__", ".git", ".venv", "dist", "build", ".pytest_cache", ".mypy_cache"}
-SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log"}
+SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log",
+             ".sqlite3-wal", ".sqlite3-shm", ".sqlite3-journal",
+             ".db-wal", ".db-shm", ".db-journal"}
 
 
 def _valid_manifest(document):

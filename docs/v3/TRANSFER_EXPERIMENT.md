@@ -32,8 +32,6 @@ evidence is now materially stronger.**
 
 ## v4.0.2 — four-arm run (52 live turns, independent scoring)
 
-## v4.0.2 — four-arm run (52 live turns, independent scoring)
-
 | Metric | A | B (placebo) | C (raw ctx) | D (guidance) |
 |--------|---|-------------|-------------|--------------|
 | Held-out solves | 10/12 | 10/12 | 10/12 | **12/12** |
@@ -46,9 +44,7 @@ Harder variants (nested chains `rows-cols-depth`, `n-n-n`, multi-function
 files, distractors) were all solved by every arm — task difficulty, not
 quantity, is the power bottleneck.
 
-## v4.0.1 — four-arm run, 6 tasks (28 live turns)
-
-## v4.0.1 — four-arm run (28 live turns, independent scoring)
+## v4.0.1 — four-arm run, 6 tasks (28 live turns, independent scoring)
 
 | Task | A baseline | B placebo | C raw-context | D guidance |
 |------|-----------|-----------|---------------|------------|

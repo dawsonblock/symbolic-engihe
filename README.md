@@ -1,4 +1,40 @@
-# Symbolic Induction Engine (SIS) v2.4.0
+# Symbolic Induction Engine (SIS) v4.0.x research line
+
+This checkout is the **v4.0.x live-efficacy research line** (package version
+`4.0.0`). It contains the v3 governed-learning stack plus four real Codex
+transfer experiments. See [the transfer experiments](docs/v3/TRANSFER_EXPERIMENT.md).
+
+**Status: borderline, not qualified.** The v4.0.3 hard-distribution run reports
+D 6/8 vs A 1/8 (B 2/8, C 1/8), paired D-vs-A **5 wins / 0 losses / 3 ties**,
+exact McNemar **p = 0.0625**. That is just above α=0.05; the M5 gate remains
+narrowly open and no general agent-improvement claim is made. The earlier
+v4.0.0–v4.0.2 runs are recorded in the same document.
+
+The v3.3.2 authority-consistency release lives on the separate
+`codex/sis-v3.3.1-authority-closure` branch; the two histories are not merged.
+
+## Install and verify
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m unittest discover -s tests -v
+python tools/smoke_integration.py
+```
+
+## Documentation map
+
+| Document | Contents |
+|---|---|
+| [docs/v3/TRANSFER_EXPERIMENT.md](docs/v3/TRANSFER_EXPERIMENT.md) | Live v4.0.x transfer experiments and limits |
+| [docs/v3/QUALIFICATION_REPORT.md](docs/v3/QUALIFICATION_REPORT.md) | v3.3 qualification record |
+| [docs/v3/STATUS.md](docs/v3/STATUS.md) | Historical v3 build ledger |
+| [CHANGELOG.md](CHANGELOG.md) | Release history, including the v3.1–v4.0.x line |
+
+---
+
+# Legacy v2.4.0 documentation
 
 **v2.4.0:** Adds a narrowly scoped **pure Python coding-repair recipe learner**.
 It captures proposed arithmetic-operator AST repairs, interprets before/after
@@ -151,8 +187,7 @@ An installable, **model-agnostic** symbolic reasoning service. It discovers *bou
 ## 1. Setup — Python 3.10+
 
 ```bash
-unzip symbolic-induction-engine-v2.0.0-FULL-UPGRADED.zip
-cd symbolic-induction-engine-v2.0.0
+# From a checkout of this repository:
 python3 -m venv .venv
 source .venv/bin/activate              # macOS / Linux
 # Windows PowerShell: .venv\Scripts\Activate.ps1
@@ -292,7 +327,7 @@ Only bounded integers, booleans, short strings, and fixed-length lists of these 
 
 See `docs/LIMITATIONS.md` and `docs/ROADMAP.md` before extending this to untrusted users or consequential decisions.
 
-## 8. v1.2: Secure promotion and out-of-band audit checkpoint
+## 9. v1.2: Secure promotion and out-of-band audit checkpoint
 
 `Registry.promote(result)` now refuses promotion unless the original training and
 validation examples and matching induction options are passed as keyword arguments.
@@ -324,7 +359,7 @@ external custody. The checkpoint file contains no raw training examples.
 per-item predictions or abstentions; invalid requests fail before evaluation.
 The model tool bridge remains deliberately read-only.
 
-## 9. v1.3: bounded admission firewall and operator key
+## 10. v1.3: bounded admission firewall and operator key
 
 For an authenticated loopback server:
 
@@ -352,7 +387,7 @@ transitions and immutable fields. It catches some internally coherent forgeries,
 **not** full-history rewriting by someone who can rewrite the database and
 its independently unanchored audit. Preserve operator-held checkpoints.
 
-## 10. v1.4: one-use evaluator-controlled holdout
+## 11. v1.4: one-use evaluator-controlled holdout
 
 For a **local synthetic demonstration**, run `python3 tools/generate_eval_demo.py /tmp/sis-eval-demo` to generate an example private dataset. Do not mistake generated
 examples or locally controlled secrets for independent evaluation.

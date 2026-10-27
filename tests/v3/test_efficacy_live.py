@@ -24,11 +24,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
-import pytest
-
 LIVE = os.environ.get("SIS3_LIVE_CODEX") == "1"
-pytestmark = pytest.mark.skipif(
-    not LIVE, reason="live held-out efficacy experiment (SIS3_LIVE_CODEX=1)")
+LIVE_REASON = "live held-out efficacy experiment (SIS3_LIVE_CODEX=1)"
 
 # Held-out transfer tasks: buggy operator in the mined bug class.
 HELD_OUT = {
@@ -151,6 +148,7 @@ ARM_SUFFIX = {"A": "", "B": PROMPT_B_SUFFIX, "C": PROMPT_C_SUFFIX,
 ARMS = ("A", "B", "C", "D")
 
 
+@unittest.skipUnless(LIVE, LIVE_REASON)
 class LiveEfficacy(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

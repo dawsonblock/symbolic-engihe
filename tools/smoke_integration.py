@@ -14,6 +14,8 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
+from sis import __version__
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -57,7 +59,7 @@ def main():
                     raise RuntimeError('HTTP server exited before readiness')
                 try:
                     with urlopen(Request(base+'/health', headers={'X-SIS-Key':api_key}), timeout=0.2) as conn:
-                        assert json.load(conn)['version']=='2.4.0'
+                        assert json.load(conn)['version']==__version__
                     break
                 except OSError:
                     time.sleep(0.05)

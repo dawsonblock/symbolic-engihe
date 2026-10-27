@@ -1,3 +1,32 @@
+## v4.0.x — live transfer-efficacy research (2026-10-24)
+
+- v4.0.3 hard-distribution run: 8 held-out tasks × 4 arms + control,
+  36 live turns. D 6/8 vs A 1/8, B 2/8, C 1/8; paired D-vs-A
+  **5W/0L/3T**, exact McNemar p=0.0625. Borderline at α=0.05; the M5
+  gate remains narrowly open. The two D-arm misses are right-nested
+  repair sites, a documented serving-path limitation.
+- v4.0.2 four-arm run: D 12/12 vs 10/12 for A/B/C; wins concentrated
+  on two tasks.
+- v4.0.1 four-arm run: D repaired both targeted tasks; A did not.
+- v4.0.0 two-arm run: directional positive signal; no significance.
+- Adds Compare-class induction, nested diff mining, a hypothesis log,
+  and the live Codex adapter. See `docs/v3/TRANSFER_EXPERIMENT.md`.
+
+## v3.1–v3.4 — governed learning and symbolic repair
+
+- v3.1: canonical release integrity, executed baseline audit, receipt
+  authority, transactional promotion ledger, fail-closed retrieval,
+  signed scope grants, semantic checks, benchmark statistics.
+- v3.2: transactional verify-and-consume, semantic-check closure,
+  unified policy-gated eligibility.
+- v3.3: live Codex adapter qualification passed against the real SDK;
+  governed learning stack.
+- v3.4: typed symbolic repair induction, nested diff mining, hypothesis
+  log, Compare-class induction.
+- The v3.3.2 authority-consistency work lives on the separate
+  `codex/sis-v3.3.1-authority-closure` branch and is not part of this
+  changelog line.
+
 ## v2.4.0 — Bounded coding-agent repair recipes (2026-10-21)
 
 - Added pure Python AST operator-swap capture, with no arbitrary Python source execution.

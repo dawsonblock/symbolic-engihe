@@ -1,33 +1,33 @@
 {
-  "archive": "SIS-v3.3.1-AUTHORITY-CLOSURE.zip",
+  "archive": "SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
   "fresh_extraction": {
     "compileall_src": true,
     "extracted_test_smoke": {
       "command": "pytest -q tests/v3/test_candidates.py",
       "returncode": 0,
-      "tail": "39 passed in 0.49s"
+      "tail": "39 passed in 0.53s"
     },
     "verify_tree": {
-      "files": 353
+      "files": 374
     }
   },
   "kind": "release_verification",
   "schema_version": 1,
   "source": {
-    "commit": "c5e6c9969f1fef7bf3b6337a2793d3a37eb9dc2d",
+    "commit": "a2073e9e5ddcc509eb007d1076de827c70e452be",
     "dirty": false,
     "dirty_paths": []
   },
   "source_binding": {
-    "files": 353,
+    "files": 374,
     "project": "sis-v2-authority-transfer",
     "source_bound": true
   },
   "zip_verify": {
     "manifest": "RELEASE_SHA256.json",
     "project": "sis-v2-authority-transfer",
-    "source_files": 353,
+    "source_files": 374,
     "valid": true,
-    "zip_sha256": "d9503b0ba968c848e8cecf9aa1db5c75145303a5977a107cd97ebd122597518a"
+    "zip_sha256": "000e77b871d92752a1ef62ed94fae8e8e8f713e5819a526d69343570235a8a0b"
   }
 }

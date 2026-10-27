@@ -1,9 +1,9 @@
 {
   "archive": {
-    "inner_project_dir": "sis-v2-authority-transfer",
+    "inner_project_dir": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
     "path": "release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
-    "sha256": "cef166da68816aacfc2f9a814d2d1a27f81fb029a1395506543d83b4ec05f83c",
-    "source_files": 374
+    "sha256": "ecb8486c3036fb20868618dbcc9e5615183ec8ed6c6dcf7f84fd3a86d7cd5fac",
+    "source_files": 375
   },
   "branch": "codex/sis-v3.3.1-authority-closure",
   "docs": [
@@ -52,23 +52,23 @@
   ],
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "provenance": {
-    "key_id": "test-release-key",
+    "key_id": "review-release-key-1",
     "path": "release/provenance.dsse.json",
     "public_key_path": "release/provenance_public_key.hex",
     "signed": true,
-    "statement_sha256": "7ec503b4c4909457ee0949fc379451869c21b82df17e6993eae41aaf5756286f",
-    "subject_sha256": "cef166da68816aacfc2f9a814d2d1a27f81fb029a1395506543d83b4ec05f83c",
+    "statement_sha256": "ab15965b83a5df094c0e2896d6eb268da855fa8365932a3af4da7324d8d9d214",
+    "subject_sha256": "ecb8486c3036fb20868618dbcc9e5615183ec8ed6c6dcf7f84fd3a86d7cd5fac",
     "trust_root": "qualification-only"
   },
   "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
   "schema_version": 1,
-  "source_commit": "f22f5183f17ac2a74085e62e2e4f2afad5a61775",
+  "source_commit": "17f6360fcb2bf9e47ee68ee5060e3df3a0470a66",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 981,
+    "passed": 986,
     "skipped": 8
   }
 }

@@ -43,8 +43,9 @@ The contracts cover:
   candidate transition (from-state, to-state, candidate digest, cited
   receipts/evidence, actor identity, one-use nonce). A decision for another
   candidate or edge cannot authorize this one.
-- `GuidanceRequestV1` and `GuidanceV1`: bounded context and a recommendation or
-  abstention with exact evidence/policy references and at most three IDs.
+- `GuidanceRequestV1` and `GuidanceV1`: bounded context and a recommendation,
+  advisory, or abstention with exact evidence/policy references and at most
+  three IDs.
 
 Structured preconditions use an allowlisted `kind` and exact fields. The v1
 validator does not accept Python, shell, or other executable expressions.

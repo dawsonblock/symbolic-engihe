@@ -609,6 +609,22 @@ class CandidateRegistry:
             {"candidate_id": cid, "candidate_digest": digest,
              "state": states.get(cid, state)}
             for cid, digest, state in rows])
+        custody = {
+            "revocation_head": _GENESIS,
+            "supersession_head": _GENESIS,
+            "custody_entry_count": 0,
+        }
+        if self._evidence_custody is not None:
+            try:
+                snapshot = self._evidence_custody.authority_snapshot()
+            except EvidenceCustodyError as exc:
+                raise CandidateError(
+                    f"evidence_custody_unavailable:{exc.reason}") from exc
+            custody.update({
+                "revocation_head": snapshot["revocation_head"],
+                "supersession_head": snapshot["supersession_head"],
+                "custody_entry_count": snapshot["custody_entry_count"],
+            })
         return {
             "sequence": tail[0] if tail is not None else 0,
             "head": tail[1] if tail is not None else _GENESIS,
@@ -617,6 +633,7 @@ class CandidateRegistry:
             "qualified_count": sum(
                 1 for cid, _, _ in rows
                 if states.get(cid) == "qualified"),
+            **custody,
         }
 
     def authority_state(self) -> dict:
@@ -660,6 +677,33 @@ class CandidateRegistry:
         """Current authority verification result (raises when it fails)."""
         with self._read() as con:
             return self._authority_gate(con)
+
+    def seed_authority_head(self, control_plane) -> dict:
+        """Anchor a fresh control plane to the latest signed checkpoint.
+
+        Used on upgrade/recovery: the checkpoint file is the independent
+        witness, so the shared head row may be reconstructed from it
+        after verifying the local candidate and custody state.
+        """
+        if self._checkpoint_verifier is None:
+            raise CandidateError("authority_checkpoint_unconfigured")
+        checkpoint = self._checkpoint_verifier.latest_checkpoint()
+        if checkpoint is None:
+            raise CandidateError("authority_checkpoint_missing")
+        result = self._checkpoint_verifier.verify_local_state(
+            self.authority_state(), checkpoint)
+        if not result.ok:
+            raise CandidateError(
+                "authority_checkpoint_rejected:" + result.reason)
+        return control_plane.advance_authority_head({
+            "sequence": checkpoint.sequence,
+            "checkpoint_digest": checkpoint.digest,
+            "journal_head": checkpoint.journal_head,
+            "revocation_head": checkpoint.revocation_head,
+            "supersession_head": checkpoint.supersession_head,
+            "custody_entry_count": checkpoint.custody_entry_count,
+            "updated_at": checkpoint.issued_at,
+        })
 
     def qualify(self, candidate_id: str, *,
                 actor_role: str, actor_identity: str = "",
@@ -1302,6 +1346,26 @@ class CandidateRegistry:
         except EvidenceCustodyError as exc:
             raise CandidateError(f"evidence_custody_rejected:{exc.reason}") \
                 from exc
+
+    @property
+    def has_evidence_custody(self) -> bool:
+        return self._evidence_custody is not None
+
+    def evidence_custody_snapshot(self) -> dict:
+        """Current custody heads (genesis when custody is unconfigured)."""
+        if self._evidence_custody is None:
+            return {
+                "revocation_head": _GENESIS,
+                "supersession_head": _GENESIS,
+                "revocation_count": 0,
+                "supersession_count": 0,
+                "custody_entry_count": 0,
+            }
+        try:
+            return self._evidence_custody.authority_snapshot()
+        except EvidenceCustodyError as exc:
+            raise CandidateError(
+                f"evidence_custody_unavailable:{exc.reason}") from exc
 
     def evidence_custody_status(self, digest: str) -> str:
         if self._evidence_custody is None:

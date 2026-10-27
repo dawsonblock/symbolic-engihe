@@ -28,6 +28,7 @@ from sis.v3.evaluation_certificate import (
     sign_certificate,
 )
 from sis.v3.governed_eval import preregister
+from sis.v3.control_plane import SqliteControlPlane
 from sis.v3.serving import GovernedServingGateway
 from tests.v3.candidate_testkit import CandidateStack
 from tests.v3.test_candidates import make_candidate
@@ -508,9 +509,11 @@ class QualificationTests(unittest.TestCase):
         self.addCleanup(fixture.stack.close)
         certificate = fixture.certificate()
         fixture.qualify(certificate)
+        control = SqliteControlPlane(self.root / "control-a.db")
+        self.addCleanup(control.close)
         gateway = GovernedServingGateway(
             fixture.stack.registry, repository_registry=None,
-            production=True)
+            production=True, control_plane=control)
         from tests.v3.test_authority_checkpoints import _request
         guidance = gateway.serve(_request(), repository_id="repo-1")
         self.assertEqual(guidance.decision, "abstain")
@@ -524,8 +527,11 @@ class QualificationTests(unittest.TestCase):
         stack.qualify(candidate)
         self.assertEqual(stack.registry.qualification_mode,
                          "demonstration")
+        control = SqliteControlPlane(self.root / "control-b.db")
+        self.addCleanup(control.close)
         gateway = GovernedServingGateway(
-            stack.registry, repository_registry=None, production=True)
+            stack.registry, repository_registry=None, production=True,
+            control_plane=control)
         from tests.v3.test_authority_checkpoints import _request
         guidance = gateway.serve(_request(), repository_id="repo-1")
         self.assertEqual(guidance.decision, "abstain")

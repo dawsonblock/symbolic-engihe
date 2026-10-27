@@ -105,7 +105,7 @@ class SkillHoldoutCLITests(unittest.TestCase):
                 self.assertTrue(entry["probe"]["conformance"]["conforms"],
                                 entry["probe"]["conformance"])
                 self.assertTrue(entry["served"]["delivered_skill_steps"])
-                self.assertEqual(entry["served"]["decision"], "abstain")
+                self.assertEqual(entry["served"]["decision"], "advisory")
                 self.assertEqual(entry["served"]["reason_code"],
                                  "no_qualified_procedure")
                 self.assertEqual(len(entry["evidence_digest"]), 64)

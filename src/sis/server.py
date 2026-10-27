@@ -58,19 +58,7 @@ POST_ROUTE_ACCESS = MappingProxyType({
 })
 
 
-def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
-    key = os.getenv("SIS_API_KEY", "")
-    admin_key = os.getenv("SIS_ADMIN_KEY", "")
-    if host not in ("127.0.0.1", "::1", "localhost") and not key:
-        raise InvalidInput("non-loopback server requires SIS_API_KEY; use TLS reverse proxy for public exposure")
-    if key and len(key.encode("utf8")) < 24:
-        raise InvalidInput("SIS_API_KEY must be at least 24 UTF-8 bytes")
-    if admin_key and len(admin_key.encode("utf8")) < 24:
-        raise InvalidInput("SIS_ADMIN_KEY must be at least 24 UTF-8 bytes")
-    if key and admin_key and hmac.compare_digest(key, admin_key):
-        raise InvalidInput("SIS_ADMIN_KEY must differ from SIS_API_KEY")
-    service = Service(db_path, enable_llm=os.getenv("SIS_ENABLE_LLM") == "1")
-
+def _handler_class(*, key, admin_key, service, v3_only, v3_service):
     class Handler(BaseHTTPRequestHandler):
         server_version = f"SIS/{__version__}"
 
@@ -107,8 +95,21 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
                 if not self.authorized():
                     return self.respond(401, {"error": "unauthorized"})
                 u = urlsplit(self.path)
+                if v3_only and u.path.startswith("/v1/"):
+                    return self.respond(404, {"error": "not found"})
                 if u.path == "/health":
-                    return self.respond(200, {"status": "ok", "service": "symbolic-induction", "version": __version__})
+                    payload = {
+                        "status": "ok",
+                        "service": "symbolic-induction",
+                        "version": __version__,
+                    }
+                    if v3_service is not None:
+                        v3_health = v3_service.health()
+                        payload["v3"] = v3_health
+                        if not v3_health.get("ok"):
+                            payload["status"] = "degraded"
+                            return self.respond(503, payload)
+                    return self.respond(200, payload)
                 if u.path == "/v1/tools":
                     return self.respond(200, {'tools':service.tools()})
                 if u.path == "/v1/rules":
@@ -139,8 +140,24 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
 
         def do_POST(self):
             try:
+                path = urlsplit(self.path).path
+                if path.startswith("/v3/"):
+                    if v3_service is None:
+                        return self.respond(404, {"error": "not found"})
+                    length = self.headers.get("Content-Length")
+                    if length is None or not length.isdecimal() or int(length) > MAX_BODY:
+                        return self.respond(413, {"error": "Content-Length required; max 512 KiB"})
+                    raw = self.rfile.read(int(length))
+                    try:
+                        data = json.loads(raw)
+                    except (ValueError, UnicodeDecodeError):
+                        return self.respond(400, {"error": "invalid JSON"})
+                    code, body = v3_service.handle(path, data, self.headers)
+                    return self.respond(code, body)
                 if not self.authorized():
                     return self.respond(401, {"error": "unauthorized"})
+                if v3_only and path.startswith("/v1/"):
+                    return self.respond(404, {"error": "not found"})
                 length = self.headers.get("Content-Length")
                 if length is None or not length.isdecimal() or int(length) > MAX_BODY:
                     return self.respond(413, {"error": "Content-Length required; max 512 KiB"})
@@ -149,7 +166,6 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
                     data = json.loads(raw)
                 except (ValueError, UnicodeDecodeError):
                     return self.respond(400, {"error": "invalid JSON"})
-                path = urlsplit(self.path).path
                 if path not in POST_ROUTE_HANDLERS:
                     return self.respond(404, {"error": "not found"})
                 access = POST_ROUTE_ACCESS.get(path)
@@ -161,10 +177,54 @@ def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3"):
             except (SISError, KeyError, TypeError, ValueError) as exc:
                 self.respond(400, {"error": str(exc)[:300]})
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+
+    return Handler
+
+
+def create_server(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3",
+                  v3_service=None):
+    key = os.getenv("SIS_API_KEY", "")
+    admin_key = os.getenv("SIS_ADMIN_KEY", "")
+    if host not in ("127.0.0.1", "::1", "localhost") and not key:
+        raise InvalidInput("non-loopback server requires SIS_API_KEY; use TLS reverse proxy for public exposure")
+    if key and len(key.encode("utf8")) < 24:
+        raise InvalidInput("SIS_API_KEY must be at least 24 UTF-8 bytes")
+    if admin_key and len(admin_key.encode("utf8")) < 24:
+        raise InvalidInput("SIS_ADMIN_KEY must be at least 24 UTF-8 bytes")
+    if key and admin_key and hmac.compare_digest(key, admin_key):
+        raise InvalidInput("SIS_ADMIN_KEY must differ from SIS_API_KEY")
+    # A v3-only deployment exposes the authenticated guidance boundary and
+    # nothing else. Legacy /v1 learning routes are not production guidance
+    # and must not be reachable when this flag is set, so the legacy store
+    # is not even opened.
+    # Enabling the v3 boundary isolates the legacy learning routes by
+    # default; a migration window can opt back in explicitly.
+    v3_only = os.getenv("SIS_V3_ONLY") == "1" or (
+        v3_service is not None
+        and os.getenv("SIS_ALLOW_LEGACY_V1") != "1")
+    if v3_only and v3_service is None:
+        raise InvalidInput("SIS_V3_ONLY requires a configured v3 serving service")
+    service = None if v3_only else Service(
+        db_path, enable_llm=os.getenv("SIS_ENABLE_LLM") == "1")
+    httpd = ThreadingHTTPServer((host, port), _handler_class(
+        key=key, admin_key=admin_key, service=service, v3_only=v3_only,
+        v3_service=v3_service))
+    httpd.sis_service = service
+    httpd.sis_keyed = bool(key)
+    httpd.sis_admin_keyed = bool(admin_key)
+    return httpd
+
+
+def serve(host="127.0.0.1", port=8765, *, db_path="sis.sqlite3",
+          v3_service=None):
+    httpd = create_server(host, port, db_path=db_path,
+                          v3_service=v3_service)
+    key = httpd.sis_keyed
+    admin_key = httpd.sis_admin_keyed
     print(f"SIS listening at http://{host}:{port} (local-only by default); key {'enabled' if key else 'not configured'}, operator mutations {'enabled' if admin_key or not key else 'disabled'}", flush=True)
     try:
         httpd.serve_forever()
     finally:
         httpd.server_close()
-        service.registry.close()
+        if httpd.sis_service is not None:
+            httpd.sis_service.registry.close()

@@ -52,7 +52,7 @@ class ServingTests(ServingFixture):
         cand = make_candidate(scope={"kind": "family_id", "value": "fam-a"})
         self._qualified(cand)
         out = self.gateway.serve(_request(), repository_id="repo-a")
-        self.assertEqual(out.decision, "abstain")
+        self.assertEqual(out.decision, "advisory")
         self.assertEqual(out.reason_code, "no_qualified_procedure")
         self.assertIn("do the thing", out.helpful_next_checks)
         self.assertEqual(self.audit[-1]["candidate_digests"],
@@ -125,7 +125,7 @@ class ServingTests(ServingFixture):
         self._qualified(cand)
         out = self.gateway.serve(_request(), repository_id="repo-a")
         self.assertIn(evil, out.helpful_next_checks)  # served as data
-        self.assertEqual(out.decision, "abstain")
+        self.assertEqual(out.decision, "advisory")
         self.assertEqual(out.procedure_ids, ())  # grants nothing
 
     def test_task_family_gate_rejects_off_target_candidates(self):

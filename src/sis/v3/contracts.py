@@ -45,7 +45,8 @@ _EVIDENCE_CLASSES = {
     "exploratory", "demonstration", "confirmatory", "invalid",
 }
 _PARTITIONS = {"development", "holdout", "monitoring"}
-_DECISIONS = {"recommend", "abstain"}
+_DECISIONS = {"recommend", "advisory", "abstain"}
+_GENESIS = "0" * 64
 _REASONS = {
     "unverified_task_intent", "precondition_failed", "no_reproducible_failure",
     "conflicting_evidence", "source_mismatch", "prior_negative_transfer",
@@ -782,8 +783,52 @@ class AuthorityCheckpointV1(V1Record):
     issued_at: str
     signer_key_id: str
     signature: str
+    revocation_head: str = _GENESIS
+    supersession_head: str = _GENESIS
+    custody_entry_count: int = 0
 
     RECORD_TYPE: ClassVar[str] = "authority_checkpoint"
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]):
+        # v3.3.1 checkpoints predate custody witnessing. Accept them with
+        # genesis defaults so an upgraded verifier can read the existing
+        # history; a checkpoint that claims a non-genesis head must carry
+        # the field and is compared strictly.
+        if isinstance(value, Mapping):
+            value = dict(value)
+            value.setdefault("revocation_head", _GENESIS)
+            value.setdefault("supersession_head", _GENESIS)
+            value.setdefault("custody_entry_count", 0)
+        return super().from_dict(value)
+
+    def _custody_is_genesis(self) -> bool:
+        return (self.revocation_head == _GENESIS
+                and self.supersession_head == _GENESIS
+                and self.custody_entry_count == 0)
+
+    def _legacy_projection(self) -> dict:
+        body = super().to_dict()
+        body.pop("revocation_head", None)
+        body.pop("supersession_head", None)
+        body.pop("custody_entry_count", None)
+        return body
+
+    def canonical_bytes(self) -> bytes:
+        # A checkpoint with no custody history is byte-identical to the
+        # v3.3.1 wire format, so old signatures and digests still verify
+        # and the previous-digest chain is preserved across the upgrade.
+        if self._custody_is_genesis():
+            return canonical_json(self._legacy_projection())
+        return super().canonical_bytes()
+
+    @property
+    def digest(self) -> str:
+        if self._custody_is_genesis():
+            return canonical_digest(
+                self.RECORD_TYPE, self.schema_version,
+                self._legacy_projection())
+        return super().digest
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1231,10 +1276,12 @@ def _validate_record(record: V1Record) -> None:
         _identifier(d["checkpoint_id"], "checkpoint_id")
         _identifier(d["issuer_identity"], "issuer_identity")
         for name in ("previous_digest", "journal_head",
-                     "candidate_revision_digest"):
+                     "candidate_revision_digest", "revocation_head",
+                     "supersession_head"):
             _digest(d[name], name)
         for name in ("authority_epoch", "sequence", "journal_sequence",
-                     "candidate_count", "qualified_count"):
+                     "candidate_count", "qualified_count",
+                     "custody_entry_count"):
             _require(type(d[name]) is int and d[name] >= 0,
                      f"{name} must be a nonnegative integer")
         _require(d["authority_epoch"] >= 1,
@@ -1304,6 +1351,11 @@ def _validate_record(record: V1Record) -> None:
         _require(type(d["approximate_tokens"]) is int and 0 <= d["approximate_tokens"] <= 2_000, "approximate_tokens must be in [0,2000]")
         if d["decision"] == "abstain":
             _require(not procedure_ids and d["reason_code"] is not None, "abstain guidance must not include procedures and must include a reason")
+        elif d["decision"] == "advisory":
+            _require(not procedure_ids and d["revision"] is None
+                     and bool(d["helpful_next_checks"])
+                     and d["reason_code"] is not None,
+                     "advisory guidance must not include procedures and must carry checks and a reason")
         else:
             _require(bool(procedure_ids) and d["revision"] is not None and bool(d["evidence_ids"])
                      and bool(d["matched_preconditions"]) and d["reason_code"] is None,

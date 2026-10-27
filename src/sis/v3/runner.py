@@ -333,11 +333,15 @@ class LocalSubprocessExecutor:
         worker_identity: str = "local-subprocess-v1",
         use_seatbelt: bool | None = None,
         protected_paths=(),
+        production: bool = False,
+        verified_isolation: bool = False,
     ) -> None:
         self.root = Path(root) if root is not None else Path(tempfile.mkdtemp(prefix="sis-v3-exec-"))
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "workspaces").mkdir(exist_ok=True)
         self.worker_identity = worker_identity
+        self._production = bool(production)
+        self._verified_isolation = bool(verified_isolation)
         self._seatbelt = None if use_seatbelt is False else _seatbelt_binary()
         self._protected: set[Path] = {
             Path(path).resolve() for path in protected_paths}
@@ -357,6 +361,14 @@ class LocalSubprocessExecutor:
     def protected_paths(self) -> tuple[Path, ...]:
         with self._lock:
             return tuple(sorted(self._protected, key=str))
+
+    @property
+    def production(self) -> bool:
+        return self._production
+
+    @property
+    def verified_isolation(self) -> bool:
+        return self._verified_isolation
 
     @property
     def network_isolation(self) -> str:
@@ -381,6 +393,11 @@ class LocalSubprocessExecutor:
     def run(self, workspace: Workspace, spec: CommandSpec) -> ExecutionReceiptV1:
         if not isinstance(spec, CommandSpec):
             raise ContractError("spec must be a CommandSpec")
+        if self._production and not self._verified_isolation:
+            # Hostile-code execution stays disabled in production until
+            # an OS-enforced containment has been independently
+            # validated. This backend is explicitly not that.
+            raise RunnerError("verified_isolation_required")
         with self._lock:
             if workspace.workspace_id not in self._workspaces:
                 raise RunnerError("workspace is not managed by this executor")
@@ -388,7 +405,9 @@ class LocalSubprocessExecutor:
         if not workdir.is_dir() or not workdir.is_relative_to(workspace.path.resolve()):
             raise RunnerError("command cwd escapes or is absent from the workspace")
 
-        security_errors: list[str] = ["isolation:unverified_local"]
+        security_errors: list[str] = (
+            ["isolation:verified"] if self._verified_isolation
+            else ["isolation:unverified_local"])
         security_errors.append(
             "network:seatbelt_denied" if self._seatbelt
             else "network:not_enforced")

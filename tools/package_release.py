@@ -30,8 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_canonical_zip import build, source_binding  # noqa: E402
-from verify_release import verify_tree  # noqa: E402
+import provenance
+from build_canonical_zip import build, source_binding
+from verify_release import verify_tree
 
 SMOKE_TEST = "tests/v3/test_candidates.py"
 
@@ -99,7 +100,10 @@ def fresh_extraction_checks(tree: Path) -> dict:
 
 
 def package(root: Path, release: str, *, status: str, passed: int,
-            skipped: int, failed: int, allow_dirty: bool = False) -> dict:
+            skipped: int, failed: int, allow_dirty: bool = False,
+            provenance_seed: bytes | None = None,
+            provenance_key_id: str = "release-key-1",
+            provenance_trust_root: str = "qualification-only") -> dict:
     root = Path(root).resolve()
     out = root / "release"
     out.mkdir(parents=True, exist_ok=True)
@@ -132,7 +136,51 @@ def package(root: Path, release: str, *, status: str, passed: int,
     (root / "evidence" / "release" / "build_record.json").write_text(
         json.dumps(build_record, indent=2, sort_keys=True) + "\n")
 
+    started = _utcnow()
     report = build(root, archive, require_clean=not allow_dirty)
+    statement = provenance.build_statement(
+        archive_name=archive.name,
+        archive_sha256=report["zip_sha256"],
+        release=release,
+        branch=build_record["branch"],
+        source_commit=report["source"]["commit"],
+        builder="tools/package_release.py",
+        invocation_id=f"release-{report['zip_sha256'][:16]}",
+        started_on=started,
+        finished_on=_utcnow())
+    statement_sha256 = hashlib.sha256(
+        provenance.canonical_json(statement)).hexdigest()
+    if provenance_seed is not None:
+        envelope = provenance.sign_statement(
+            statement, provenance_seed, provenance_key_id)
+        public_hex = provenance.public_key_hex(provenance_seed)
+        provenance.verify_envelope(
+            envelope, public_hex, archive_path=archive)
+        provenance_path = out / "provenance.dsse.json"
+        provenance_path.write_text(
+            json.dumps(envelope, indent=2, sort_keys=True) + "\n")
+        public_path = out / "provenance_public_key.hex"
+        public_path.write_text(public_hex + "\n")
+        provenance_info = {
+            "signed": True,
+            "key_id": provenance_key_id,
+            "trust_root": provenance_trust_root,
+            "path": f"release/{provenance_path.name}",
+            "public_key_path": f"release/{public_path.name}",
+            "statement_sha256": statement_sha256,
+            "subject_sha256": report["zip_sha256"],
+        }
+    else:
+        provenance_path = out / "provenance.intoto.json"
+        provenance_path.write_text(
+            json.dumps(statement, indent=2, sort_keys=True) + "\n")
+        provenance_info = {
+            "signed": False,
+            "trust_root": provenance_trust_root,
+            "path": f"release/{provenance_path.name}",
+            "statement_sha256": statement_sha256,
+            "subject_sha256": report["zip_sha256"],
+        }
     manifest = json.loads((root / "RELEASE_SHA256.json").read_text())
     inventory = {
         "schema_version": 1,
@@ -194,6 +242,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
         },
         "docs": _docs(root),
         "evidence": _evidence(root),
+        "provenance": provenance_info,
         "notes": (
             "release/ artifacts are out-of-band provenance and are "
             "intentionally absent from the archive manifest"
@@ -207,8 +256,12 @@ def package(root: Path, release: str, *, status: str, passed: int,
     (out / "verification.json").write_text(
         json.dumps(verification, indent=2, sort_keys=True) + "\n")
     sums = []
-    for name in (archive.name, "release_manifest.json",
-                 "source_inventory.json", "verification.json"):
+    names = [archive.name, "release_manifest.json",
+             "source_inventory.json", "verification.json",
+             provenance_path.name]
+    if provenance_info.get("public_key_path"):
+        names.append(Path(provenance_info["public_key_path"]).name)
+    for name in names:
         sums.append(f"{_sha256(out / name)}  {name}")
     (out / "SHA256SUMS").write_text("\n".join(sums) + "\n")
     return {"release_manifest": release_manifest, "verification": verification}
@@ -224,11 +277,29 @@ def main() -> int:
     parser.add_argument("--skipped", type=int, default=0)
     parser.add_argument("--failed", type=int, default=0)
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--provenance-key", type=Path,
+                        help="file containing a 32-byte hex signing seed")
+    parser.add_argument("--provenance-key-id", default="release-key-1")
+    parser.add_argument("--provenance-trust-root",
+                        default="qualification-only",
+                        help="qualification-only or production")
     args = parser.parse_args()
+    seed = None
+    if args.provenance_key is not None:
+        raw = args.provenance_key.read_text().strip()
+        try:
+            seed = bytes.fromhex(raw)
+        except ValueError as exc:
+            raise SystemExit("provenance key must be hex") from exc
+        if len(seed) != 32:
+            raise SystemExit("provenance key must be 32 bytes")
     result = package(
         args.root, args.release, status=args.status,
         passed=args.passed, skipped=args.skipped, failed=args.failed,
         allow_dirty=args.allow_dirty,
+        provenance_seed=seed,
+        provenance_key_id=args.provenance_key_id,
+        provenance_trust_root=args.provenance_trust_root,
     )
     print(json.dumps({
         "release": result["release_manifest"]["release"],

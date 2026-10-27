@@ -11,12 +11,14 @@ import hashlib
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sis.v3 import signatures
 from sis.v3.candidates import CandidateError
 from sis.v3.checkpoints import (AuthorityJournal, AuthorityStateVerifier,
                                 FileAuthorityCheckpointStore)
+from sis.v3.control_plane import SqliteControlPlane
 from sis.v3.evidence_custody import (EvidenceCustodyError,
                                      EvidenceCustodyStore,
                                      OfflineEvidencePolicy)
@@ -47,7 +49,9 @@ class ProductionFixture:
         self.custody = EvidenceCustodyStore(
             root / "custody",
             trusted_revocation_keys={
-                self.custody_key: custody_public.hex()})
+                self.custody_key: custody_public.hex()},
+            require_signed_links=True)
+        self.custody.bind_link_signer(self.custody_seed, self.custody_key)
         self.registry.bind_evidence_custody(
             self.custody, require=True,
             delivery_resolver=self.cert.attestations.__getitem__)
@@ -66,13 +70,17 @@ class ProductionFixture:
             expected_policy_version="sis-v3.3.1-authority-policy")
         self.registry.bind_checkpoint_verifier(
             self.verifier, production_serving=True)
+        self.control_plane = SqliteControlPlane(
+            root / "control" / "plane.db")
         self.journal = AuthorityJournal(
             self.registry, self.store, signer_seed=self.authority_seed,
             signer_key_id=self.authority_key, issuer_identity="authority",
             authority_epoch=1,
-            policy_version="sis-v3.3.1-authority-policy")
+            policy_version="sis-v3.3.1-authority-policy",
+            control_plane=self.control_plane)
         self.registry.bind_authority_journal(self.journal)
         self.journal.publish()
+        self.custody.bind_on_change(self.journal.publish)
 
         self.repo_registry, self.repo_seed = make_registry()
         register_repo(
@@ -89,15 +97,22 @@ class ProductionFixture:
             self.registry, repository_registry=self.repo_registry,
             production=True,
             execution_identity_authority=self.identity_authority,
-            used_session_nonces=set())
+            used_session_nonces=set(),
+            control_plane=self.control_plane)
 
         self.certificate = self.cert.certificate()
         self.cert.qualify(self.certificate)
 
     def close(self):
         self.stack.close()
+        self.control_plane.close()
+
+    def publish(self):
+        """Anchor the current candidate and custody state."""
+        return self.journal.publish()
 
     def identity(self, **overrides):
+        now = datetime.now(timezone.utc).replace(microsecond=0)
         fields = {
             "schema_version": 1,
             "identity_id": "id-1",
@@ -110,8 +125,9 @@ class ProductionFixture:
             "task_family": FAMILY,
             "harness_identity": "harness-1",
             "session_nonce": "nonce-1",
-            "issued_at": "2026-01-01T00:00:00Z",
-            "expires_at": "2030-01-01T00:00:00Z",
+            "issued_at": now.isoformat().replace("+00:00", "Z"),
+            "expires_at": (now + timedelta(minutes=10)).isoformat().replace(
+                "+00:00", "Z"),
             "signer_key_id": self.identity_key,
         }
         fields.update(overrides)
@@ -130,7 +146,7 @@ class ExecutionIdentityTests(unittest.TestCase):
         guidance = self.fixture.gateway.serve(
             _request(), repository_id="repo-1",
             execution_identity=identity)
-        self.assertEqual(guidance.decision, "abstain")
+        self.assertEqual(guidance.decision, "advisory")
         self.assertEqual(guidance.reason_code, "no_qualified_procedure")
         self.assertIn("do the thing", " ".join(
             guidance.helpful_next_checks))
@@ -141,7 +157,8 @@ class ExecutionIdentityTests(unittest.TestCase):
             repository_registry=self.fixture.repo_registry,
             production=True,
             execution_identity_authority=self.fixture.identity_authority,
-            used_session_nonces=set(), audit_sink=audit.append)
+            used_session_nonces=set(), audit_sink=audit.append,
+            control_plane=self.fixture.control_plane)
         gateway.serve(_request(), repository_id="repo-1",
                       execution_identity=self.fixture.identity(
                           session_nonce="nonce-audit"))
@@ -288,6 +305,7 @@ class EvidenceCustodyTests(unittest.TestCase):
             certificate.digest, kind="certificate", reason="evaluator error",
             seed=self.fixture.custody_seed,
             key_id=self.fixture.custody_key)
+        self.fixture.publish()
         with self.assertRaisesRegex(CandidateError, "evidence_revoked"):
             self.fixture.registry.get(self.fixture.cert.candidate.candidate_id)
 
@@ -297,6 +315,7 @@ class EvidenceCustodyTests(unittest.TestCase):
             receipt.digest, kind="receipt", reason="bad outcome",
             seed=self.fixture.custody_seed,
             key_id=self.fixture.custody_key)
+        self.fixture.publish()
         with self.assertRaisesRegex(CandidateError, "evidence_revoked"):
             self.fixture.registry.get(self.fixture.cert.candidate.candidate_id)
 
@@ -306,6 +325,7 @@ class EvidenceCustodyTests(unittest.TestCase):
             certificate.digest, "e" * 64, reason="newer evaluation",
             seed=self.fixture.custody_seed,
             key_id=self.fixture.custody_key)
+        self.fixture.publish()
         with self.assertRaisesRegex(CandidateError, "evidence_superseded"):
             self.fixture.registry.get(self.fixture.cert.candidate.candidate_id)
 

@@ -30,6 +30,7 @@ from sis.v3.checkpoints import (
     verify_checkpoint,
 )
 from sis.v3.contracts import GuidanceRequestV1
+from sis.v3.control_plane import SqliteControlPlane
 from sis.v3.serving import GovernedServingGateway
 from tests.v3.candidate_testkit import CandidateStack
 from tests.v3.test_candidates import make_candidate
@@ -394,8 +395,11 @@ class ServingFailClosedTests(_Fixture):
         finally:
             con.close()
         registry = self._reopen()
+        control = SqliteControlPlane(self.root / "control.db")
+        self.addCleanup(control.close)
         gateway = GovernedServingGateway(
-            registry, repository_registry=None, production=True)
+            registry, repository_registry=None, production=True,
+            control_plane=control)
         guidance = gateway.serve(_request(), repository_id="repo-1")
         self.assertEqual(guidance.decision, "abstain")
         self.assertEqual(guidance.reason_code, "catalog_unavailable")

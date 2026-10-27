@@ -29,14 +29,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import signatures
-from .contracts import canonical_digest, canonical_json, loads_json
+from .contracts import (ContractError, EvaluationCertificateV1,
+                        canonical_digest, canonical_json, loads_json)
 
 GENESIS = "0" * 64
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 REVOCATION_DOMAIN = b"sis-v3:evidence_revocation:1\0"
 SUPERSESSION_DOMAIN = b"sis-v3:evidence_supersession:1\0"
+LINK_DOMAIN = b"sis-v3:evidence_link:1\0"
 _MAX_OBJECT_BYTES = 1 << 20
 _MAX_LOG_BYTES = 8 << 20
+_MAX_DEPENDENCY_DEPTH = 64
+_MAX_DEPENDENCY_NODES = 100_000
+_MAX_DEPENDENCY_MEMO = 50_000
 
 try:
     import fcntl
@@ -166,6 +171,7 @@ class EvidenceCustodyStore:
         *,
         trusted_revocation_keys: dict[str, str] | None = None,
         candidate_database_path: str | Path | None = None,
+        require_signed_links: bool = False,
     ) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -186,6 +192,11 @@ class EvidenceCustodyStore:
                     "custody_store_must_not_share_candidate_database")
         self._revocations: list[dict] | None = None
         self._supersessions: list[dict] | None = None
+        self._revocations_stamp = None
+        self._supersessions_stamp = None
+        self._on_change = None
+        self._link_signer = None
+        self._require_signed_links = bool(require_signed_links)
 
     # ------------------------------------------------------------------ #
     # immutable objects
@@ -276,11 +287,76 @@ class EvidenceCustodyStore:
     # ------------------------------------------------------------------ #
     # dependency manifests
     # ------------------------------------------------------------------ #
+    def bind_on_change(self, callback) -> None:
+        """Publish a new witnessed head after a revocation/supersession.
+
+        The callback runs after the log append is durable and the custody
+        lock is released. A failure propagates: the entry is committed but
+        not witnessed, so serving fails closed until publication succeeds.
+        """
+        self._on_change = callback
+
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
+
     def _link_path(self, certificate_digest: str) -> Path:
         if not (isinstance(certificate_digest, str)
                 and _HEX.fullmatch(certificate_digest)):
             raise EvidenceCustodyError("link_digest_invalid")
         return self.root / "links" / f"{certificate_digest}.json"
+
+    def bind_link_signer(self, seed: bytes, key_id: str) -> None:
+        """Sign dependency manifests with a trusted custody key."""
+        if len(seed) != 32:
+            raise EvidenceCustodyError("link_signer_seed_invalid")
+        if key_id not in self._keys:
+            raise EvidenceCustodyError("link_signer_key_not_trusted")
+        self._link_signer = (bytes(seed), key_id)
+
+    def _sign_link(self, manifest: dict) -> dict:
+        if self._link_signer is None:
+            if self._require_signed_links:
+                raise EvidenceCustodyError("link_signer_required")
+            return manifest
+        seed, key_id = self._link_signer
+        signature = signatures.sign(
+            seed, LINK_DOMAIN + canonical_json(manifest)).hex()
+        return {**manifest, "signer_key_id": key_id,
+                "signature": signature}
+
+    def _verify_link(self, manifest: dict) -> bool:
+        if not isinstance(manifest, dict):
+            return False
+        signature = manifest.get("signature")
+        if signature is None:
+            return not self._require_signed_links
+        key_id = manifest.get("signer_key_id")
+        public_hex = self._keys.get(key_id) if isinstance(key_id, str) else None
+        if public_hex is None:
+            return False
+        body = {key: value for key, value in manifest.items()
+                if key not in {"signature", "signer_key_id"}}
+        try:
+            return signatures.verify(
+                bytes.fromhex(signature),
+                LINK_DOMAIN + canonical_json(body),
+                bytes.fromhex(public_hex))
+        except (TypeError, ValueError):
+            return False
+
+    def _link_matches_certificate(self, digest: str, manifest: dict) -> bool:
+        """Cross-check an unsigned legacy link against the certificate."""
+        try:
+            certificate = EvaluationCertificateV1.from_dict(self.get(digest))
+        except (ContractError, EvidenceCustodyError):
+            return False
+        receipts = {item["receipt_digest"]
+                    for item in certificate.individual_task_receipts}
+        deliveries = {item["attestation_digest"]
+                      for item in certificate.individual_task_receipts}
+        return (set(manifest.get("receipts", ())) == receipts
+                and set(manifest.get("deliveries", ())) == deliveries)
 
     def link(
         self,
@@ -305,16 +381,44 @@ class EvidenceCustodyStore:
             if value is not None and not (
                     isinstance(value, str) and _HEX.fullmatch(value)):
                 raise EvidenceCustodyError("link_dependency_invalid")
+        manifest = self._sign_link(manifest)
         digest = canonical_digest("evidence_link", 1, manifest)
         path = self._link_path(certificate_digest)
         payload = canonical_json(manifest)
         with self._lock:
             if path.exists():
-                if path.read_bytes() != payload:
-                    raise EvidenceCustodyError("link_conflict")
-                return digest
+                existing = path.read_bytes()
+                if existing == payload:
+                    return digest
+                try:
+                    previous = loads_json(existing)
+                except ValueError as exc:
+                    raise EvidenceCustodyError("link_conflict") from exc
+                if (isinstance(previous, dict)
+                        and "signature" not in previous
+                        and "signature" in manifest):
+                    # Upgrade path: replace an unsigned legacy manifest
+                    # with the signed one, but only if the dependency
+                    # sets are unchanged.
+                    unsigned = {key: value for key, value in manifest.items()
+                                if key not in {"signature",
+                                               "signer_key_id"}}
+                    if previous != unsigned:
+                        raise EvidenceCustodyError("link_conflict")
+                    tmp = path.with_name(path.name + ".tmp")
+                    tmp.write_bytes(payload)
+                    os.replace(tmp, path)
+                    return digest
+                raise EvidenceCustodyError("link_conflict")
             _atomic_write(path, payload)
         return digest
+
+    def _record_type(self, digest: str) -> str | None:
+        try:
+            meta = loads_json(self._meta_path(digest).read_bytes())
+        except (OSError, ValueError):
+            return None
+        return meta.get("record_type") if isinstance(meta, dict) else None
 
     def link_for(self, certificate_digest: str) -> dict | None:
         path = self._link_path(certificate_digest)
@@ -372,7 +476,9 @@ class EvidenceCustodyStore:
                          "evidence_revocation_entry", 1, signed)}
             self._append(self._revocations_path, entry)
             self._revocations = None
-            return entry
+            self._revocations_stamp = None
+        self._notify_change()
+        return entry
 
     def supersede(
         self,
@@ -407,7 +513,9 @@ class EvidenceCustodyStore:
                          "evidence_supersession_entry", 1, signed)}
             self._append(self._supersessions_path, entry)
             self._supersessions = None
-            return entry
+            self._supersessions_stamp = None
+        self._notify_change()
+        return entry
 
     @staticmethod
     def _append(path: Path, entry: dict) -> None:
@@ -467,16 +575,33 @@ class EvidenceCustodyStore:
             entries.append(entry)
         return entries
 
+    @staticmethod
+    def _log_stamp(path: Path):
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
     def _load_revocations(self) -> list[dict]:
-        if self._revocations is None:
+        # Another serving process may append a revocation. A process-local
+        # cache that never revalidates makes cross-process revocation
+        # invisible until restart, so reload whenever the log changes.
+        stamp = self._log_stamp(self._revocations_path)
+        if self._revocations is None or stamp != self._revocations_stamp:
             self._revocations = self._load_log(
                 self._revocations_path, REVOCATION_DOMAIN, "revocation")
+            self._revocations_stamp = stamp
         return list(self._revocations)
 
     def _load_supersessions(self) -> list[dict]:
-        if self._supersessions is None:
+        stamp = self._log_stamp(self._supersessions_path)
+        if self._supersessions is None or \
+                stamp != self._supersessions_stamp:
             self._supersessions = self._load_log(
-                self._supersessions_path, SUPERSESSION_DOMAIN, "supersession")
+                self._supersessions_path, SUPERSESSION_DOMAIN,
+                "supersession")
+            self._supersessions_stamp = stamp
         return list(self._supersessions)
 
     def revocations(self) -> list[dict]:
@@ -484,6 +609,38 @@ class EvidenceCustodyStore:
 
     def supersessions(self) -> list[dict]:
         return self._load_supersessions()
+
+    def authority_snapshot(self) -> dict:
+        """Monotonic custody state bound into signed authority checkpoints."""
+        revocations = self._load_revocations()
+        supersessions = self._load_supersessions()
+        return {
+            "revocation_head": revocations[-1]["entry_digest"]
+            if revocations else GENESIS,
+            "supersession_head": supersessions[-1]["entry_digest"]
+            if supersessions else GENESIS,
+            "revocation_count": len(revocations),
+            "supersession_count": len(supersessions),
+            "custody_entry_count": len(revocations) + len(supersessions),
+        }
+
+    def verify_snapshot(self, expected: dict) -> dict:
+        """Fail closed when custody is behind or diverges from a snapshot."""
+        current = self.authority_snapshot()
+        if not isinstance(expected, dict):
+            raise EvidenceCustodyError("custody_snapshot_invalid")
+        if expected.get("custody_entry_count", 0) > \
+                current["custody_entry_count"]:
+            raise EvidenceCustodyError(
+                "custody_rollback",
+                f"expected={expected.get('custody_entry_count')}"
+                f" current={current['custody_entry_count']}")
+        for key in ("revocation_head", "supersession_head",
+                    "custody_entry_count"):
+            if expected.get(key) != current[key]:
+                raise EvidenceCustodyError(
+                    "custody_snapshot_mismatch", key)
+        return current
 
     def revocation_head(self) -> str:
         entries = self._load_revocations()
@@ -503,39 +660,88 @@ class EvidenceCustodyStore:
     # ------------------------------------------------------------------ #
     # status
     # ------------------------------------------------------------------ #
-    def status(self, digest: str, *, _seen=None) -> str:
-        """Current status: active/revoked/superseded/missing/invalid/corrupt."""
+    def status(self, digest: str) -> str:
+        """Current status: active/revoked/superseded/missing/invalid/corrupt.
+
+        Traversal keeps the *active path* separate from completed results:
+        a digest already on the current path is a dependency cycle, while
+        a digest reached again through a different branch is a shared
+        dependency and reuses its memoized result. A single visited set
+        cannot distinguish the two and rejects every diamond-shaped graph.
+        """
         if not (isinstance(digest, str) and _HEX.fullmatch(digest)):
             return "invalid"
-        revoked = self._revoked_set()
-        superseded = self._superseded_set()
+        return self._status(
+            digest, set(), {}, self._revoked_set(), self._superseded_set(),
+            [0])
+
+    def _status(self, digest, path, memo, revoked, superseded, budget) -> str:
+        if not (isinstance(digest, str) and _HEX.fullmatch(digest)):
+            return "invalid"
         if digest in revoked:
             return "revoked"
         if digest in superseded:
             return "superseded"
-        seen = set() if _seen is None else _seen
-        if digest in seen:
+        if digest in memo:
+            return memo[digest]
+        if digest in path:
             return "invalid"
-        seen.add(digest)
-        path = self._object_path(digest)
-        if not path.exists():
-            return "missing"
+        budget[0] += 1
+        if budget[0] > _MAX_DEPENDENCY_NODES or \
+                len(path) >= _MAX_DEPENDENCY_DEPTH:
+            return "invalid"
+        path.add(digest)
         try:
-            self.get(digest)
-        except EvidenceCustodyError as exc:
-            return "corrupt" if exc.reason == "object_altered" else "missing"
-        link = self.link_for(digest)
-        if link is None:
-            return "active"
-        for dependency in (*link.get("receipts", ()),
-                           *link.get("evidence", ()),
-                           *link.get("deliveries", ())):
-            dependency_status = self.status(dependency, _seen=seen)
-            if dependency_status in {"revoked", "superseded"}:
-                return dependency_status
-            if dependency_status != "active":
-                return "invalid"
-        return "active"
+            object_path = self._object_path(digest)
+            if not object_path.exists():
+                result = "missing"
+            else:
+                try:
+                    self.get(digest)
+                except EvidenceCustodyError as exc:
+                    result = "corrupt" if exc.reason == "object_altered" \
+                        else "missing"
+                else:
+                    link = self.link_for(digest)
+                    if link is not None and not self._verify_link(link):
+                        result = "invalid"
+                        link = None
+                    elif (link is not None and "signature" not in link
+                          and self._record_type(digest) ==
+                          "evaluation_certificate"
+                          and not self._link_matches_certificate(
+                              digest, link)):
+                        result = "invalid"
+                        link = None
+                    elif link is None and \
+                            self._record_type(digest) == \
+                            "evaluation_certificate":
+                        # A certificate is defined by its dependency
+                        # manifest. Deleting the link would otherwise
+                        # hide a revoked receipt or delivery.
+                        result = "invalid"
+                        link = None
+                    else:
+                        result = "active"
+                    for dependency in (
+                            *(link.get("receipts", ()) if link else ()),
+                            *(link.get("evidence", ()) if link else ()),
+                            *(link.get("deliveries", ()) if link else ())):
+                        dependency_status = self._status(
+                            dependency, path, memo, revoked, superseded,
+                            budget)
+                        if dependency_status in {"revoked", "superseded"}:
+                            result = dependency_status
+                            break
+                        if dependency_status != "active":
+                            result = "invalid"
+                            break
+        finally:
+            path.discard(digest)
+        if len(memo) >= _MAX_DEPENDENCY_MEMO:
+            return "invalid"
+        memo[digest] = result
+        return result
 
     def require_active(self, digest: str) -> str:
         status = self.status(digest)
@@ -582,6 +788,13 @@ class EvidenceCustodyStore:
                 self.get(digest)
             except EvidenceCustodyError as exc:
                 problems.append(f"{digest[:12]}:{exc.reason}")
+            if self._record_type(digest) == "evaluation_certificate":
+                try:
+                    if self.link_for(digest) is None:
+                        problems.append(f"link:missing:{digest[:12]}")
+                except EvidenceCustodyError as exc:
+                    problems.append(
+                        f"link:{digest[:12]}:{exc.reason}")
         links = 0
         for path in sorted((self.root / "links").glob("*.json")):
             links += 1
@@ -590,6 +803,13 @@ class EvidenceCustodyStore:
             except (OSError, ValueError) as exc:
                 problems.append(f"link:{path.stem[:12]}:unreadable")
                 continue
+            if not self._verify_link(manifest):
+                problems.append(f"link:{path.stem[:12]}:signature_invalid")
+            elif "signature" not in manifest and \
+                    not self._link_matches_certificate(
+                        path.stem, manifest):
+                problems.append(
+                    f"link:{path.stem[:12]}:certificate_mismatch")
             for key in ("receipts", "evidence", "deliveries"):
                 for dependency in manifest.get(key, ()):
                     if not self.has(dependency):

@@ -274,7 +274,7 @@ class SkillIngestTests(unittest.TestCase):
         out = gateway.serve(_request(), repository_id="repo-a")
         self.assertIn("Always run the demo test first.",
                       out.helpful_next_checks)
-        self.assertEqual(out.decision, "abstain")
+        self.assertEqual(out.decision, "advisory")
         self.assertEqual(out.reason_code, "no_qualified_procedure")
 
 

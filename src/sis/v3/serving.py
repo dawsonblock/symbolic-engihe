@@ -28,8 +28,9 @@ Isolation invariants:
   candidates are excluded individually (each rejection is counted and
   auditable); nothing silently degrades to permissive.
 - ``decision`` remains honest: ``recommend`` only when the strict
-  procedure path qualifies; candidate-only advice rides along as
-  advisory checks under an abstention decision with a reason.
+  procedure path qualifies; candidate-only advice is an explicit
+  ``advisory`` decision (never a procedure grant), and a genuine
+  abstention stays ``abstain`` with a reason.
 - Serving outcomes bind a *signature-authenticated* receipt for the
   same task and outcome to the exact guidance digest this gateway
   delivered; a bare digest is not evidence.
@@ -44,6 +45,7 @@ from typing import Callable, Mapping
 
 from .candidates import CandidateError, CandidateRegistry
 from .composition import compose_guidance
+from .control_plane import ControlPlaneError
 from .contracts import CandidateV1, ContractError, GuidanceRequestV1, GuidanceV1, canonical_digest
 from .guidance import _abstain
 from .retrieval import (RetrievalContext, precondition_holds,
@@ -91,12 +93,24 @@ class GovernedServingGateway:
         execution_identity_authority=None,
         require_execution_identity: bool | None = None,
         used_session_nonces: set | None = None,
+        control_plane=None,
     ) -> None:
         self._candidates = registry
         self._identity_authority = execution_identity_authority
+        if production and require_execution_identity is False:
+            # An execution identity is the only authenticated statement of
+            # which repository/commit/task this advice is for. Production
+            # may not opt out of it.
+            raise ValueError(
+                "production_requires_execution_identity")
         self._require_identity = (
             bool(require_execution_identity)
             if require_execution_identity is not None else bool(production))
+        if production and control_plane is None:
+            # Replay protection that lives in one process is not replay
+            # protection. Production must share the nonce constraint.
+            raise ValueError("production_requires_control_plane")
+        self._control_plane = control_plane
         self._used_nonces = used_session_nonces \
             if used_session_nonces is not None else set()
         # Production serving requires an independently checkpointed
@@ -130,10 +144,13 @@ class GovernedServingGateway:
         symbols_extra=(),
         task_family: str | None = None,
         execution_identity=None,
+        requester_identity: str | None = None,
         now=None,
     ) -> GuidanceV1:
         served_map = {"candidates": [], "rejections": [],
                       "repository_id": None, "task_id": None}
+        snapshot = None
+        identity_result = None
         try:
             if not isinstance(request, GuidanceRequestV1):
                 request = GuidanceRequestV1.from_dict(request)
@@ -147,11 +164,39 @@ class GovernedServingGateway:
                            "demonstration") != "production":
                     raise CandidateError(
                         "production_qualification_required")
-                authority = self._candidates.authority_status()
-                if authority.get("mode") != "checkpoint_verified":
-                    raise CandidateError(
-                        "authority_checkpoint_unconfigured")
-                served_map["authority"] = authority
+                if not getattr(self._candidates, "has_evidence_custody",
+                               False):
+                    # Without custody there is no revocation or
+                    # supersession history to witness.
+                    raise CandidateError("evidence_custody_unconfigured")
+                served_map["custody_freshness"] = \
+                    self._candidates.check_offline_serving(offline=False)
+                snapshot = self._authority_snapshot()
+                if self._control_plane is not None:
+                    try:
+                        head = self._control_plane.authority_head()
+                    except ControlPlaneError as exc:
+                        raise CandidateError(
+                            "control_plane_unavailable:"
+                            f"{exc.reason}") from exc
+                    if head is None:
+                        # Upgrade/recovery: the signed checkpoint is the
+                        # independent witness, so a fresh control plane
+                        # can be anchored to it instead of refusing
+                        # every serve.
+                        seed = getattr(
+                            self._candidates, "seed_authority_head", None)
+                        if not callable(seed):
+                            raise CandidateError(
+                                "authority_head_uninitialized")
+                        try:
+                            seed(self._control_plane)
+                        except ControlPlaneError as exc:
+                            raise CandidateError(
+                                "control_plane_unavailable:"
+                                f"{exc.reason}") from exc
+                served_map["authority"] = snapshot["authority"]
+                served_map["authority_snapshot"] = snapshot["digest"]
             identity_result = None
             if self._require_identity or execution_identity is not None:
                 if self._identity_authority is None:
@@ -165,6 +210,7 @@ class GovernedServingGateway:
                     expected_commit=request.base_commit,
                     expected_task_id=request.task_id,
                     expected_task_family=task_family,
+                    expected_requester=requester_identity,
                 )
                 if not identity_result.ok:
                     served_map["identity_error"] = identity_result.reason
@@ -172,8 +218,9 @@ class GovernedServingGateway:
                         "Execution identity could not be authenticated.",))
                     self._emit(served_map, out)
                     return out
-                self._used_nonces.add(
-                    identity_result.identity.session_nonce)
+                if self._control_plane is None:
+                    self._used_nonces.add(
+                        identity_result.identity.session_nonce)
                 served_map["execution_identity"] = \
                     identity_result.identity.digest
             if identity_result is not None:
@@ -232,8 +279,8 @@ class GovernedServingGateway:
                     reason_code=None,
                     approximate_tokens=min(
                         2_000, strict.approximate_tokens + added))
-                self._emit(served_map, out)
-                return out
+                return self._finish(out, served_map, snapshot,
+                                    identity_result, request.task_id)
 
             if composed.abstained:
                 reason = composed.reason or "insufficient_support"
@@ -247,12 +294,12 @@ class GovernedServingGateway:
                     reason_code=reason if reason in _POLICY["reasons"]
                     else "insufficient_support",
                     approximate_tokens=8)
-                self._emit(served_map, out)
-                return out
+                return self._finish(out, served_map, snapshot,
+                                    identity_result, request.task_id)
 
-            # Candidate-only advice: advisory steps under an honest
-            # abstention decision — memories/skills never claim procedure
-            # authority, but the qualified advisory text is still served.
+            # Candidate-only advice: an explicit advisory decision —
+            # memories/skills never claim procedure authority, but the
+            # qualified advisory text is still served.
             delivered_steps = tuple(composed.steps)[:7]
             delivered = _unique_digests(
                 d for s, d in composed.step_sources
@@ -262,7 +309,7 @@ class GovernedServingGateway:
                 "Advisory from qualified learned candidates; verify "
                 "against task tests before relying on it.",)
             out = GuidanceV1(
-                schema_version=1, decision="abstain",
+                schema_version=1, decision="advisory",
                 procedure_ids=(), revision=None,
                 matched_preconditions=(), contraindications=(),
                 evidence_ids=(), policy_digest=_POLICY_DIGEST,
@@ -270,8 +317,8 @@ class GovernedServingGateway:
                 reason_code="no_qualified_procedure",
                 approximate_tokens=min(2_000, sum(
                     max(1, len(s) // 4) for s in checks)))
-            self._emit(served_map, out)
-            return out
+            return self._finish(out, served_map, snapshot,
+                                identity_result, request.task_id)
         except CandidateError as exc:
             # The registry re-authenticates the audit chain, state
             # projection and signed serving basis on every read. A failure
@@ -280,15 +327,146 @@ class GovernedServingGateway:
             served_map["integrity_error"] = str(exc)
             out = _abstain("catalog_unavailable", (
                 "Candidate catalog integrity could not be verified.",))
-            self._emit(served_map, out)
-            return out
+            return self._finish(out, served_map, snapshot,
+                                identity_result, served_map.get("task_id"))
         except (ContractError, ValueError, TypeError):
             out = _abstain("catalog_unavailable", (
                 "Serving inputs could not be validated.",))
-            self._emit(served_map, out)
-            return out
+            return self._finish(out, served_map, snapshot,
+                                identity_result, served_map.get("task_id"))
+
+    @property
+    def control_plane(self):
+        return self._control_plane
+
+    def health(self) -> dict:
+        """Readiness of the authority inputs a decision depends on."""
+        checks: dict[str, dict] = {}
+        ok = True
+        try:
+            authority = self._candidates.authority_status()
+            healthy = authority.get("mode") == "checkpoint_verified"
+            checks["authority"] = {
+                "ok": healthy,
+                "mode": authority.get("mode"),
+                "checkpoint_digest": authority.get("checkpoint_digest"),
+            }
+            ok = ok and healthy
+        except Exception as exc:  # noqa: BLE001 - health reports, never raises
+            checks["authority"] = {
+                "ok": False, "error": type(exc).__name__}
+            ok = False
+        try:
+            custody = self._candidates.evidence_custody_snapshot()
+            checks["custody"] = {
+                "ok": True,
+                "revocation_head": custody["revocation_head"],
+                "supersession_head": custody["supersession_head"],
+                "custody_entry_count": custody["custody_entry_count"],
+            }
+        except Exception as exc:  # noqa: BLE001
+            checks["custody"] = {
+                "ok": False, "error": type(exc).__name__}
+            ok = False
+        if self._control_plane is not None:
+            try:
+                head = self._control_plane.authority_head()
+                checks["control_plane"] = {
+                    "ok": head is not None,
+                    "sequence": head["sequence"] if head else None,
+                }
+                ok = ok and head is not None
+            except Exception as exc:  # noqa: BLE001
+                checks["control_plane"] = {
+                    "ok": False, "error": type(exc).__name__}
+                ok = False
+        return {
+            "ok": ok,
+            "serving_mode": "production" if self._production
+            else "development",
+            "checks": checks,
+        }
 
     # ------------------------------------------------------------------ #
+    def _authority_snapshot(self) -> dict:
+        """Verified authority + custody state a decision may rely on."""
+        authority = self._candidates.authority_status()
+        if authority.get("mode") != "checkpoint_verified":
+            raise CandidateError("authority_checkpoint_unconfigured")
+        custody = self._candidates.evidence_custody_snapshot()
+        head = {
+            "sequence": authority.get("checkpoint_sequence"),
+            "checkpoint_digest": authority.get("checkpoint_digest"),
+            "journal_head": authority.get("journal_head"),
+            "revocation_head": custody["revocation_head"],
+            "supersession_head": custody["supersession_head"],
+            "custody_entry_count": custody["custody_entry_count"],
+        }
+        if head["sequence"] is None or head["checkpoint_digest"] is None:
+            raise CandidateError("authority_checkpoint_incomplete")
+        return {
+            "authority": authority,
+            "custody": custody,
+            "head": head,
+            "digest": canonical_digest("authority_snapshot", 1, head),
+        }
+
+    def _revalidate(self, snapshot: dict) -> None:
+        """Fail if the authority changed while guidance was composed.
+
+        A revocation committed before this decision returns must prevent
+        the decision from delivering the revoked evidence. Comparing the
+        full witnessed snapshot (candidate journal + custody heads)
+        closes the read-then-compose window instead of assuming a short
+        cache expiry is sufficient.
+        """
+        current = self._authority_snapshot()
+        if current["digest"] != snapshot["digest"]:
+            raise ControlPlaneError("authority_snapshot_changed")
+
+    def _finish(self, out: GuidanceV1, served_map: dict, snapshot,
+                identity_result, task_id) -> GuidanceV1:
+        """Revalidate, commit the authorization receipt, then emit."""
+        if identity_result is not None and identity_result.ok:
+            try:
+                if snapshot is not None:
+                    self._revalidate(snapshot)
+                if self._control_plane is not None:
+                    receipt = self._control_plane.commit_authorization(
+                        nonce=identity_result.identity.session_nonce,
+                        session_digest=identity_result.identity.digest,
+                        expires_at=identity_result.identity.expires_at,
+                        task_id=task_id,
+                        repository_id=served_map.get("repository_id"),
+                        guidance_digest=out.digest,
+                        decision=out.decision,
+                        snapshot_digest=(
+                            snapshot["digest"] if snapshot is not None
+                            else canonical_digest(
+                                "authority_snapshot", 1,
+                                {"mode": "development"})),
+                        expected_head=(
+                            snapshot["head"] if snapshot is not None
+                            else None),
+                    )
+                    served_map["authorization_id"] = \
+                        receipt["authorization_id"]
+                    self._served[task_id] = out.digest
+            except (ControlPlaneError, CandidateError) as exc:
+                reason = getattr(exc, "reason", str(exc))
+                served_map["commit_error"] = reason
+                if reason == "session_nonce_replayed":
+                    detail = "Execution identity was already used."
+                elif reason == "authority_snapshot_changed":
+                    detail = ("Authority changed while guidance was being"
+                              " prepared.")
+                else:
+                    detail = ("Authorization could not be committed against"
+                              " the current authority snapshot.")
+                out = _abstain("catalog_unavailable", (detail,))
+        self._emit(served_map, out)
+        return out
+
     def _resolve_repository(self, repository_id: str) -> str | None:
         if not repository_id or self._registry is None:
             return None
@@ -366,7 +544,8 @@ class GovernedServingGateway:
             for cx in cand.known_counterexamples)
 
     def record_outcome(self, *, task_id: str, served_digest: str,
-                       receipt_digest: str, outcome: str) -> None:
+                       receipt_digest: str, outcome: str,
+                       authorization_id: str | None = None) -> None:
         """Bind the outcome that followed to the guidance that was served.
 
         The digest must be the guidance this gateway actually delivered
@@ -382,7 +561,19 @@ class GovernedServingGateway:
             raise ValueError("receipt_digest must be a lowercase SHA-256 digest")
         if outcome not in _OUTCOMES:
             raise ValueError("unknown outcome: " + repr(outcome))
-        if self._served.get(task_id) != served_digest:
+        authorization = None
+        if self._control_plane is not None:
+            if authorization_id is not None:
+                authorization = self._control_plane.authorization(
+                    authorization_id)
+            else:
+                authorization = self._control_plane.authorization_for_task(
+                    task_id)
+            if authorization is None or \
+                    authorization["guidance_digest"] != served_digest or \
+                    authorization["task_id"] != task_id:
+                raise ValueError("served_guidance_unknown")
+        elif self._served.get(task_id) != served_digest:
             raise ValueError("served_guidance_unknown")
         if self._receipt_authority is None:
             raise ValueError("receipt_authority_required")
@@ -396,6 +587,14 @@ class GovernedServingGateway:
             raise ValueError("receipt_task_mismatch")
         if getattr(receipt, "outcome", None) != outcome:
             raise ValueError("receipt_outcome_mismatch")
+        if self._control_plane is not None:
+            try:
+                self._control_plane.record_outcome(
+                    authorization_id=authorization["authorization_id"],
+                    task_id=task_id, served_digest=served_digest,
+                    receipt_digest=receipt_digest, outcome=outcome)
+            except ControlPlaneError as exc:
+                raise ValueError(exc.reason) from exc
         self._audit_record({
             "schema_version": 1,
             "kind": "serving_outcome",

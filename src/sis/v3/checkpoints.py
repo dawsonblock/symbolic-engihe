@@ -100,6 +100,11 @@ class VerificationResult:
     checkpoint_journal_sequence: int | None = None
     local_journal_sequence: int | None = None
     checkpoint_digest: str | None = None
+    journal_head: str | None = None
+    candidate_revision_digest: str | None = None
+    revocation_head: str | None = None
+    supersession_head: str | None = None
+    custody_entry_count: int | None = None
 
     def require_ok(self) -> "VerificationResult":
         if not self.ok:
@@ -115,6 +120,11 @@ class VerificationResult:
             "checkpoint_journal_sequence": self.checkpoint_journal_sequence,
             "local_journal_sequence": self.local_journal_sequence,
             "checkpoint_digest": self.checkpoint_digest,
+            "journal_head": self.journal_head,
+            "candidate_revision_digest": self.candidate_revision_digest,
+            "revocation_head": self.revocation_head,
+            "supersession_head": self.supersession_head,
+            "custody_entry_count": self.custody_entry_count,
         }
 
 
@@ -123,20 +133,40 @@ def _check_digest(value, name):
         raise ContractError(f"{name} must be a lowercase SHA-256 digest")
 
 
+def _wire_projection(body: dict) -> dict:
+    """Drop custody fields when they carry no history.
+
+    Keeps the signed bytes identical to v3.3.1 for checkpoints without a
+    custody witness, so existing signatures and digest chains survive the
+    upgrade. Once a revocation is witnessed, the fields are signed.
+    """
+    if (body.get("revocation_head") == GENESIS
+            and body.get("supersession_head") == GENESIS
+            and body.get("custody_entry_count", 0) == 0):
+        for name in ("revocation_head", "supersession_head",
+                     "custody_entry_count"):
+            body.pop(name, None)
+    return body
+
+
 def checkpoint_body(checkpoint: AuthorityCheckpointV1 | dict) -> bytes:
     """Canonical, domain-separated bytes signed by the authority key."""
     body = checkpoint.to_dict() if isinstance(
         checkpoint, AuthorityCheckpointV1) else dict(checkpoint)
     body.pop("signature", None)
-    return CHECKPOINT_DOMAIN + canonical_json(body)
+    return CHECKPOINT_DOMAIN + canonical_json(_wire_projection(body))
 
 
 def sign_checkpoint(seed: bytes, **fields) -> AuthorityCheckpointV1:
     """Sign an unsigned checkpoint body with the authority's Ed25519 key."""
     fields.setdefault("schema_version", 1)
+    fields.setdefault("revocation_head", GENESIS)
+    fields.setdefault("supersession_head", GENESIS)
+    fields.setdefault("custody_entry_count", 0)
     unsigned = {k: v for k, v in fields.items() if k != "signature"}
     signature = signatures.sign(seed, checkpoint_body(unsigned)).hex()
-    return AuthorityCheckpointV1.from_dict({**unsigned, "signature": signature})
+    return AuthorityCheckpointV1.from_dict(
+        {**unsigned, "signature": signature})
 
 
 def verify_checkpoint(checkpoint: AuthorityCheckpointV1, public_hex: str) -> bool:
@@ -357,6 +387,26 @@ class FileAuthorityCheckpointStore:
                 if (checkpoint.journal_sequence == latest.journal_sequence
                         and checkpoint.journal_head != latest.journal_head):
                     raise CheckpointConflict("checkpoint_journal_substitution")
+                if (checkpoint.signer_key_id != latest.signer_key_id
+                        and checkpoint.authority_epoch
+                        <= latest.authority_epoch):
+                    # A new signing key must open a new authority epoch;
+                    # otherwise a compromised old key could rotate itself
+                    # without an explicit epoch transition.
+                    raise CheckpointConflict(
+                        "checkpoint_signer_rotation_requires_new_epoch")
+                if (checkpoint.custody_entry_count
+                        < latest.custody_entry_count):
+                    raise CheckpointConflict(
+                        "checkpoint_custody_regression")
+                if (checkpoint.custody_entry_count
+                        == latest.custody_entry_count
+                        and (checkpoint.revocation_head
+                             != latest.revocation_head
+                             or checkpoint.supersession_head
+                             != latest.supersession_head)):
+                    raise CheckpointConflict(
+                        "checkpoint_custody_substitution")
             payload = b"".join(
                 record.canonical_bytes() + b"\n"
                 for record in (*records, checkpoint))
@@ -513,11 +563,92 @@ class AuthorityStateVerifier:
                 checkpoint_journal_sequence=cp.journal_sequence,
                 local_journal_sequence=local_sequence,
                 checkpoint_digest=cp.digest)
+        # Custody is the revocation witness. A checkpoint that names a
+        # non-genesis head must be matched by the local custody state;
+        # restoring an older custody directory is a rollback, not an
+        # acceptable "no revocations" state.
+        local_revocation = local_state.get("revocation_head")
+        local_supersession = local_state.get("supersession_head")
+        local_custody_count = local_state.get("custody_entry_count")
+        witnessed = (cp.revocation_head != GENESIS
+                     or cp.supersession_head != GENESIS
+                     or cp.custody_entry_count > 0)
+        if witnessed and (local_revocation is None
+                          or local_supersession is None
+                          or local_custody_count is None):
+            return VerificationResult(
+                ok=False, reason="custody_witness_missing",
+                detail="checkpoint names custody history but local custody"
+                       " state is unavailable",
+                checkpoint_sequence=cp.sequence,
+                checkpoint_journal_sequence=cp.journal_sequence,
+                local_journal_sequence=local_sequence,
+                checkpoint_digest=cp.digest,
+                revocation_head=cp.revocation_head,
+                supersession_head=cp.supersession_head,
+                custody_entry_count=cp.custody_entry_count)
+        if local_custody_count is not None and \
+                cp.custody_entry_count > local_custody_count:
+            return VerificationResult(
+                ok=False, reason="custody_entry_count_regression",
+                detail=f"local={local_custody_count}"
+                       f" checkpoint={cp.custody_entry_count}",
+                checkpoint_sequence=cp.sequence,
+                checkpoint_journal_sequence=cp.journal_sequence,
+                local_journal_sequence=local_sequence,
+                checkpoint_digest=cp.digest,
+                revocation_head=cp.revocation_head,
+                supersession_head=cp.supersession_head,
+                custody_entry_count=cp.custody_entry_count)
+        if local_revocation is not None and \
+                local_revocation != cp.revocation_head:
+            return VerificationResult(
+                ok=False, reason="revocation_head_mismatch",
+                detail="local custody revocation head differs from the"
+                       " checkpoint",
+                checkpoint_sequence=cp.sequence,
+                checkpoint_journal_sequence=cp.journal_sequence,
+                local_journal_sequence=local_sequence,
+                checkpoint_digest=cp.digest,
+                revocation_head=cp.revocation_head,
+                supersession_head=cp.supersession_head,
+                custody_entry_count=cp.custody_entry_count)
+        if local_supersession is not None and \
+                local_supersession != cp.supersession_head:
+            return VerificationResult(
+                ok=False, reason="supersession_head_mismatch",
+                detail="local custody supersession head differs from the"
+                       " checkpoint",
+                checkpoint_sequence=cp.sequence,
+                checkpoint_journal_sequence=cp.journal_sequence,
+                local_journal_sequence=local_sequence,
+                checkpoint_digest=cp.digest,
+                revocation_head=cp.revocation_head,
+                supersession_head=cp.supersession_head,
+                custody_entry_count=cp.custody_entry_count)
+        if local_custody_count is not None and \
+                local_custody_count != cp.custody_entry_count:
+            return VerificationResult(
+                ok=False, reason="custody_entry_count_mismatch",
+                detail=f"local={local_custody_count}"
+                       f" checkpoint={cp.custody_entry_count}",
+                checkpoint_sequence=cp.sequence,
+                checkpoint_journal_sequence=cp.journal_sequence,
+                local_journal_sequence=local_sequence,
+                checkpoint_digest=cp.digest,
+                revocation_head=cp.revocation_head,
+                supersession_head=cp.supersession_head,
+                custody_entry_count=cp.custody_entry_count)
         return VerificationResult(
             ok=True, checkpoint_sequence=cp.sequence,
             checkpoint_journal_sequence=cp.journal_sequence,
             local_journal_sequence=local_sequence,
-            checkpoint_digest=cp.digest)
+            checkpoint_digest=cp.digest,
+            journal_head=cp.journal_head,
+            candidate_revision_digest=cp.candidate_revision_digest,
+            revocation_head=cp.revocation_head,
+            supersession_head=cp.supersession_head,
+            custody_entry_count=cp.custody_entry_count)
 
 
 class AuthorityJournal:
@@ -543,6 +674,7 @@ class AuthorityJournal:
         authority_epoch: int,
         policy_version: str,
         clock=_utcnow,
+        control_plane=None,
     ) -> None:
         if len(signer_seed) != 32:
             raise CheckpointVerificationError("signer_seed_must_be_32_bytes")
@@ -556,12 +688,34 @@ class AuthorityJournal:
         self.authority_epoch = authority_epoch
         self.policy_version = policy_version
         self._clock = clock
+        self._control_plane = control_plane
         self._lock = threading.RLock()
+
+    def _advance(self, checkpoint: AuthorityCheckpointV1) -> None:
+        """Record the witnessed head in the shared control plane.
+
+        The signed checkpoint file is the independent rollback witness;
+        the control plane row is the serialization point authorization
+        commits compare against.
+        """
+        if self._control_plane is None:
+            return
+        self._control_plane.advance_authority_head({
+            "sequence": checkpoint.sequence,
+            "checkpoint_digest": checkpoint.digest,
+            "journal_head": checkpoint.journal_head,
+            "revocation_head": checkpoint.revocation_head,
+            "supersession_head": checkpoint.supersession_head,
+            "custody_entry_count": checkpoint.custody_entry_count,
+            "updated_at": checkpoint.issued_at,
+        })
 
     def _signed(self, *, sequence: int, previous_digest: str,
                 journal_sequence: int, journal_head: str,
                 revision_digest: str, candidate_count: int,
-                qualified_count: int) -> AuthorityCheckpointV1:
+                qualified_count: int, revocation_head: str,
+                supersession_head: str,
+                custody_entry_count: int) -> AuthorityCheckpointV1:
         return sign_checkpoint(
             self._seed,
             schema_version=1,
@@ -574,6 +728,9 @@ class AuthorityJournal:
             candidate_revision_digest=revision_digest,
             candidate_count=candidate_count,
             qualified_count=qualified_count,
+            revocation_head=revocation_head,
+            supersession_head=supersession_head,
+            custody_entry_count=custody_entry_count,
             issuer_identity=self.issuer_identity,
             policy_version=self.policy_version,
             issued_at=self._clock(),
@@ -592,14 +749,19 @@ class AuthorityJournal:
                     journal_head=local["head"],
                     revision_digest=local["revision_digest"],
                     candidate_count=local["candidate_count"],
-                    qualified_count=local["qualified_count"])
+                    qualified_count=local["qualified_count"],
+                    revocation_head=local["revocation_head"],
+                    supersession_head=local["supersession_head"],
+                    custody_entry_count=local["custody_entry_count"])
                 try:
                     self.store.compare_and_append(0, checkpoint)
                 except CheckpointConflict:
                     latest = self.store.get_latest()
                     if latest is not None and self._matches(latest, local):
+                        self._advance(latest)
                         return latest
                     raise
+                self._advance(checkpoint)
                 return checkpoint
             if local["sequence"] < latest.journal_sequence:
                 raise RollbackDetected(
@@ -615,7 +777,17 @@ class AuthorityJournal:
                     raise RollbackDetected(
                         "candidate_revision_mismatch:"
                         "local candidate state differs from the checkpoint")
-                return latest
+                if (local["revocation_head"] == latest.revocation_head
+                        and local["supersession_head"]
+                        == latest.supersession_head
+                        and local["custody_entry_count"]
+                        == latest.custody_entry_count):
+                    self._advance(latest)
+                    return latest
+                # Custody advanced (revocation/supersession) without a
+                # candidate transition. That still needs a new witnessed
+                # head, otherwise the revocation is not anchored. The
+                # monotonic checks below make a rollback fail closed.
             # Local state is ahead. It may only be published if it still
             # contains the checkpointed head at the checkpointed sequence:
             # an attacker who rewrote history cannot extend it.
@@ -631,14 +803,19 @@ class AuthorityJournal:
                 journal_head=local["head"],
                 revision_digest=local["revision_digest"],
                 candidate_count=local["candidate_count"],
-                qualified_count=local["qualified_count"])
+                qualified_count=local["qualified_count"],
+                revocation_head=local["revocation_head"],
+                supersession_head=local["supersession_head"],
+                custody_entry_count=local["custody_entry_count"])
             try:
                 self.store.compare_and_append(latest.sequence, checkpoint)
             except CheckpointConflict:
                 current = self.store.get_latest()
                 if current is not None and self._matches(current, local):
+                    self._advance(current)
                     return current
                 raise
+            self._advance(checkpoint)
             return checkpoint
 
     @staticmethod
@@ -650,6 +827,10 @@ class AuthorityJournal:
             == local["revision_digest"]
             and checkpoint.candidate_count == local["candidate_count"]
             and checkpoint.qualified_count == local["qualified_count"]
+            and checkpoint.revocation_head == local["revocation_head"]
+            and checkpoint.supersession_head == local["supersession_head"]
+            and checkpoint.custody_entry_count
+            == local["custody_entry_count"]
         )
 
     def recover(self) -> dict:
@@ -676,9 +857,14 @@ class AuthorityJournal:
                     return {"action": "diverged",
                             "local_sequence": local["sequence"],
                             "checkpoint_journal_sequence": latest.journal_sequence}
-                return {"action": "idempotent",
-                        "sequence": latest.sequence,
-                        "journal_sequence": latest.journal_sequence}
+                if (local["revocation_head"] == latest.revocation_head
+                        and local["supersession_head"]
+                        == latest.supersession_head
+                        and local["custody_entry_count"]
+                        == latest.custody_entry_count):
+                    return {"action": "idempotent",
+                            "sequence": latest.sequence,
+                            "journal_sequence": latest.journal_sequence}
             try:
                 checkpoint = self.publish()
             except RollbackDetected as exc:

@@ -40,3 +40,30 @@ store now exist as additive `sis.v3` modules; none of them are wired into the
 v2 service, HTTP server, or SQLite schema. Qualified retrieval, promotion, and
 any production wiring still require their own milestone, API compatibility
 review, security tests, and independent evidence.
+
+## v3.3.1 to v3.3.2: authority consistency
+
+No candidate-registry schema change is required. The control-plane
+schema (`session_nonce`, `authorization_receipt`, `guidance_outcome`,
+`authority_head`) is created automatically on first open.
+
+Operational steps:
+
+1. Point production at `PostgresControlPlane` and install the `postgres`
+   extra / `requirements-lock.txt`.
+2. Bind a custody link signer and set `require_signed_links=True` before
+   qualifying new candidates. Re-link legacy custody first.
+3. Bind `custody.bind_on_change(journal.publish)` so revocations advance
+   the signed checkpoint immediately.
+4. The first production serve seeds `authority_head` from the latest
+   signed checkpoint after verifying local candidate and custody state.
+   If the local state is ahead (interrupted publication), run
+   `registry.publish_pending()` first.
+5. Configure v3 API keys with optional `expires_at`; enable
+   `SIS_V3_ONLY=1` and terminate TLS at a reverse proxy.
+6. Re-run the release inventory and packaging steps; 3.3.1 artifacts do
+   not cover 3.3.2 source.
+
+`GuidanceV1.decision` gains `advisory`. Consumers that assumed only
+`recommend`/`abstain` must handle the new value; `advisory` never grants
+procedure authority and always carries a reason.

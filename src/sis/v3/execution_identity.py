@@ -25,6 +25,7 @@ from .contracts import ContractError, ExecutionIdentityV1, canonical_json
 IDENTITY_DOMAIN = b"sis-v3:execution_identity:1\0"
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _CLOCK_SKEW_SECONDS = 300
+DEFAULT_MAX_IDENTITY_LIFETIME_SECONDS = 3600
 
 
 class ExecutionIdentityError(RuntimeError):
@@ -110,15 +111,21 @@ class ExecutionIdentityAuthority:
         trusted_harness_keys: dict[str, str],
         repository_registry,
         clock: Callable[[], str] = _utcnow,
+        max_identity_lifetime_seconds: int = DEFAULT_MAX_IDENTITY_LIFETIME_SECONDS,
     ) -> None:
         if not trusted_harness_keys:
             raise ExecutionIdentityError("trusted_harness_keys_required")
         for key_id, public_hex in trusted_harness_keys.items():
             if not (isinstance(public_hex, str) and _HEX.fullmatch(public_hex)):
                 raise ExecutionIdentityError("harness_public_key_invalid")
+        if type(max_identity_lifetime_seconds) is not int or \
+                max_identity_lifetime_seconds < 1:
+            raise ExecutionIdentityError(
+                "max_identity_lifetime_invalid")
         self._keys = dict(trusted_harness_keys)
         self.registry = repository_registry
         self._clock = clock
+        self.max_identity_lifetime_seconds = max_identity_lifetime_seconds
 
     def issue(self, seed: bytes, *, signer_key_id: str, **fields):
         if signer_key_id not in self._keys:
@@ -177,6 +184,13 @@ class ExecutionIdentityAuthority:
         if expires <= issued:
             return ExecutionIdentityResult(
                 ok=False, reason="execution_identity_expiry_invalid",
+                identity=identity)
+        if (expires - issued).total_seconds() > \
+                self.max_identity_lifetime_seconds:
+            return ExecutionIdentityResult(
+                ok=False, reason="execution_identity_lifetime_exceeded",
+                detail=f"lifetime exceeds"
+                       f" {self.max_identity_lifetime_seconds}s",
                 identity=identity)
         if used_nonces is not None:
             if identity.session_nonce in used_nonces:

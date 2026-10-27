@@ -274,6 +274,7 @@ def classify_execution(
     bootstrap_ok: bool = True,
     stderr_tail: str = "",
     require_verified_isolation: bool = False,
+    production: bool = False,
     infrastructure_error: str | None = None,
 ) -> str:
     """Map an execution receipt to exactly one outcome class."""
@@ -282,6 +283,10 @@ def classify_execution(
     if not bootstrap_ok:
         return EVALUATOR_BOOTSTRAP_ERROR
     errors = set(getattr(receipt, "security_errors", ()) or ())
+    if production and "isolation:verified" not in errors:
+        # No independently validated containment marker: a production
+        # outcome may not be derived from this execution.
+        return SANDBOX_FAILURE
     if require_verified_isolation and "isolation:unverified_local" in errors:
         return SANDBOX_FAILURE
     if getattr(receipt, "timeout", False):

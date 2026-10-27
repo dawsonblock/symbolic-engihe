@@ -1,3 +1,70 @@
+## 2026-10-27 — SIS v3.3.2 authority consistency (M0–M5)
+
+- Enforced execution identity in production: a gateway constructed with
+  `require_execution_identity=False` is rejected, the signed session
+  carries an explicit maximum lifetime (default 3600 s), and the
+  authenticated caller's requester identity is checked against it.
+- Added a shared control plane (`sis.v3.control_plane`) with SQLite and
+  PostgreSQL profiles. `commit_authorization` consumes the signed
+  session nonce and writes the decision receipt in one transaction, so
+  two replicas racing with the same identity produce exactly one
+  successful authorization. Production cannot construct a gateway
+  without it.
+- Witnessed custody in authority checkpoints: `revocation_head`,
+  `supersession_head` and `custody_entry_count` are signed, compared on
+  every production serve, and advanced monotonically. Restoring a
+  pre-revocation custody directory or deleting the revocation log now
+  fails closed. Checkpoints without custody history remain
+  byte-compatible with v3.3.1, preserving old signatures and the
+  previous-digest chain.
+- Serving captures a witnessed snapshot, composes against it, then
+  revalidates and commits. A revocation committed while guidance is
+  being prepared aborts the decision instead of delivering revoked
+  evidence.
+- Replaced the shared visited set in `EvidenceCustodyStore.status` with
+  active-path cycle detection plus memoization and depth/node bounds.
+  Diamond-shaped evidence graphs are accepted; cycles are rejected.
+- Added the authenticated v3 serving boundary
+  (`sis.v3.serving_service`): bearer-authenticated `/v3/guidance` and
+  `/v3/outcome`, default isolation of legacy `/v1` routes (also forced by `SIS_V3_ONLY=1`),
+  custody freshness enforced in `serve()`, an explicit `advisory`
+  decision distinct from abstention, and durable guidance-to-outcome
+  records. `create_server` exposes the configured server for deployment
+  and tests.
+- Added 46 permanent security regression tests and executed baseline evidence:
+  five target defects open on v3.3.1, zero open on this tree. Suite:
+  **977 passed, 8 skipped**. See `docs/V332_AUTHORITY_CONSISTENCY.md`.
+- Added opt-in PostgreSQL qualification tests (duplicate nonce, four
+  concurrent replicas -> one commit, two-replica serving, outcome
+  binding, monotonic head). With a disposable PostgreSQL 14.20 cluster
+  the suite is **982 passed, 3 skipped**; see
+  `evidence/v332/qualification.json`.
+- Custody revocations/supersessions can publish the new witnessed head
+  automatically via `EvidenceCustodyStore.bind_on_change`.
+- Signed dependency links: `require_signed_links=True` and
+  `bind_link_signer` make certificate dependency manifests tamper-evident;
+  unsigned legacy links are cross-checked against the certificate's
+  declared receipt and delivery digests.
+- Exact outcome binding: `/v3/outcome` accepts `authorization_id` and
+  rejects a decision that does not name the committed receipt.
+- Production isolation gate: `LocalSubprocessExecutor(production=True)`
+  refuses to run unless `verified_isolation=True`, and
+  `classify_execution(production=True)` requires `isolation:verified`.
+- Readiness: `GET /health` reports authority, custody and control-plane
+  checks and returns 503 when degraded.
+- Key rotation: a checkpoint signer change requires a strictly higher
+  `authority_epoch`; v3 API keys support `expires_at`.
+- Upgrade recovery: a fresh control plane seeds `authority_head` from the
+  latest verified checkpoint on first serve.
+- Release provenance: signed DSSE envelope in the in-toto/SLSA shape,
+  verified against the archive's exact SHA-256; `requirements-lock.txt`
+  and a PostgreSQL CI job.
+- Added `docs/V332_OPERATIONS.md`, `docs/V332_ACCEPTANCE_MATRIX.md` and
+  `docs/V332_EFFICACY_STATUS.md`.
+- Not qualified: evaluator isolation (M6), full SLSA level conformance,
+  real-agent efficacy (M9), and a real multi-host PostgreSQL deployment.
+  `RELEASE_SHA256.json` is not yet regenerated.
+
 ## 2026-10-26 — SIS v3.3.1 authority closure
 
 - Added external signed authority checkpoints (`sis.v3.checkpoints`):

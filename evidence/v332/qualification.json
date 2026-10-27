@@ -5,21 +5,21 @@
   "baseline_commit": "c6b6ea7eb9f7807ab5c898a20ca229991f90d8cd",
   "default_suite": {
     "command": "PYTHONPATH=src python3 -m pytest -q",
-    "passed": 977,
+    "passed": 981,
     "skipped": 8,
     "failed": 0,
     "note": "8 skips = 3 pre-existing + 5 opt-in PostgreSQL tests"
   },
   "postgres_suite": {
     "command": "SIS_POSTGRES_DSN=postgresql://sis_test@127.0.0.1:55432/sis_control PYTHONPATH=src python3 -m pytest -q",
-    "passed": 982,
+    "passed": 986,
     "skipped": 3,
     "failed": 0,
     "server": "PostgreSQL 14.20 (Homebrew, aarch64-apple-darwin24.6.0)",
     "profile": "disposable local cluster, trust auth, port 55432"
   },
   "new_tests": {
-    "tests/v3/test_v332_security_regressions.py": 46,
+    "tests/v3/test_v332_security_regressions.py": 50,
     "tests/v3/test_v332_release_provenance.py": 5,
     "tests/v3/test_control_plane_postgres.py": 5
   },

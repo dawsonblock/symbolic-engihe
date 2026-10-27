@@ -41,7 +41,13 @@ _MAX_ID = 256
 _DECISIONS = frozenset({"recommend", "advisory", "abstain"})
 _OUTCOMES = frozenset({"pass", "fail", "partial", "error"})
 
+SCHEMA_VERSION = 1
+
 _SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS schema_meta (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        version INTEGER NOT NULL
+    )""",
     """CREATE TABLE IF NOT EXISTS session_nonce (
         nonce TEXT PRIMARY KEY,
         session_digest TEXT NOT NULL,
@@ -156,6 +162,8 @@ class ControlPlane(Protocol):
 
     def authority_head(self) -> dict | None: ...
 
+    def schema_version(self) -> int: ...
+
     def close(self) -> None: ...
 
 
@@ -183,6 +191,30 @@ class _SqlControlPlane:
     """Shared validation and head-conflict rules for both backends."""
 
     placeholder = "?"
+
+    def _ensure_schema_version(self, con) -> None:
+        row = con.execute(
+            "SELECT version FROM schema_meta WHERE singleton=1").fetchone()
+        if row is None:
+            con.execute(
+                "INSERT INTO schema_meta (singleton, version)"
+                f" VALUES (1, {self.placeholder})",
+                (SCHEMA_VERSION,))
+            return
+        version = row[0]
+        if type(version) is not int:
+            raise ControlPlaneError("control_plane_schema_invalid")
+        if version > SCHEMA_VERSION:
+            raise ControlPlaneError(
+                "control_plane_schema_too_new",
+                f"database={version} supported={SCHEMA_VERSION}")
+        if version < SCHEMA_VERSION:
+            # No destructive migrations exist yet; a future version adds
+            # its ALTER/CREATE steps here before the version bump.
+            con.execute(
+                "UPDATE schema_meta SET version="
+                f"{self.placeholder} WHERE singleton=1",
+                (SCHEMA_VERSION,))
 
     def _check_expected_head(self, current: dict | None,
                              expected: dict | None) -> None:
@@ -259,6 +291,14 @@ class SqliteControlPlane(_SqlControlPlane):
         with self._lock:
             for statement in _SCHEMA:
                 self._con.execute(statement)
+        with self._transaction() as con:
+            self._ensure_schema_version(con)
+
+    def schema_version(self) -> int:
+        with self._transaction() as con:
+            row = con.execute(
+                "SELECT version FROM schema_meta WHERE singleton=1").fetchone()
+        return row[0] if row is not None else 0
 
     def _transaction(self):
         return _SqliteTransaction(self._con, self._lock)
@@ -486,6 +526,14 @@ class PostgresControlPlane(_SqlControlPlane):
         with self._transaction() as con:
             for statement in _SCHEMA:
                 con.execute(statement)
+        with self._transaction() as con:
+            self._ensure_schema_version(con)
+
+    def schema_version(self) -> int:
+        with self._transaction() as con:
+            row = con.execute(
+                "SELECT version FROM schema_meta WHERE singleton=1").fetchone()
+        return row[0] if row is not None else 0
 
     def _transaction(self):
         return _PostgresTransaction(

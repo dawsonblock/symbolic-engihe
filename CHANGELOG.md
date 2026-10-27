@@ -31,13 +31,13 @@
   decision distinct from abstention, and durable guidance-to-outcome
   records. `create_server` exposes the configured server for deployment
   and tests.
-- Added 46 permanent security regression tests and executed baseline evidence:
+- Added 50 permanent security regression tests and executed baseline evidence:
   five target defects open on v3.3.1, zero open on this tree. Suite:
-  **977 passed, 8 skipped**. See `docs/V332_AUTHORITY_CONSISTENCY.md`.
+  **981 passed, 8 skipped**. See `docs/V332_AUTHORITY_CONSISTENCY.md`.
 - Added opt-in PostgreSQL qualification tests (duplicate nonce, four
   concurrent replicas -> one commit, two-replica serving, outcome
   binding, monotonic head). With a disposable PostgreSQL 14.20 cluster
-  the suite is **982 passed, 3 skipped**; see
+  the suite is **986 passed, 3 skipped**; see
   `evidence/v332/qualification.json`.
 - Custody revocations/supersessions can publish the new witnessed head
   automatically via `EvidenceCustodyStore.bind_on_change`.

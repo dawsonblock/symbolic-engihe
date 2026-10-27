@@ -35,6 +35,7 @@ criteria. Status is based on the tests actually executed on this tree.
 
 | Control | Test | Status |
 |---|---|---|
+| Control-plane schema version recorded/refused/upgraded | `test_schema_version_is_recorded`, `test_newer_schema_is_refused`, `test_older_schema_is_upgraded` | PASS |
 | Checkpoint signer rotation requires a new epoch | `test_new_signer_requires_new_epoch` | PASS |
 | Expired v3 API token rejected | `test_expired_api_key_is_rejected` | PASS |
 | Readiness reports authority/custody/control plane | `test_health_reports_v3_readiness` | PASS |
@@ -47,8 +48,7 @@ criteria. Status is based on the tests actually executed on this tree.
 
 | Area | Status | Reason |
 |---|---|---|
-| Journal crash between checkpoint append and head advance | PARTIAL | `AuthorityJournal.recover()` is tested; the control-plane head re-seed path is tested, but no injected crash test exists |
-| Full multi-host PostgreSQL deployment | PARTIAL | A disposable PostgreSQL 14.20 cluster passed; real network, roles and TLS are deployment-specific |
+| Full multi-host PostgreSQL deployment | PARTIAL | A disposable PostgreSQL 14.20 cluster and the CI service job pass; real network, roles and TLS are deployment-specific |
 | Evaluator escape / containment validation | OPEN | M6; no OS-validated Linux sandbox and no adversarial escape suite |
 | SLSA level conformance | PARTIAL | Signed in-toto/SLSA-shaped statement implemented; not a SLSA level claim |
 | Real-agent efficacy | OPEN | M9; external agent quota blocked the prior run |

@@ -11,6 +11,7 @@ import http.client
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -150,6 +151,66 @@ class ReplayTests(_Base):
             execution_identity=self.fixture.identity())
         self.assertEqual(guidance.decision, "abstain")
         self.assertEqual(guidance.reason_code, "catalog_unavailable")
+
+    def test_schema_version_is_recorded(self):
+        plane = SqliteControlPlane(self.root / "schema.db")
+        self.addCleanup(plane.close)
+        self.assertEqual(plane.schema_version(), 1)
+
+    def test_newer_schema_is_refused(self):
+        path = self.root / "schema-new.db"
+        plane = SqliteControlPlane(path)
+        plane.close()
+        con = sqlite3.connect(str(path))
+        con.execute("UPDATE schema_meta SET version=99 WHERE singleton=1")
+        con.commit()
+        con.close()
+        with self.assertRaisesRegex(ControlPlaneError,
+                                    "control_plane_schema_too_new"):
+            SqliteControlPlane(path)
+
+    def test_older_schema_is_upgraded(self):
+        path = self.root / "schema-old.db"
+        plane = SqliteControlPlane(path)
+        plane.close()
+        con = sqlite3.connect(str(path))
+        con.execute("UPDATE schema_meta SET version=0 WHERE singleton=1")
+        con.commit()
+        con.close()
+        plane = SqliteControlPlane(path)
+        self.addCleanup(plane.close)
+        self.assertEqual(plane.schema_version(), 1)
+
+    def test_checkpoint_ahead_of_head_abstains_then_recovers(self):
+        latest = self.fixture.store.get_latest()
+        checkpoint = sign_checkpoint(
+            self.fixture.authority_seed, schema_version=1,
+            checkpoint_id="cp-crash-window", authority_epoch=1,
+            sequence=latest.sequence + 1,
+            journal_sequence=latest.journal_sequence,
+            previous_digest=latest.digest, journal_head=latest.journal_head,
+            candidate_revision_digest=latest.candidate_revision_digest,
+            candidate_count=latest.candidate_count,
+            qualified_count=latest.qualified_count,
+            revocation_head=latest.revocation_head,
+            supersession_head=latest.supersession_head,
+            custody_entry_count=latest.custody_entry_count,
+            issuer_identity="authority",
+            policy_version="sis-v3.3.1-authority-policy",
+            issued_at="2026-10-27T00:00:00Z",
+            signer_key_id=self.fixture.authority_key)
+        self.fixture.store.compare_and_append(latest.sequence, checkpoint)
+        gateway = self.gateway()
+        identity = self.fixture.identity()
+        first = gateway.serve(_request(), repository_id="repo-1",
+                              execution_identity=identity)
+        self.assertEqual(first.decision, "abstain")
+        self.assertEqual(first.reason_code, "catalog_unavailable")
+        self.fixture.registry.seed_authority_head(
+            self.fixture.control_plane)
+        second = gateway.serve(_request(), repository_id="repo-1",
+                               execution_identity=identity)
+        self.assertEqual(second.decision, "advisory")
 
     def test_fresh_control_plane_seeds_from_checkpoint(self):
         # Simulate a v3.3.1 -> v3.3.2 upgrade: the checkpoint store is

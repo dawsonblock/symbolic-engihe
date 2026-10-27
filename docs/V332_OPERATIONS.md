@@ -25,8 +25,9 @@ controls. It does not qualify evaluator isolation (M6) or efficacy (M9).
 
 ## First serve after upgrading from 3.3.1
 
-The control-plane schema is created automatically. The `authority_head`
-row is seeded from the latest signed checkpoint after the local
+The control-plane schema is created automatically and records
+`SCHEMA_VERSION` in `schema_meta`; a database from a newer release is
+refused. The `authority_head` row is seeded from the latest signed checkpoint after the local
 candidate and custody state verify against it. If the local state is
 ahead of the checkpoint (an interrupted publication), the serve abstains;
 run `registry.publish_pending()` to publish the pending state, then retry.

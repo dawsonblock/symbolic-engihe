@@ -126,8 +126,8 @@ without starting the process-global CLI loop.
 
 Passing:
 
-- Full suite: **977 passed, 8 skipped** (v3.3.1: 926 passed, 3 skipped).
-- 46 security regression tests in
+- Full suite: **981 passed, 8 skipped** (v3.3.1: 926 passed, 3 skipped).
+- 50 security regression tests in
   `tests/v3/test_v332_security_regressions.py` and 5 provenance
   tests in `tests/v3/test_v332_release_provenance.py`.
 - Five-defect reproduction: 5 open on v3.3.1, 0 open on this tree.
@@ -159,7 +159,7 @@ Not qualified:
   PostgreSQL 14.20 cluster: duplicate nonce rejection, four concurrent
   replicas producing exactly one commit, two replicas sharing one head
   producing one advisory decision, outcome binding and head monotonicity.
-  The full suite with `SIS_POSTGRES_DSN` set is **982 passed, 3 skipped**
+  The full suite with `SIS_POSTGRES_DSN` set is **986 passed, 3 skipped**
   (see `evidence/v332/qualification.json`). A real multi-host deployment
   must still be qualified against its own server, roles and network
   policy; a local cluster is not that qualification.

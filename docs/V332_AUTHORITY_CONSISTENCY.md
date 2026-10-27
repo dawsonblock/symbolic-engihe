@@ -126,7 +126,9 @@ without starting the process-global CLI loop.
 
 Passing:
 
-- Full suite: **981 passed, 8 skipped** (v3.3.1: 926 passed, 3 skipped).
+- Full suite: **981 passed, 8 skipped** at the original M0–M5
+  qualification (v3.3.1: 926 passed, 3 skipped). The review added five
+  release-tooling tests, so the current tree is **986 passed, 8 skipped**.
 - 50 security regression tests in
   `tests/v3/test_v332_security_regressions.py` and 5 provenance
   tests in `tests/v3/test_v332_release_provenance.py`.
@@ -142,7 +144,7 @@ Not qualified:
   rotation, a tested disaster-recovery drill and SLSA *level*
   conformance remain open. The canonical ZIP, regenerated inventory,
   dependency lock and signed in-toto/SLSA-shaped provenance are in
-  place: `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (374 files)
+  place: `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (375 files)
   verifies against `RELEASE_SHA256.json`, and the provenance envelope
   verifies against the archive. The exact archive digest is recorded in
   `release/release_manifest.json`. The signing key is labelled
@@ -151,7 +153,7 @@ Not qualified:
 - **M9 efficacy** — no real-agent benchmark improvement is claimed. The
   prior Codex quota block is unchanged; see
   `docs/V332_EFFICACY_STATUS.md`.
-- **Release artifact** — `tools/verify_release.py .` reports 374 files
+- **Release artifact** — `tools/verify_release.py .` reports 375 files
   matched; the ZIP and DSSE provenance both verify. CI now has a
   PostgreSQL job.
 

@@ -17,6 +17,8 @@
   reports development-tree drift instead of failing every post-release push.
 - Documentation: README, release notes, threat model, operations wiring,
   architecture and the top-level doc cross-references now describe v3.3.2.
+- Suite after the review: **986 passed, 8 skipped**; the release bundle is
+  re-bound to this tree.
 
 ## 2026-10-27 — SIS v3.3.2 authority consistency (M0–M5)
 
@@ -81,7 +83,7 @@
   and a PostgreSQL CI job.
 - Added `docs/V332_OPERATIONS.md`, `docs/V332_ACCEPTANCE_MATRIX.md` and
   `docs/V332_EFFICACY_STATUS.md`.
-- Regenerated `RELEASE_SHA256.json` (374 files) and built
+- Regenerated `RELEASE_SHA256.json` (375 files) and built
   `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip`; the ZIP and its signed
   DSSE provenance verify. The provenance key is labelled
   `qualification-only`, not a production trust root.

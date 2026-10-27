@@ -22,7 +22,8 @@ This is the current release. The detailed engineering record is in
 
 ## Test evidence
 
-- Default suite: **981 passed, 8 skipped**.
+- Default suite: **986 passed, 8 skipped** (981 at the original M0–M5
+  qualification; five release-tooling tests were added in review).
 - PostgreSQL suite (`SIS_POSTGRES_DSN`): **986 passed, 3 skipped**.
 - Five v3.3.1 defects reproduced on the baseline and closed on this tree.
 
@@ -37,7 +38,7 @@ This is the current release. The detailed engineering record is in
 
 ## Artifacts
 
-- `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (374 files), verified against
+- `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (375 files), verified against
   `RELEASE_SHA256.json`.
 - `release/provenance.dsse.json`, signed with a `qualification-only` key.
 

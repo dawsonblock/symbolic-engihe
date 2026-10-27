@@ -1,5 +1,9 @@
 # Prioritized technical roadmap
 
+> The v3 gates and remaining work are tracked in `docs/v3/G1_GATE_REPORT.md`
+> through `G4_GATE_REPORT.md`, `docs/v3/V32_GAP_MAP.md`,
+> `docs/V332_ACCEPTANCE_MATRIX.md` and `docs/v3/V33_LIMITATIONS.md`.
+
 ## v1.5 implemented (but not externally qualified)
 
 - Read-only, manually schema-mapped source-rule transfer across task vocabularies.

@@ -1,5 +1,9 @@
 # Reproducible evaluation and holdout discipline
 
+> For v3 evaluation certificates, the sealed evaluator protocol and the
+> real-agent gate, see `docs/EVALUATION_CERTIFICATES.md`,
+> `docs/EVALUATION_PROTOCOL.md` and `docs/V332_EFFICACY_STATUS.md`.
+
 The bundled fixture tests demonstrate code behavior only. Passing them does not show an advantage over a baseline LLM, much less human-like learning.
 
 ## Benchmark protocol (recommended)

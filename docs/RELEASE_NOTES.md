@@ -1,4 +1,49 @@
-# SIS v3.3.1 — Authority Closure and Governed Skill Learning
+# SIS v3.3.2 — Authority Consistency & Runtime Closure
+
+Status: **IMPLEMENTED_NOT_EFFICACY_QUALIFIED**
+
+This is the current release. The detailed engineering record is in
+`docs/V332_AUTHORITY_CONSISTENCY.md`; deployment and recovery are in
+`docs/V332_OPERATIONS.md`; executed acceptance scenarios are in
+`docs/V332_ACCEPTANCE_MATRIX.md`.
+
+## What changed
+
+- Shared SQLite/PostgreSQL control plane: atomic nonce consumption and
+  decision receipts across replicas.
+- Authority checkpoints witness revocation, supersession and custody entry
+  counts; restoring custody history fails closed.
+- Authenticated v3 serving boundary (`/v3/guidance`, `/v3/outcome`), legacy
+  `/v1` isolation, readiness reporting, and exact outcome binding.
+- Production isolation gate: `LocalSubprocessExecutor(production=True)`
+  refuses to run without `verified_isolation=True`.
+- Signed SLSA-shaped release provenance, a dependency lock, and a PostgreSQL
+  CI job.
+
+## Test evidence
+
+- Default suite: **981 passed, 8 skipped**.
+- PostgreSQL suite (`SIS_POSTGRES_DSN`): **986 passed, 3 skipped**.
+- Five v3.3.1 defects reproduced on the baseline and closed on this tree.
+
+## Not qualified
+
+- Evaluator isolation (M6): the seatbelt/subprocess backend is not a validated
+  OS boundary; hostile-code execution stays disabled in production.
+- Real-agent efficacy (M9): the external Codex quota blocked the preregistered
+  run; no improvement is claimed.
+- Full multi-host PostgreSQL deployment, a disaster-recovery drill, and SLSA
+  *level* conformance.
+
+## Artifacts
+
+- `release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip` (374 files), verified against
+  `RELEASE_SHA256.json`.
+- `release/provenance.dsse.json`, signed with a `qualification-only` key.
+
+---
+
+# SIS v3.3.1 — Authority Closure and Governed Skill Learning (previous release)
 
 ## Release classification
 

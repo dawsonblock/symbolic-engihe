@@ -1,5 +1,9 @@
 # Security model and known risks
 
+> This document covers the legacy v1/v2 registry and HTTP surface. For the v3
+> authority, custody, execution-identity and serving threat model, see
+> `docs/SECURITY_THREAT_MODEL.md`.
+
 This is a **local-first research prototype**, not an audited hardened multi-tenant server.
 
 ## Enforced

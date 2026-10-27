@@ -1,4 +1,71 @@
-# Symbolic Induction Engine (SIS) v2.4.0
+# Symbolic Induction Engine (SIS) v3.3.2
+
+**v3.3.2 — authority consistency and runtime closure (M0–M5).** SIS is a
+model-independent, bounded symbolic induction service. The v3 stack adds a
+governed candidate plane, signed authority checkpoints, evidence custody,
+authenticated execution identities, and a durable SQLite/PostgreSQL control
+plane for cross-replica serving. The core package has **zero required runtime
+dependencies** (Python 3.10+).
+
+**Status: `IMPLEMENTED_NOT_EFFICACY_QUALIFIED`.** The M0–M5 authority controls
+are implemented and covered by adversarial tests. Evaluator isolation (M6) and
+real-agent efficacy (M9) are **not** qualified, and no improvement in real LLM
+performance is claimed. See [the efficacy status](docs/V332_EFFICACY_STATUS.md).
+
+## What v3.3.2 adds
+
+- **Shared control plane** (`sis.v3.control_plane`): a signed session nonce is
+  consumed and the decision receipt committed in one transaction, so two
+  replicas racing with the same identity produce exactly one authorization.
+- **Witnessed custody**: authority checkpoints sign `revocation_head`,
+  `supersession_head` and `custody_entry_count`; production serving rejects a
+  restored pre-revocation custody directory or a deleted revocation log.
+- **Authenticated serving boundary** (`sis.v3.serving_service`):
+  bearer-authenticated `/v3/guidance` and `/v3/outcome`, with legacy `/v1`
+  learning routes isolated by default (`SIS_V3_ONLY=1` forces isolation).
+- **Runtime closure**: readiness reporting, exact outcome binding, signed
+  dependency links, production isolation gating, and signed SLSA-shaped release
+  provenance.
+
+## Install and verify
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate              # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'      # pytest 8.4.2; the runtime has no dependencies
+python -m pytest tests/ -q
+python tools/smoke_integration.py
+```
+
+The legacy v2 CLI remains available:
+
+```bash
+sis --version
+sis --db ./knowledge.sqlite3 train examples/arithmetic_study.json
+sis --db ./knowledge.sqlite3 predict examples/predict.json
+sis --db ./knowledge.sqlite3 audit
+```
+
+The v3 serving boundary is constructed in application code
+(`create_server(..., v3_service=...)`); the `sis serve` CLI command exposes only
+the legacy `/v1` surface. See [operations](docs/V332_OPERATIONS.md) for the
+wiring and deployment profiles.
+
+## Documentation map
+
+| Document | Contents |
+|---|---|
+| [CHANGELOG.md](CHANGELOG.md) | Release-by-release change history |
+| [docs/V332_AUTHORITY_CONSISTENCY.md](docs/V332_AUTHORITY_CONSISTENCY.md) | v3.3.2 defects, fixes and evidence |
+| [docs/V332_OPERATIONS.md](docs/V332_OPERATIONS.md) | Deployment, recovery and key rotation |
+| [docs/V332_ACCEPTANCE_MATRIX.md](docs/V332_ACCEPTANCE_MATRIX.md) | Executed acceptance scenarios |
+| [docs/V332_EFFICACY_STATUS.md](docs/V332_EFFICACY_STATUS.md) | What is and is not demonstrated |
+| [docs/v3/ARCHITECTURE_V3_3.md](docs/v3/ARCHITECTURE_V3_3.md) | v3 subsystem design |
+| [docs/SECURITY_THREAT_MODEL.md](docs/SECURITY_THREAT_MODEL.md) | Adversaries, mitigations and residual risk |
+
+---
+
+# Legacy v2.4.0 documentation
 
 **v2.4.0:** Adds a narrowly scoped **pure Python coding-repair recipe learner**.
 It captures proposed arithmetic-operator AST repairs, interprets before/after
@@ -151,8 +218,7 @@ An installable, **model-agnostic** symbolic reasoning service. It discovers *bou
 ## 1. Setup — Python 3.10+
 
 ```bash
-unzip symbolic-induction-engine-v2.0.0-FULL-UPGRADED.zip
-cd symbolic-induction-engine-v2.0.0
+# From a checkout of this repository:
 python3 -m venv .venv
 source .venv/bin/activate              # macOS / Linux
 # Windows PowerShell: .venv\Scripts\Activate.ps1
@@ -292,7 +358,7 @@ Only bounded integers, booleans, short strings, and fixed-length lists of these 
 
 See `docs/LIMITATIONS.md` and `docs/ROADMAP.md` before extending this to untrusted users or consequential decisions.
 
-## 8. v1.2: Secure promotion and out-of-band audit checkpoint
+## 9. v1.2: Secure promotion and out-of-band audit checkpoint
 
 `Registry.promote(result)` now refuses promotion unless the original training and
 validation examples and matching induction options are passed as keyword arguments.
@@ -324,7 +390,7 @@ external custody. The checkpoint file contains no raw training examples.
 per-item predictions or abstentions; invalid requests fail before evaluation.
 The model tool bridge remains deliberately read-only.
 
-## 9. v1.3: bounded admission firewall and operator key
+## 10. v1.3: bounded admission firewall and operator key
 
 For an authenticated loopback server:
 
@@ -352,7 +418,7 @@ transitions and immutable fields. It catches some internally coherent forgeries,
 **not** full-history rewriting by someone who can rewrite the database and
 its independently unanchored audit. Preserve operator-held checkpoints.
 
-## 10. v1.4: one-use evaluator-controlled holdout
+## 11. v1.4: one-use evaluator-controlled holdout
 
 For a **local synthetic demonstration**, run `python3 tools/generate_eval_demo.py /tmp/sis-eval-demo` to generate an example private dataset. Do not mistake generated
 examples or locally controlled secrets for independent evaluation.

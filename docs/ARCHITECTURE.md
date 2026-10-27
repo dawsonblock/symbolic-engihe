@@ -1,5 +1,10 @@
 # Technical design
 
+> This document describes the v1/v2 rule-induction core. The v3 governed
+> learning and serving stack is documented in
+> `docs/v3/ARCHITECTURE_V3_3.md`, `docs/V331_ARCHITECTURE.md` and
+> `docs/V332_AUTHORITY_CONSISTENCY.md`.
+
 ## Trust and execution boundaries
 
 Input examples (untrusted data) -> shape/type validation -> bounded grammar enumeration -> **interpreter-only** execution -> training fit -> rival disagreement probes -> untouched supplied validation -> evidence-gated `Registry.promote()` -> rule retrieval -> predictions.

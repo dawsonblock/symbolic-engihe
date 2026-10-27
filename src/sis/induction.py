@@ -1,8 +1,7 @@
 """Bounded enumeration + falsification probes; never confuse fit with proof."""
-from dataclasses import dataclass, asdict
 from itertools import product
 from .errors import InvalidInput
-from .validation import check_examples, check_inputs, input_schema, namespace_name, canonical, digest
+from .validation import check_examples, input_schema, namespace_name, canonical, digest
 from .expression import validate_ast, evaluate, cost, fingerprint
 
 
@@ -21,7 +20,6 @@ def candidates(train, max_candidates=12000):
     leaves = leaf_expressions(train[0]["inputs"])
     numeric = [expr for expr, v in leaves if type(v) is int]
     string = [expr for expr, v in leaves if type(v) is str]
-    bools = [expr for expr, v in leaves if type(v) is bool]
     seen = set()
     count = 0
 
@@ -166,7 +164,7 @@ def induce(train, validation=None, *, namespace="default", max_candidates=12000,
         raise InvalidInput("use_z3 must be boolean")
     if use_z3:
         try:
-            import z3
+            import z3  # noqa: F401 - availability probe; smt.py imports it
         except ImportError as exc:
             raise InvalidInput("Z3 requested but unavailable: pip install .[z3]") from exc
     train = check_examples(train, minimum=3)

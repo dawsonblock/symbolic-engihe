@@ -38,7 +38,7 @@
   ],
   "not_qualified": [
     "evaluator isolation (M6)",
-    "migrations, key rotation, disaster recovery, canonical ZIP and SLSA provenance (M7-M8)",
+    "full automated key rotation, a tested disaster-recovery drill, and SLSA level conformance (M7-M8)",
     "real-agent efficacy (M9)",
     "multi-host PostgreSQL deployment (only a local disposable cluster was exercised)"
   ]

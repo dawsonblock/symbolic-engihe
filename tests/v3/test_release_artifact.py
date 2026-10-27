@@ -156,6 +156,24 @@ class CanonicalArchiveBindingTests(unittest.TestCase):
         manifest = json.loads((self.root / "RELEASE_SHA256.json").read_text())
         self.assertFalse([r for r in manifest["files"] if r.startswith("release/")])
 
+    def test_archive_uses_explicit_project_dir(self):
+        import build_canonical_zip
+        report = build_canonical_zip.build(
+            self.root, self.target, require_clean=False,
+            project="SIS-v9.9.9-TEST")
+        self.assertEqual(report["project"], "SIS-v9.9.9-TEST")
+        with zipfile.ZipFile(self.target) as z:
+            self.assertTrue(all(
+                name.startswith("SIS-v9.9.9-TEST/")
+                for name in z.namelist()))
+
+    def test_archive_rejects_unsafe_project_dir(self):
+        import build_canonical_zip
+        with self.assertRaisesRegex(ValueError, "safe path component"):
+            build_canonical_zip.build(
+                self.root, self.target, require_clean=False,
+                project="../escape")
+
     def test_archive_is_bound_to_source_tree(self):
         self._build()
         import verify_release

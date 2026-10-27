@@ -1,3 +1,23 @@
+## Unreleased — review corrections
+
+- The CLI/HTTP smoke test now reads `sis.__version__` instead of asserting
+  the stale `3.3.1` string.
+- SQLite `-wal`, `-shm` and `-journal` sidecars are excluded from the
+  release inventory and `.gitignore`, so running the CLI in the repository
+  root no longer makes `verify_release.py` fail.
+- `sis --version` reports the package version.
+- Release packaging derives its default archive name from the package
+  version instead of a hardcoded v3.3.1 label.
+- Provenance verification accepts either a 64-hex key or the shipped
+  `provenance_public_key.hex` file.
+- The v3 contract schemas are included in the wheel and sdist.
+- Release archives use a stable archive-internal project directory
+  (`SIS-v<version>-...`) instead of the local checkout directory name.
+- CI enforces the exact release inventory only on release commits and
+  reports development-tree drift instead of failing every post-release push.
+- Documentation: README, release notes, threat model, operations wiring,
+  architecture and the top-level doc cross-references now describe v3.3.2.
+
 ## 2026-10-27 — SIS v3.3.2 authority consistency (M0–M5)
 
 - Enforced execution identity in production: a gateway constructed with

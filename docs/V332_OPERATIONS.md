@@ -23,6 +23,38 @@ controls. It does not qualify evaluator isolation (M6) or efficacy (M9).
   `/v1` routes unless `SIS_ALLOW_LEGACY_V1=1`.
 - Pin dependencies with `requirements-lock.txt`.
 
+## Wiring the service
+
+The `sis serve` CLI command starts only the legacy `/v1` learning surface. The
+v3 production boundary must be constructed in application code and bound with
+`create_server(..., v3_service=...)`:
+
+```python
+from sis.server import create_server
+from sis.v3.serving import GovernedServingGateway
+from sis.v3.serving_service import V3ServingService
+
+gateway = GovernedServingGateway(
+    registry,                          # CandidateRegistry, production=True
+    repository_registry=repositories,  # RepositoryRegistry
+    production=True,
+    execution_identity_authority=identities,  # ExecutionIdentityAuthority
+    control_plane=control_plane,       # SqliteControlPlane or PostgresControlPlane
+)
+service = V3ServingService(
+    gateway, api_keys={token: {"requester": "agent-1"}})
+httpd = create_server("127.0.0.1", 8765, v3_service=service)
+httpd.serve_forever()
+```
+
+`registry`, `repositories`, `identities` and `control_plane` are the components
+described in this document; the snippet is a wiring sketch, not a complete
+deployment. Constructing the gateway with `production=True` requires a shared
+control plane and rejects a disabled execution identity; each serve additionally
+requires a checkpointed registry, a production qualification policy and evidence
+custody. Bind `custody.bind_on_change(journal.publish)` before serving so
+revocations are witnessed immediately.
+
 ## First serve after upgrading from 3.3.1
 
 The control-plane schema is created automatically and records

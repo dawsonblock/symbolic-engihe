@@ -4,7 +4,7 @@
 One command produces every artifact under ``release/`` from the current
 source tree:
 
-    SIS-v3.3.1-AUTHORITY-CLOSURE.zip   archive (single project dir)
+    SIS-v<version>-<label>.zip       archive (single project dir)
     RELEASE_SHA256.json                archive-internal manifest (repo root)
     release/release_manifest.json      release identity + source commit
     release/source_inventory.json      per-file hash + size
@@ -22,12 +22,23 @@ import argparse
 import compileall
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+def _package_version(root: Path) -> str:
+    """Read the version without importing the package under test."""
+    source = (root / "src" / "sis" / "__init__.py").read_text(encoding="utf8")
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', source)
+    if match is None:
+        raise SystemExit("cannot determine the package version")
+    return match.group(1)
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import provenance
@@ -137,7 +148,8 @@ def package(root: Path, release: str, *, status: str, passed: int,
         json.dumps(build_record, indent=2, sort_keys=True) + "\n")
 
     started = _utcnow()
-    report = build(root, archive, require_clean=not allow_dirty)
+    report = build(root, archive, require_clean=not allow_dirty,
+                   project=release)
     statement = provenance.build_statement(
         archive_name=archive.name,
         archive_sha256=report["zip_sha256"],
@@ -198,7 +210,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
     with tempfile.TemporaryDirectory(prefix="sis-release-") as temp:
         with zipfile.ZipFile(archive) as z:
             z.extractall(temp)
-        tree = Path(temp) / root.name
+        tree = Path(temp) / report["project"]
         tree_report = verify_tree(tree)
         fresh = fresh_extraction_checks(tree)
         verification = {
@@ -238,7 +250,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
             "path": f"release/{archive.name}",
             "sha256": report["zip_sha256"],
             "source_files": report["source_files"],
-            "inner_project_dir": root.name,
+            "inner_project_dir": report["project"],
         },
         "docs": _docs(root),
         "evidence": _evidence(root),
@@ -271,7 +283,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path,
                         default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--release", default="SIS-v3.3.1-AUTHORITY-CLOSURE")
+    parser.add_argument("--release", default=None,
+                        help="release archive name without .zip; defaults to"
+                             " SIS-v<package version>")
     parser.add_argument("--status", required=True)
     parser.add_argument("--passed", type=int, required=True)
     parser.add_argument("--skipped", type=int, default=0)
@@ -284,6 +298,7 @@ def main() -> int:
                         default="qualification-only",
                         help="qualification-only or production")
     args = parser.parse_args()
+    release = args.release or f"SIS-v{_package_version(args.root)}"
     seed = None
     if args.provenance_key is not None:
         raw = args.provenance_key.read_text().strip()
@@ -294,7 +309,7 @@ def main() -> int:
         if len(seed) != 32:
             raise SystemExit("provenance key must be 32 bytes")
     result = package(
-        args.root, args.release, status=args.status,
+        args.root, release, status=args.status,
         passed=args.passed, skipped=args.skipped, failed=args.failed,
         allow_dirty=args.allow_dirty,
         provenance_seed=seed,

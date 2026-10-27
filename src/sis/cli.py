@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from . import __version__
 from .errors import SISError, InvalidInput
 from .service import Service
 from .server import serve
@@ -19,6 +20,7 @@ def load(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="sis", description="Evidence-gated symbolic rule induction")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--db", default=os.getenv("SIS_DB", "sis.sqlite3"), help="SQLite rule registry")
     commands = parser.add_subparsers(dest="command", required=True)
     train = commands.add_parser("train", help="induce and optionally promote a rule from a study JSON file")
@@ -200,7 +202,7 @@ def main(argv=None):
     commands.add_parser('code-audit',help='verify local code recipe/audit hash consistency')
     code_list=commands.add_parser('code-list',help='list registered code recipes')
     code_list.add_argument('--namespace',default='default')
-    waf=commands.add_parser('workflow-audit',help='check local workflow snapshot and audit consistency')
+    commands.add_parser('workflow-audit',help='check local workflow snapshot and audit consistency')
     wlist=commands.add_parser('workflow-list',help='list known tabular workflows')
     wlist.add_argument('--namespace',default='default')
     args = parser.parse_args(argv)

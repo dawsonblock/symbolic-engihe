@@ -1,5 +1,12 @@
 # SIS v3.3.1 Architecture — Authority Closure
 
+> **v3.3.2 supersedes this document.** The current release adds a shared
+> SQLite/PostgreSQL control plane (`sis.v3.control_plane`) and an authenticated
+> serving boundary (`sis.v3.serving_service`), and signs custody heads into
+> authority checkpoints. See `docs/V332_AUTHORITY_CONSISTENCY.md` for the
+> changes and `docs/V332_OPERATIONS.md` for deployment. The layers below remain
+> accurate except where those additions change the serving path.
+
 SIS v3.3.1 retains the v3.3 subsystems and closes the authority,
 evaluation, identity, custody, ingestion and sandbox gaps that prevented
 trustworthy promotion. It is a correctness/security release, not a new
@@ -53,6 +60,21 @@ Learning pipeline ──► CandidateV1 ──► governed evaluation ──► 
   probe, outcome taxonomy.
 - `sis.v3.learning_qualification` — five-arm campaign analysis,
   McNemar/Newcombe statistics, real-agent gate.
+
+## Modules added in v3.3.2
+
+- `sis.v3.control_plane` — durable `session_nonce`,
+  `authorization_receipt`, `guidance_outcome` and `authority_head` tables
+  with SQLite and PostgreSQL profiles; one transaction consumes the nonce
+  and commits the decision receipt.
+- `sis.v3.serving_service` — bearer-authenticated `/v3/guidance` and
+  `/v3/outcome` adapter over `GovernedServingGateway`.
+- `sis.v3.checkpoints` additions — custody heads and entry count signed
+  into `AuthorityCheckpointV1`, with v3.3.1 wire compatibility.
+- `sis.v3.evidence_custody` additions — signed dependency links and
+  active-path cycle detection with memoization.
+- `tools/provenance.py`, `tools/verify_provenance.py` — DSSE-signed
+  SLSA-shaped release provenance.
 
 ## Serving flow
 

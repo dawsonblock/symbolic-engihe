@@ -26,5 +26,8 @@ sis = "sis.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"sis.v3" = ["schemas/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

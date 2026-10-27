@@ -152,7 +152,12 @@ def _handler_class(*, key, admin_key, service, v3_only, v3_service):
                         data = json.loads(raw)
                     except (ValueError, UnicodeDecodeError):
                         return self.respond(400, {"error": "invalid JSON"})
-                    code, body = v3_service.handle(path, data, self.headers)
+                    try:
+                        code, body = v3_service.handle(path, data, self.headers)
+                    except Exception:  # noqa: BLE001 - fail closed, no detail
+                        # The v3 boundary must fail closed with a response,
+                        # not a dropped connection. Never echo request data.
+                        return self.respond(500, {"error": "internal_error"})
                     return self.respond(code, body)
                 if not self.authorized():
                     return self.respond(401, {"error": "unauthorized"})

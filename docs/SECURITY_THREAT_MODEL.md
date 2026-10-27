@@ -1,4 +1,8 @@
-# Security Threat Model — SIS v3.3.1
+# Security Threat Model — SIS v3.3.2
+
+This model covers the v3.3.2 authority, custody, control-plane and serving
+boundary. The v3.3.1 baseline is preserved in `docs/V331_ARCHITECTURE.md`;
+the v3.3.2 changes and evidence are in `docs/V332_AUTHORITY_CONSISTENCY.md`.
 
 ## Assets
 
@@ -35,6 +39,10 @@
 | Flip `qualified` column | hash-chain projection drift; checkpoint candidate-revision digest |
 | Replay old journal/checkpoint | monotonic journal sequence + authority epoch |
 | Concurrent qualification/revocation | registry write lock + checkpoint CAS |
+| Replay one signed session across replicas | shared `session_nonce` uniqueness constraint; nonce and receipt committed in one transaction |
+| Revocation committed during guidance composition | witnessed snapshot revalidated before commit; the decision aborts on change |
+| Restored pre-revocation custody directory | signed revocation/supersession heads and custody entry count compared on every production serve |
+| Stale snapshot committed after a revocation | control-plane `authority_head` compare-and-commit |
 | Interrupted checkpoint publication | local-ahead detection; `recover()` republishes only if the checkpointed head is still an ancestor |
 | Unavailable checkpoint service | fail closed (`checkpoint_unavailable`) |
 | Optimizer self-promotion | operator-signed decision for exact edge; nonce consumed atomically |
@@ -64,6 +72,12 @@
 - A compromised evaluator key can issue a false certificate; the
   validator checks form and evidence, not the evaluator's honesty.
 - Pattern-based injection scanning is advisory, not proof of safety.
+- `/v3/outcome` authenticates the caller but does not yet bind the
+  requester identity to the stored authorization receipt. Recording an
+  outcome still requires the exact served digest and a matching
+  evaluator-signed receipt, so a different authenticated client cannot
+  invent a result; per-requester binding needs a control-plane schema
+  change.
 - The powered real-agent efficacy run is not executed in this release;
   no efficacy claim is made.
 

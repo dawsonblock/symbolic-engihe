@@ -1,5 +1,9 @@
 # Capability and evidence limits
 
+> These limits describe the v1/v2 rule grammar. For v3 limits — evaluator
+> isolation, real-agent efficacy and multi-host PostgreSQL — see
+> `docs/V332_EFFICACY_STATUS.md` and `docs/v3/V33_LIMITATIONS.md`.
+
 - Deterministic enumerator covers **shallow** expressions and bounded second-stage arithmetic, not universal program synthesis.
 - `if_eq` exists in the interpreter but currently enters through an optional untrusted model proposal or a manually constructed AST; there is no exhaustive conditional induction.
 - Only integers, booleans, short strings and fixed-size input lists; no vectors, images, time series, probabilities, continuous numeric fitting, or open-world relationships.

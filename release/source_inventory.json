@@ -13,8 +13,8 @@
       "sha256": "f4e9590f3ebad5ffec1d03da3db058375438693dbcd93f2738ff3ea66da17b8d"
     },
     "CHANGELOG.md": {
-      "bytes": 26018,
-      "sha256": "af8114598fab39180f1468ae0321a446c3c3ffd91c94ae689d0e6a8a375229d7"
+      "bytes": 26211,
+      "sha256": "639e49dc072e77f25e80b6f202fc8b03d5c9c31acf1c3b6d6227fe2539f6b21c"
     },
     "LICENSE": {
       "bytes": 1083,
@@ -197,8 +197,8 @@
       "sha256": "a406e4600a5004171b4955af39c7e2ac11e996f016a52e63ce130b7451c6ccc8"
     },
     "docs/V332_AUTHORITY_CONSISTENCY.md": {
-      "bytes": 7198,
-      "sha256": "4e4896d46164b0f11e165016b71b55743b264c3b100b87e16e9d71b1dd971955"
+      "bytes": 7754,
+      "sha256": "c3eabfbd24f40577e89038840fb99f23021e6f1a8045950465f7d82f9a65a7ba"
     },
     "docs/V332_EFFICACY_STATUS.md": {
       "bytes": 1349,
@@ -1499,5 +1499,5 @@
   },
   "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
   "schema_version": 1,
-  "source_commit": "a2073e9e5ddcc509eb007d1076de827c70e452be"
+  "source_commit": "b3b7bccd1bbf077b90b3c329a72f504e25607747"
 }

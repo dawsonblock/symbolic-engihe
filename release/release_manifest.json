@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "sis-v2-authority-transfer",
     "path": "release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
-    "sha256": "000e77b871d92752a1ef62ed94fae8e8e8f713e5819a526d69343570235a8a0b",
+    "sha256": "aeaf1aa629d21b40e91568d03c41c091818bfa40c4e99ab592064f20f056fa5f",
     "source_files": 374
   },
   "branch": "codex/sis-v3.3.1-authority-closure",
@@ -56,13 +56,13 @@
     "path": "release/provenance.dsse.json",
     "public_key_path": "release/provenance_public_key.hex",
     "signed": true,
-    "statement_sha256": "500292d5c0eda1fdcc58156cd8936cc441751c60225cd14431e7d6575058953a",
-    "subject_sha256": "000e77b871d92752a1ef62ed94fae8e8e8f713e5819a526d69343570235a8a0b",
+    "statement_sha256": "27d94d148c480d646a4f87123d5dfcd2e9ddcc35fb371a53991cf9460736380c",
+    "subject_sha256": "aeaf1aa629d21b40e91568d03c41c091818bfa40c4e99ab592064f20f056fa5f",
     "trust_root": "qualification-only"
   },
   "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
   "schema_version": 1,
-  "source_commit": "a2073e9e5ddcc509eb007d1076de827c70e452be",
+  "source_commit": "b3b7bccd1bbf077b90b3c329a72f504e25607747",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
   "test_result": {

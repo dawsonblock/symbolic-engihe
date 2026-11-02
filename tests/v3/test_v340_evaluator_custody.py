@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from sis.v3 import signatures
 from sis.v3.contracts import AuthorizationV2, TaskEnvelopeV1
@@ -347,6 +348,27 @@ class IsolatedRunTests(unittest.TestCase):
         outcome = self.run_once(task=bad)
         self.assertTrue(outcome.crashed)
         self.assertIsNone(outcome.receipt)
+
+    def test_the_receipt_directory_does_not_outlive_the_call(self):
+        created = []
+        real = tempfile.mkdtemp
+
+        def record(*args, **kwargs):
+            path = real(*args, **kwargs)
+            created.append(path)
+            return path
+
+        with mock.patch(
+                "sis.v3.evaluator_isolation.tempfile.mkdtemp", record):
+            outcome = self.run_once()
+        self.assertFalse(outcome.crashed, outcome.stderr_tail)
+        self.assertTrue(created)
+        self.assertFalse(Path(created[0]).exists())
+
+    def test_an_output_override_is_refused(self):
+        with self.assertRaisesRegex(IsolationError,
+                                    "extra_argv_override_refused"):
+            self.run_once(extra_argv=("--receipt-out", "/tmp/elsewhere.json"))
 
 
 if __name__ == "__main__":

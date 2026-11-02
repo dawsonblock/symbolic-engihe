@@ -21,6 +21,7 @@ its preregistered requirement is exploratory, however good it looks.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import NormalDist
@@ -30,6 +31,9 @@ from . import signatures
 from .contracts import canonical_digest, canonical_json
 
 PREREGISTRATION_DOMAIN = b"sis-v3:preregistration:1\0"
+
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_SIGNATURE = re.compile(r"^[0-9a-f]{128}$")
 
 DESIGNS = ("paired_mcnemar", "two_proportion")
 
@@ -86,6 +90,10 @@ class PowerRequirement:
                 raise StatisticsError("baseline_milli_required")
             if not 0 <= self.baseline_milli <= 1000:
                 raise StatisticsError("baseline_milli_invalid")
+            if self.baseline_milli + self.effect_milli > 1000:
+                # A treatment rate above 100% is not a design; the
+                # sample-size formula would divide by a clipped gap.
+                raise StatisticsError("treatment_rate_exceeds_one")
 
     @property
     def alpha(self) -> float:
@@ -168,6 +176,30 @@ class PreregistrationRecord:
     timestamp_authority: str
     signer_key_id: str
     signature: str
+
+    def __post_init__(self) -> None:
+        for name in ("preregistration_id", "primary_metric",
+                     "timestamp_authority", "signer_key_id"):
+            value = getattr(self, name)
+            if not (isinstance(value, str) and value):
+                raise StatisticsError(f"{name}_invalid")
+        if not (isinstance(self.protocol_digest, str)
+                and _DIGEST.fullmatch(self.protocol_digest)):
+            raise StatisticsError("protocol_digest_invalid")
+        try:
+            _instant(self.registered_at)
+        except (TypeError, ValueError) as exc:
+            raise StatisticsError("registered_at_invalid") from exc
+        if not (isinstance(self.signature, str)
+                and _SIGNATURE.fullmatch(self.signature)):
+            raise StatisticsError("signature_invalid")
+        if not isinstance(self.power, PowerRequirement):
+            raise StatisticsError("power_requirement_invalid")
+        for name in ("holdout_lineages", "training_lineages"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple) or any(
+                    not isinstance(item, str) or not item for item in value):
+                raise StatisticsError(f"{name}_invalid")
 
     @property
     def required_sample_size(self) -> int:

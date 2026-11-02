@@ -22,9 +22,9 @@ Operating instructions: `docs/v3/V340_RUNBOOK.md`.
 | PR-11 | Evidence-calibrated retrieval and negative-transfer controls | done |
 | PR-12 | Monitoring, staged rollout, reversible migration, recovery drills | done |
 
-Suite, SQLite profile: **1277 passed, 12 skipped**.
+Suite, SQLite profile: **1293 passed, 12 skipped**.
 Suite, PostgreSQL profile (`SIS_POSTGRES_DSN` set, PostgreSQL 14.20):
-**1286 passed, 3 skipped**.
+**1302 passed, 3 skipped**.
 
 Baseline was 986 passed, 8 skipped.
 
@@ -272,12 +272,14 @@ task. A request that restates independence differently is refused
 
 `tests/v3/test_v340_review_fixes.py` pins the defects found by reviewing
 the branch rather than by running it: `recheck()` string timestamp
-comparison, the missing PostgreSQL epoch lock, the evaluator signing a
-caller-supplied result, non-atomic snapshot publication, dual
-`authority_epoch` semantics, caller-asserted independence, the
-double-iterating `select()`, the unwired monitor and rollout, the
-unapplied negative-transfer guard, `--to 2` landing at 3, `?` rewriting
-inside SQL literals, and the smaller corrections listed in `CHANGELOG.md`.
+comparison, the missing PostgreSQL epoch lock (and the missing-row hole
+the lock test then found), the evaluator signing a caller-supplied
+result, non-atomic snapshot publication, dual `authority_epoch`
+semantics, caller-asserted independence, the double-iterating `select()`,
+the unwired monitor and rollout, the unapplied negative-transfer guard,
+`--to 2` landing at 3, `?` rewriting inside SQL literals, the arm-order
+key length, the stale-epoch commit the serving path never passed, and the
+smaller corrections listed in `CHANGELOG.md`.
 
 ## What is still not claimed
 

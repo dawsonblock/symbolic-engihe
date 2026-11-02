@@ -121,6 +121,29 @@ class RecheckTimestampTests(_Fixture):
         with self.assertRaisesRegex(ValueError, "authority_epoch_changed"):
             gateway.recheck(authorization.authorization_id)
 
+    def test_serving_commits_against_the_epoch_it_observed(self):
+        gateway = self.gateway(authority_ledger=self.fixture.ledger)
+        captured = []
+        real = self.fixture.ledger.authorize
+
+        def spy(request):
+            captured.append(request)
+            return real(request)
+
+        with mock.patch.object(self.fixture.ledger, "authorize", spy):
+            gateway.serve(_request(), repository_id="repo-1",
+                          execution_identity=self.fixture.identity())
+        self.assertTrue(captured)
+        self.assertEqual(captured[0].expected_epoch,
+                         self.fixture.control_plane.authority_state()["epoch"])
+
+    def test_a_configured_ledger_gates_readiness(self):
+        gateway = self.gateway(authority_ledger=self.fixture.ledger)
+        self.assertFalse(gateway.health()["ready"])
+        self.fixture.ledger.set_candidate_status("cand-1", "qualified")
+        self.fixture.ledger.publish()
+        self.assertTrue(gateway.health()["ready"])
+
 
 class LedgerSnapshotTests(unittest.TestCase):
     def setUp(self):
@@ -263,12 +286,14 @@ class AdditiveColumnTests(unittest.TestCase):
             finally:
                 con.close()
             plane = SqliteControlPlane(path)
+            plane.close()
+            con = sqlite3.connect(str(path))
             try:
                 columns = {
-                    row[1] for row in sqlite3.connect(str(path)).execute(
+                    row[1] for row in con.execute(
                         "PRAGMA table_info(evaluator_receipt_v2)")}
             finally:
-                plane.close()
+                con.close()
             self.assertIn("independence", columns)
             self.assertIn("dependency_receipt_digest", columns)
 
@@ -289,6 +314,32 @@ class EvidenceSelectionTests(unittest.TestCase):
         self.assertTrue(decisions[0].serve)
 
 
+class ServingConfigurationTests(_Fixture):
+    def test_a_ledger_without_a_control_plane_is_refused(self):
+        with self.assertRaisesRegex(
+                ValueError, "authority_ledger_requires_control_plane"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                authority_ledger=object())
+
+    def test_a_policy_without_a_provider_is_refused(self):
+        with self.assertRaisesRegex(
+                ValueError, "must_be_configured_together"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                evidence_policy=object())
+
+    def test_a_provider_without_a_policy_is_refused(self):
+        with self.assertRaisesRegex(
+                ValueError, "must_be_configured_together"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                evidence_provider=lambda candidate: None)
+
+
 class ServingRolloutTests(_Fixture):
     def test_shadow_delivers_nothing(self):
         gateway = self.gateway(rollout=evaluate({}, stage=SHADOW))
@@ -297,6 +348,18 @@ class ServingRolloutTests(_Fixture):
             execution_identity=self.fixture.identity())
         self.assertEqual(guidance.decision, "abstain")
         self.assertEqual(guidance.reason_code, "rollout_shadow")
+
+    def test_shadow_still_authenticates_the_caller(self):
+        gateway = self.gateway(rollout=evaluate({}, stage=SHADOW))
+        tampered = self.fixture.identity().to_dict()
+        tampered["signer_key_id"] = "not-trusted"
+        guidance = gateway.serve(
+            _request(), repository_id="repo-1",
+            execution_identity=tampered)
+        # Identity is checked before the stage: a shadow replica does not
+        # accept an unauthenticated caller just because it serves nothing.
+        self.assertEqual(guidance.decision, "abstain")
+        self.assertEqual(guidance.reason_code, "catalog_unavailable")
 
     def test_advisory_delivers_no_procedure_grants(self):
         gateway = self.gateway(rollout=evaluate({}, stage=ADVISORY))
@@ -378,6 +441,12 @@ class AttemptDerivationTests(_Fixture):
                 base_commit_digest="abc1234", guidance_digest="c" * 64,
                 decision="advisory", expires_at="2030-01-01T00:00:00Z")
 
+    def test_a_non_digest_identity_is_refused(self):
+        from sis.v3.evidence_binding import BindingError
+        with self.assertRaisesRegex(BindingError,
+                                    "execution_identity_digest_invalid"):
+            attempt_id_for_digest("not-a-digest")
+
 
 class MigrationTests(unittest.TestCase):
     def setUp(self):
@@ -431,6 +500,43 @@ class MigrationTests(unittest.TestCase):
                    if not path.name.endswith(("-shm", "-wal"))]
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].stat().st_mode & 0o077, 0)
+
+
+class PowerValidationTests(unittest.TestCase):
+    def test_a_treatment_rate_above_one_is_refused(self):
+        from sis.v3.statistical_power import PowerRequirement, StatisticsError
+        with self.assertRaisesRegex(StatisticsError,
+                                    "treatment_rate_exceeds_one"):
+            PowerRequirement(design="two_proportion", effect_milli=500,
+                             baseline_milli=600)
+
+    def test_a_malformed_preregistration_is_refused(self):
+        from sis.v3.statistical_power import (
+            PowerRequirement,
+            PreregistrationRecord,
+            StatisticsError,
+        )
+        fields = dict(
+            preregistration_id="pre-1",
+            protocol_digest="0" * 64,
+            primary_metric="paired solved_delta E vs A",
+            power=PowerRequirement(design="paired_mcnemar",
+                                   effect_milli=400,
+                                   discordant_milli=300),
+            holdout_lineages=(),
+            training_lineages=(),
+            registered_at="not-a-timestamp",
+            timestamp_authority="tsa",
+            signer_key_id="tsa-key",
+            signature="0" * 128,
+        )
+        with self.assertRaisesRegex(StatisticsError,
+                                    "registered_at_invalid"):
+            PreregistrationRecord(**fields)
+        with self.assertRaisesRegex(StatisticsError,
+                                    "protocol_digest_invalid"):
+            PreregistrationRecord(**{**fields, "protocol_digest": "short",
+                                     "registered_at": "2026-01-01T00:00:00Z"})
 
 
 class ReportPowerTests(unittest.TestCase):
@@ -502,6 +608,13 @@ class CustodyHardeningTests(unittest.TestCase):
             CustodianKey(role="evaluator", key_id="k",
                          public_hex="z" * 64, seed_path=self.root / "x")
 
+    def test_a_filename_outside_the_custody_root_is_refused(self):
+        from sis.v3.key_custody import EVALUATOR, CustodyError, KeyCustody
+        custody = KeyCustody(self.root / "third")
+        with self.assertRaisesRegex(CustodyError, "seed_filename_invalid"):
+            custody.create(EVALUATOR, filename="../escaped.seed")
+        self.assertFalse((self.root / "escaped.seed").exists())
+
 
 class MonitorCacheTests(unittest.TestCase):
     def test_a_scan_is_reused_until_the_cache_expires(self):
@@ -569,6 +682,22 @@ class FiveArmOrderTests(unittest.TestCase):
         orders = {campaign.arm_order(task) for task in campaign.task_ids}
         self.assertGreater(len(orders), 1)
 
+    def test_a_long_task_id_is_accepted(self):
+        # blake2b keys are capped at 64 bytes; a 256-char task id is legal.
+        campaign = plan(tasks=1)
+        long_id = "t" * 200
+        order = campaign.arm_order(long_id)
+        self.assertEqual(len(order), 5)
+
+    def test_a_nonpositive_budget_is_refused(self):
+        from sis.v3.five_arm import CampaignError, CampaignPlan
+        with self.assertRaisesRegex(CampaignError,
+                                    "max_tokens_per_task_invalid"):
+            CampaignPlan(protocol=plan().protocol,
+                         power_requirement=plan().power_requirement,
+                         task_ids=("t0",), seed=1,
+                         max_tokens_per_task=0)
+
     def test_the_report_records_the_order_and_the_metrics(self):
         campaign = plan(tasks=2)
         outcomes = [
@@ -606,12 +735,16 @@ class HealthEndpointTests(unittest.TestCase):
     def setUp(self):
         from sis.server import create_server
         self.service = mock.Mock()
-        self.service.health.return_value = {"ready": True, "checks": {}}
+        self.service.health.return_value = {
+            "ready": True, "checks": {"control_plane": {"ok": True}}}
         env = {"SIS_API_KEY": "review-token-0000000000000001",
                "SIS_ALLOW_LEGACY_V1": "0"}
         with mock.patch.dict(os.environ, env, clear=False):
+            self.temp = tempfile.TemporaryDirectory()
+            self.addCleanup(self.temp.cleanup)
             self.httpd = create_server(
-                "127.0.0.1", 0, db_path=str(ROOT / "unused.db"),
+                "127.0.0.1", 0,
+                db_path=str(Path(self.temp.name) / "legacy.db"),
                 v3_service=self.service)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(
@@ -640,9 +773,24 @@ class HealthEndpointTests(unittest.TestCase):
         status, _ = self.get("/livez")
         self.assertEqual(status, 200)
 
-    def test_readyz_answers_without_a_key(self):
-        status, _ = self.get("/readyz")
+    def test_readyz_answers_without_a_key_but_hides_the_checks(self):
+        status, body = self.get("/readyz")
         self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["ready"])
+        self.assertNotIn("checks", payload)
+
+    def test_readyz_shows_the_checks_to_an_authenticated_operator(self):
+        import http.client
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.port, timeout=8)
+        connection.request(
+            "GET", "/readyz",
+            headers={"X-SIS-Key": "review-token-0000000000000001"})
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        connection.close()
+        self.assertIn("checks", payload)
 
     def test_other_routes_still_require_a_key(self):
         status, _ = self.get("/health")

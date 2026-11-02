@@ -1,6 +1,7 @@
 """PR-12: monitoring, staged rollout, migrations and recovery drills."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -120,6 +121,27 @@ class MonitorTests(unittest.TestCase):
         codes = [f["code"] for f in report["findings"]]
         self.assertIn("custody_permissions_too_open", codes)
         self.assertFalse(report["ok"])
+
+    def test_a_tampered_snapshot_is_critical(self):
+        self.ledger.set_candidate_status("cand-1", "qualified")
+        self.ledger.publish()
+        con = sqlite3.connect(str(self.plane.path))
+        try:
+            epoch, record = con.execute(
+                "SELECT epoch, record_json FROM authority_snapshot_v2"
+            ).fetchone()
+            value = json.loads(record)
+            value["subject_count"] = value["subject_count"] + 1
+            con.execute(
+                "UPDATE authority_snapshot_v2 SET record_json=? WHERE epoch=?",
+                (json.dumps(value), epoch))
+            con.commit()
+        finally:
+            con.close()
+        report = self.monitor().scan()
+        codes = [f["code"] for f in report["findings"]]
+        self.assertIn("ledger_snapshot_unverified", codes)
+        self.assertFalse(report["serving_allowed"])
 
     def test_a_healthy_deployment_allows_serving(self):
         self.ledger.set_candidate_status("cand-1", "qualified")

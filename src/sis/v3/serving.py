@@ -135,6 +135,15 @@ class GovernedServingGateway:
             # protection. Production must share the nonce constraint.
             raise ValueError("production_requires_control_plane")
         self._control_plane = control_plane
+        if authority_ledger is not None and control_plane is None:
+            # The ledger commits through the control plane; without one
+            # it would never be consulted, so the wiring is a mistake.
+            raise ValueError("authority_ledger_requires_control_plane")
+        if (evidence_policy is None) != (evidence_provider is None):
+            # A policy with no evidence or evidence with no policy is a
+            # silently disabled control, not a default.
+            raise ValueError(
+                "evidence_policy_and_provider_must_be_configured_together")
         self._binding_authority = binding_authority
         self._ledger = authority_ledger
         self._evidence_policy = evidence_policy
@@ -256,13 +265,9 @@ class GovernedServingGateway:
                         "Guidance serving is disabled by the operator.",))
                     self._emit(served_map, out)
                     return out
-            if self._rollout is not None and not self._rollout.may_serve():
-                # Shadow observes and records; it never delivers guidance.
-                served_map["rollout_stage"] = self._rollout.stage
-                out = _abstain("rollout_shadow", (
-                    "Guidance is in the shadow stage and is not delivered.",))
-                self._emit(served_map, out)
-                return out
+                # The epoch this decision observed. The commit refuses if
+                # the ledger moved before it (authority_epoch_changed).
+                served_map["observed_epoch"] = ledger_state.get("epoch")
             identity_result = None
             if self._require_identity or execution_identity is not None:
                 if self._identity_authority is None:
@@ -289,6 +294,15 @@ class GovernedServingGateway:
                         identity_result.identity.session_nonce)
                 served_map["execution_identity"] = \
                     identity_result.identity.digest
+            if self._rollout is not None and not self._rollout.may_serve():
+                # Shadow observes and records, and never delivers. The
+                # identity is verified first so the audit record says who
+                # was asking, not just that something was withheld.
+                served_map["rollout_stage"] = self._rollout.stage
+                out = _abstain("rollout_shadow", (
+                    "Guidance is in the shadow stage and is not delivered.",))
+                self._emit(served_map, out)
+                return out
             if identity_result is not None:
                 resolved = identity_result.repository_identity.registry_id
             else:
@@ -474,6 +488,18 @@ class GovernedServingGateway:
                 "failed_gates": list(self._rollout.failed_gates),
                 "may_serve": self._rollout.may_serve(),
             }
+        if self._ledger is not None:
+            # A configured ledger is the authority the decisions cite; if
+            # its signed snapshot is missing, stale or unverifiable, this
+            # replica cannot record trustworthy evidence.
+            try:
+                readiness = self._ledger.readiness()
+                checks["ledger"] = readiness
+                ok = ok and bool(readiness.get("ok"))
+            except Exception as exc:  # noqa: BLE001 - fail closed
+                checks["ledger"] = {
+                    "ok": False, "error": type(exc).__name__}
+                ok = False
         if self._monitor is not None:
             try:
                 report = self._monitor.scan()
@@ -578,6 +604,7 @@ class GovernedServingGateway:
                         procedure_ids=tuple(out.procedure_ids),
                         basis_digests=tuple(
                             served_map.get("basis_digests", ())),
+                        expected_epoch=served_map.get("observed_epoch"),
                         expected_head=(
                             snapshot["head"] if snapshot is not None
                             else None),
@@ -1055,6 +1082,8 @@ class GovernedServingGateway:
             record["authority_epoch"] = served_map["authority_epoch"]
         if served_map.get("global_disable"):
             record["global_disable"] = True
+        if served_map.get("rollout_stage"):
+            record["rollout_stage"] = served_map["rollout_stage"]
         self._audit_record(record)
 
     def _audit_record(self, record: dict) -> None:

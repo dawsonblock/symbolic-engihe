@@ -62,6 +62,7 @@ class CustodianKey:
             bytes.fromhex(self.public_hex)
         except ValueError as exc:
             raise CustodyError("public_key_invalid", self.role) from exc
+        object.__setattr__(self, "seed_path", Path(self.seed_path))
 
     def __repr__(self) -> str:  # never leak the path into logs
         return (f"CustodianKey(role={self.role!r}, key_id={self.key_id!r},"
@@ -101,11 +102,19 @@ class KeyCustody:
         """Generate a fresh seed with owner-only permissions."""
         if role not in SIGNING_ROLES:
             raise CustodyError("role_cannot_sign", role)
-        path = self.root / (filename or f"{role}.seed")
+        name = filename or f"{role}.seed"
+        # A filename with a separator or a parent reference would write a
+        # seed outside the custody root.
+        if Path(name).name != name or name in {".", ".."}:
+            raise CustodyError("seed_filename_invalid", name)
+        path = self.root / name
         if path.exists():
             raise CustodyError("seed_already_exists", role)
         seed, public = signatures.generate_keypair()
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError as exc:
+            raise CustodyError("seed_already_exists", role) from exc
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(seed)
@@ -114,7 +123,13 @@ class KeyCustody:
         os.chmod(path, 0o600)
         key = CustodianKey(role=role, key_id=role + "-" + public.hex()[:24],
                            public_hex=public.hex(), seed_path=path)
-        self._register(key)
+        try:
+            self._register(key)
+        except CustodyError:
+            # The seed was created by this call and never registered;
+            # leaving it behind would be an unowned signing key.
+            path.unlink(missing_ok=True)
+            raise
         return key
 
     def _register(self, key: CustodianKey) -> None:

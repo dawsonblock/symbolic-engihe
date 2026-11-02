@@ -143,7 +143,8 @@ def _bound_receipt(receipt_out: str) -> int:
     except EvaluationRejected as exc:
         print(f"rejected: {exc.reason}", file=sys.stderr)
         return 2
-    except (OSError, ValueError, KeyError, TypeError, ContractError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, ContractError,
+            IsolationError) as exc:
         print(f"rejected: {type(exc).__name__}", file=sys.stderr)
         return 2
     binding["measured"] = {

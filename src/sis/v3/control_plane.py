@@ -1118,15 +1118,12 @@ class _SqlControlPlane:
                     payload: dict, now: str) -> int:
         state = self._ledger_state(con, for_update=True)
         epoch = state["epoch"] + 1
-        if state["updated_at"] is None:
-            self._insert(con, "authority_state", {
-                "singleton": 1, "epoch": epoch, "global_disable": 0,
-                "disable_reason": None, "updated_at": now,
-            }, "authority_state_conflict")
-        else:
-            con.execute(
-                "UPDATE authority_state SET epoch=?, updated_at=?"
-                " WHERE singleton=1", (epoch, now))
+        # _ledger_state(for_update=True) seeds the singleton, so this is
+        # always an update; there is no "row does not exist" branch left.
+        con.execute(
+            "UPDATE authority_state SET epoch=?, updated_at=?"
+            " WHERE singleton=1", (epoch, now))
+        # One writer holds the epoch row, so MAX(seq)+1 is stable here.
         seq = con.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM authority_event"
         ).fetchone()[0]
@@ -1172,6 +1169,10 @@ class _SqlControlPlane:
         _identifier(status, "status")
         stamp = now or _utcnow()
         with self._transaction() as con:
+            # Serialize writers on the epoch row before deciding whether
+            # this is a no-op, so two concurrent duplicates cannot both
+            # decide to bump.
+            self._ledger_state(con, for_update=True)
             existing = con.execute(
                 "SELECT status, detail FROM authority_subject"
                 " WHERE subject_kind=? AND subject_id=?",
@@ -1234,6 +1235,9 @@ class _SqlControlPlane:
         _identifier(target, "target")
         stamp = now or _utcnow()
         with self._transaction() as con:
+            # Same serialization point as the subject setter: a duplicate
+            # revocation is a no-op, not a conflict.
+            self._ledger_state(con, for_update=True)
             existing = con.execute(
                 "SELECT reason FROM authority_revocation"
                 " WHERE revocation_kind=? AND target=?",

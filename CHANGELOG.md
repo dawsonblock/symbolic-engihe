@@ -128,14 +128,41 @@ authorization-to-evidence boundary. Baseline and reproduction evidence:
 - **The five-arm plan records a per-task arm order** and computes the
   abstention, negative-transfer and integrity metrics from the outcomes
   instead of reporting zeros.
+- **A second review pass fixed what the first pass introduced or missed:**
+  the per-task arm order hashed the task id into a blake2b *key*, which is
+  capped at 64 bytes, so a legal 200-character task id raised `ValueError`
+  (the material is now hashed to a fixed-size key); campaign budgets must
+  be positive integers; `/readyz` is public but its internal `checks` are
+  behind the API key; a gateway refuses a ledger without a control plane
+  and a policy without a provider (either half alone silently disables a
+  control); a shadow-stage gateway authenticates the caller before
+  withholding guidance, so the audit record says who asked; a non-digest
+  identity is refused by `attempt_id_for_digest`; the ledger's idempotent
+  writers serialize on the epoch row before deciding "already present";
+  and the worker catches `IsolationError` from its own limit setup
+  instead of dying with a traceback.
+- **A third pass closed what the second one still left open:** serving
+  now passes the epoch it observed to the commit, so a stale-epoch
+  decision is refused from the serving path and not only by opt-in
+  callers; a configured ledger gates gateway readiness (a missing, stale
+  or unverifiable snapshot makes the replica not ready), and the monitor
+  reports a tampered snapshot as `ledger_snapshot_unverified` (critical)
+  rather than missing the fact that it does not verify; `run_isolated`
+  removes its temporary receipt directory and refuses an `extra_argv`
+  that would redirect the signed output; key creation refuses a filename
+  that escapes the custody root and removes a seed it created but could
+  not register; `PreregistrationRecord` validates its fields and a
+  two-proportion design whose treatment rate would exceed 100% is
+  refused; and a rollout/ledger/evidence misconfiguration is a
+  constructor error instead of a silently disabled control.
 
 - `RELEASE_SHA256.json` regenerated and `tools/verify_release.py .`
   verifies the tree (exit 0).
 
-Suite, SQLite profile: **1277 passed, 12 skipped** (including 39
+Suite, SQLite profile: **1293 passed, 12 skipped** (including 52
 regressions in `tests/v3/test_v340_review_fixes.py`).
 Suite, PostgreSQL profile (PostgreSQL 14.20, `SIS_POSTGRES_DSN` set):
-**1286 passed, 3 skipped**. The extra tests are the multi-replica
+**1302 passed, 3 skipped**. The extra tests are the multi-replica
 profile, including a cross-process test proving a revocation waits for
 the authorization's epoch lock.
 

@@ -140,7 +140,17 @@ class AuthorityMonitor:
 
         if self._ledger is not None:
             readiness = self._ledger.readiness()
-            if not readiness.get("snapshot_current", False):
+            if readiness.get("snapshot_epoch") is None:
+                # "Nothing published yet" is the snapshot_missing warning
+                # above, not a verification failure.
+                pass
+            elif not readiness.get("snapshot_verified", False):
+                # A row that does not verify against the ledger's own key
+                # is not a snapshot; something else wrote it.
+                findings.append(Finding(
+                    "ledger_snapshot_unverified", CRITICAL,
+                    f"epoch={readiness.get('snapshot_epoch')}"))
+            elif not readiness.get("snapshot_current", False):
                 findings.append(Finding(
                     "ledger_snapshot_stale", WARNING,
                     f"epoch={readiness.get('epoch')}"))

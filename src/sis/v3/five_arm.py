@@ -136,6 +136,10 @@ class CampaignPlan:
             raise CampaignError("task_ids_must_be_unique")
         if type(self.seed) is not int:
             raise CampaignError("seed_must_be_an_integer")
+        for name in ("max_tokens_per_task", "max_wall_seconds_per_task"):
+            value = getattr(self, name)
+            if type(value) is not int or value < 1:
+                raise CampaignError(f"{name}_invalid", str(value))
         if list(self.protocol.get("arms", [])) != list(ARMS):
             raise CampaignError("protocol_arms_do_not_match_the_design")
 
@@ -156,7 +160,10 @@ class CampaignPlan:
         The order is recorded per task in the report so an auditor can
         check that the campaign followed the plan.
         """
-        key = f"{self.seed}:{task_id or ''}".encode("utf-8")
+        # blake2b keys are capped at 64 bytes and a task id may be 256,
+        # so the seed/task material is hashed to a fixed-size key first.
+        key = hashlib.sha256(f"{self.seed}:{task_id or ''}".encode(
+            "utf-8")).digest()
         return tuple(sorted(ARMS, key=lambda arm: hashlib.blake2b(
             arm.encode("utf-8"), digest_size=8, key=key).digest()))
 

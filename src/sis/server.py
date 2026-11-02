@@ -106,10 +106,12 @@ def _handler_class(*, key, admin_key, service, v3_only, v3_service):
                     if v3_service is None:
                         return self.respond(200, {"ready": True})
                     readiness = v3_service.health()
-                    return self.respond(
-                        200 if readiness.get("ready") else 503,
-                        {"ready": bool(readiness.get("ready")),
-                         "checks": readiness.get("checks", {})})
+                    body = {"ready": bool(readiness.get("ready"))}
+                    # The probe itself is public; the internal checks are
+                    # operator detail and stay behind the API key.
+                    if self.authorized():
+                        body["checks"] = readiness.get("checks", {})
+                    return self.respond(200 if body["ready"] else 503, body)
                 if not self.authorized():
                     return self.respond(401, {"error": "unauthorized"})
                 if v3_only and u.path.startswith("/v1/"):

@@ -21,6 +21,7 @@ compares every binding field and fails closed with a stable reason code.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Mapping
@@ -39,6 +40,8 @@ from .contracts import (
 AUTHORIZATION_DOMAIN = b"sis-v3:authorization_v2:1\0"
 ATTEMPT_DOMAIN = b"sis-v3:execution_attempt:1\0"
 RECEIPT_DOMAIN = b"sis-v3:evaluator_receipt_v2:1\0"
+
+_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 EXPOSURE_STATES = frozenset(
     {"not_delivered", "delivered_unread", "used_partial", "used"})
@@ -159,6 +162,9 @@ def attempt_id_for_digest(execution_identity_digest: str) -> str:
     caller that talks to the control plane directly cannot choose an
     attempt id either.
     """
+    if not (isinstance(execution_identity_digest, str)
+            and _HEX.fullmatch(execution_identity_digest)):
+        raise BindingError("execution_identity_digest_invalid")
     return "att-" + canonical_digest(
         "execution_attempt_id", 1,
         {"execution_identity_digest": execution_identity_digest})[:48]

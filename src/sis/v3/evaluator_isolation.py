@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -269,6 +270,11 @@ def run_isolated(
     for name, value in (("key_dir", key_dir), ("registry_dir", registry_dir)):
         if not Path(value).is_dir():
             raise IsolationError(f"{name}_missing", str(value))
+    for token in extra_argv:
+        # The receipt path and the mode are the parent's decision; a
+        # caller-supplied flag must not redirect the signed output.
+        if token in {"--receipt-out", "--bound-receipt"}:
+            raise IsolationError("extra_argv_override_refused", token)
 
     exposure_digest = (attempt_exposure_digest(attempt) if attempt is not None
                        else unreported_exposure_digest(authorization))
@@ -293,45 +299,50 @@ def run_isolated(
     argv = [python, "-m", "sis.v3.evaluator_worker", "--bound-receipt",
             "--receipt-out", str(out_path), *extra_argv]
     try:
-        launch = {
-            "stdin": subprocess.PIPE, "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.PIPE, "env": _clean_env(),
-        }
-        if os.name == "posix":
-            launch["start_new_session"] = True
-        proc = subprocess.Popen(argv, **launch)
-    except OSError as exc:
-        raise IsolationError("worker_launch_failed", str(exc)) from exc
-    payload = json.dumps(binding, sort_keys=True).encode("utf-8")
-    timed_out = False
-    try:
-        _, stderr = proc.communicate(payload, timeout=profile.wall_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            proc.kill()
-        _, stderr = proc.communicate()
-    tail = stderr.decode("utf-8", "replace")[-512:]
-    if timed_out or proc.returncode != 0:
-        # A crashed or timed-out worker measured nothing. It must never
-        # be reported as a pass, and it signs nothing.
+            launch = {
+                "stdin": subprocess.PIPE, "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.PIPE, "env": _clean_env(),
+            }
+            if os.name == "posix":
+                launch["start_new_session"] = True
+            proc = subprocess.Popen(argv, **launch)
+        except OSError as exc:
+            raise IsolationError("worker_launch_failed", str(exc)) from exc
+        payload = json.dumps(binding, sort_keys=True).encode("utf-8")
+        timed_out = False
+        try:
+            _, stderr = proc.communicate(payload, timeout=profile.wall_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.kill()
+            _, stderr = proc.communicate()
+        tail = stderr.decode("utf-8", "replace")[-512:]
+        if timed_out or proc.returncode != 0:
+            # A crashed or timed-out worker measured nothing. It must never
+            # be reported as a pass, and it signs nothing.
+            return IsolatedResult(
+                result="error", exit_status=proc.returncode, crashed=True,
+                timed_out=timed_out, receipt=None, profile=profile,
+                stderr_tail=tail)
+        try:
+            receipt = EvaluatorReceiptV2.from_json(out_path.read_bytes())
+        except (OSError, ContractError):
+            return IsolatedResult(
+                result="error", exit_status=proc.returncode, crashed=True,
+                timed_out=False, receipt=None, profile=profile,
+                stderr_tail=tail)
         return IsolatedResult(
-            result="error", exit_status=proc.returncode, crashed=True,
-            timed_out=timed_out, receipt=None, profile=profile,
+            result=receipt.result, exit_status=proc.returncode, crashed=False,
+            timed_out=False, receipt=receipt, profile=profile,
             stderr_tail=tail)
-    try:
-        receipt = EvaluatorReceiptV2.from_json(out_path.read_bytes())
-    except (OSError, ContractError):
-        return IsolatedResult(
-            result="error", exit_status=proc.returncode, crashed=True,
-            timed_out=False, receipt=None, profile=profile,
-            stderr_tail=tail)
-    return IsolatedResult(
-        result=receipt.result, exit_status=proc.returncode, crashed=False,
-        timed_out=False, receipt=receipt, profile=profile,
-        stderr_tail=tail)
+    finally:
+        # The receipt has been read into memory; the temporary directory
+        # (and the worker's signed output) does not outlive this call.
+        shutil.rmtree(out_dir, ignore_errors=True)
 
 
 def sign_bound_receipt(binding: dict, seed: bytes) -> EvaluatorReceiptV2:

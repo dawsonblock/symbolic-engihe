@@ -16,8 +16,8 @@ a pinned-runtime result.
 python3 -m pytest -q
 ```
 
-Expected, SQLite profile: **1293 passed, 12 skipped**.
-Expected, PostgreSQL profile: **1302 passed, 3 skipped** (measured on
+Expected, SQLite profile: **1296 passed, 12 skipped**.
+Expected, PostgreSQL profile: **1305 passed, 3 skipped** (measured on
 PostgreSQL 14.20 with the commands below). The 9 tests that only run
 with a DSN are the multi-replica profile; a green SQLite run says
 nothing about them.

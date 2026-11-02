@@ -22,9 +22,9 @@ Operating instructions: `docs/v3/V340_RUNBOOK.md`.
 | PR-11 | Evidence-calibrated retrieval and negative-transfer controls | done |
 | PR-12 | Monitoring, staged rollout, reversible migration, recovery drills | done |
 
-Suite, SQLite profile: **1293 passed, 12 skipped**.
+Suite, SQLite profile: **1296 passed, 12 skipped**.
 Suite, PostgreSQL profile (`SIS_POSTGRES_DSN` set, PostgreSQL 14.20):
-**1302 passed, 3 skipped**.
+**1305 passed, 3 skipped**.
 
 Baseline was 986 passed, 8 skipped.
 
@@ -291,12 +291,14 @@ smaller corrections listed in `CHANGELOG.md`.
   and verified by `verify_profile`, but this module cannot create a
   network namespace. A deployment that claims production isolation must
   supply it at the platform layer.
-- PostgreSQL is qualified locally (14.20) but the 7 profile tests still
-  skip without `SIS_POSTGRES_DSN`; a deployment must run them against its
-  own server before claiming cross-replica guarantees. The `FOR UPDATE`
-  lock and the additive-column migration added by the review corrections
-  are only exercised by that run, and were not re-run when they landed.
-- Three skips remain and none is a failure:
+- PostgreSQL is qualified locally (14.20). The 9 profile tests still skip
+  without `SIS_POSTGRES_DSN`; a deployment must run them against its own
+  server before claiming cross-replica guarantees. The `FOR UPDATE` lock
+  and the additive-column migration were run against a throwaway 14.20
+  cluster while this branch was reviewed, but that is not a substitute
+  for the deployment's own server.
+- Three skips remain in the SQLite profile besides the 9 DSN-gated ones,
+  and none is a failure:
   `test_v240_review.py` needs Windows ACLs, `test_skill_ingest_hardening.py`
   needs the `skills/vskill-main 2` corpus at the repo root, and
   `test_source_manifest.py` needs the pinned baseline commit

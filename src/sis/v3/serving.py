@@ -135,10 +135,11 @@ class GovernedServingGateway:
             # protection. Production must share the nonce constraint.
             raise ValueError("production_requires_control_plane")
         self._control_plane = control_plane
-        if authority_ledger is not None and control_plane is None:
-            # The ledger commits through the control plane; without one
-            # it would never be consulted, so the wiring is a mistake.
-            raise ValueError("authority_ledger_requires_control_plane")
+        if authority_ledger is not None and (
+                control_plane is None or binding_authority is None):
+            # The ledger is consulted only on the bound commit path; a
+            # gateway that cannot bind outcomes would never use it.
+            raise ValueError("authority_ledger_requires_bound_gateway")
         if (evidence_policy is None) != (evidence_provider is None):
             # A policy with no evidence or evidence with no policy is a
             # silently disabled control, not a default.

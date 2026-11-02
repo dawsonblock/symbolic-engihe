@@ -184,14 +184,20 @@ class AuthorityLedger:
         The epoch, every head and the signed record are read and written
         in one control-plane transaction, so the snapshot cannot describe
         a state the ledger never held. Re-publishing an unchanged epoch
-        is idempotent.
+        is idempotent. The returned record is verified against this
+        ledger's key: an existing row that does not verify is an error,
+        not a cached snapshot.
         """
         try:
-            return self._plane.publish_authority_snapshot(self._build_snapshot)
+            snapshot = self._plane.publish_authority_snapshot(
+                self._build_snapshot)
         except ControlPlaneError as exc:
             if exc.reason == "authority_ledger_empty":
                 raise LedgerError("authority_ledger_empty") from exc
             raise
+        if not verify_snapshot(snapshot, self._public_hex):
+            raise LedgerError("snapshot_unverifiable", str(snapshot.epoch))
+        return snapshot
 
     def _build_snapshot(self, epoch: int, state: Mapping,
                         heads: Mapping) -> AuthoritySnapshotV2:

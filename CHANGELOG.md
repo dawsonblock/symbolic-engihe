@@ -155,14 +155,22 @@ authorization-to-evidence boundary. Baseline and reproduction evidence:
   two-proportion design whose treatment rate would exceed 100% is
   refused; and a rollout/ledger/evidence misconfiguration is a
   constructor error instead of a silently disabled control.
+- **A fourth pass tightened the edges of those controls:** a ledger is
+  accepted only by a gateway that can actually commit bound outcomes (a
+  ledger on an unbound gateway was silently unused), `publish()` verifies
+  the record it returns so a tampered stored snapshot is an error rather
+  than a cached "published" result, and a campaign plan rejects a
+  protocol that is not an object. The implementation record's
+  "what is still not claimed" section now matches the measured
+  PostgreSQL run.
 
 - `RELEASE_SHA256.json` regenerated and `tools/verify_release.py .`
   verifies the tree (exit 0).
 
-Suite, SQLite profile: **1293 passed, 12 skipped** (including 52
+Suite, SQLite profile: **1296 passed, 12 skipped** (including 55
 regressions in `tests/v3/test_v340_review_fixes.py`).
 Suite, PostgreSQL profile (PostgreSQL 14.20, `SIS_POSTGRES_DSN` set):
-**1302 passed, 3 skipped**. The extra tests are the multi-replica
+**1305 passed, 3 skipped**. The extra tests are the multi-replica
 profile, including a cross-process test proving a revocation waits for
 the authorization's epoch lock.
 

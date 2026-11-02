@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from sis.v3.authority_ledger import AuthorityLedger
+from sis.v3 import signatures
+from sis.v3.authority_ledger import AuthorityLedger, verify_snapshot
 from sis.v3.control_plane import (
     ControlPlaneError,
     SqliteControlPlane,
@@ -150,11 +151,9 @@ class LedgerSnapshotTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.auth_seed, self.auth_public = __import__(
-            "sis.v3.signatures", fromlist=["signatures"]).generate_keypair()
+        self.auth_seed, self.auth_public = signatures.generate_keypair()
         self.signer = SigningKey(self.auth_seed, "auth-key-1")
-        self.ledger_seed, _ = __import__(
-            "sis.v3.signatures", fromlist=["signatures"]).generate_keypair()
+        self.ledger_seed, _ = signatures.generate_keypair()
         self.ledger_signer = SigningKey(self.ledger_seed, "ledger-key-1")
         self.plane = SqliteControlPlane(
             self.root / "plane.db", signing_key=self.signer)
@@ -194,6 +193,35 @@ class LedgerSnapshotTests(unittest.TestCase):
         readiness = self.ledger.readiness()
         self.assertFalse(readiness["snapshot_verified"])
         self.assertFalse(readiness["ok"])
+
+    def test_publishing_an_epoch_returns_a_verified_snapshot(self):
+        self.ledger.set_candidate_status("cand-1", "qualified")
+        first = self.ledger.publish()
+        self.assertTrue(verify_snapshot(first, self.ledger.public_key))
+        # Idempotent: the stored record is returned, and it verifies.
+        second = self.ledger.publish()
+        self.assertEqual(first.digest, second.digest)
+        self.assertTrue(verify_snapshot(second, self.ledger.public_key))
+
+    def test_a_tampered_stored_snapshot_is_not_returned_as_published(self):
+        from sis.v3.authority_ledger import LedgerError
+        self.ledger.set_candidate_status("cand-1", "qualified")
+        self.ledger.publish()
+        con = sqlite3.connect(str(self.plane.path))
+        try:
+            row = con.execute(
+                "SELECT epoch, record_json FROM authority_snapshot_v2"
+            ).fetchone()
+            record = json.loads(row[1])
+            record["subject_count"] = record["subject_count"] + 1
+            con.execute(
+                "UPDATE authority_snapshot_v2 SET record_json=? WHERE epoch=?",
+                (json.dumps(record), row[0]))
+            con.commit()
+        finally:
+            con.close()
+        with self.assertRaisesRegex(LedgerError, "snapshot_unverifiable"):
+            self.ledger.publish()
 
     def test_publish_is_idempotent_per_epoch(self):
         self.ledger.set_candidate_status("cand-1", "qualified")
@@ -317,10 +345,19 @@ class EvidenceSelectionTests(unittest.TestCase):
 class ServingConfigurationTests(_Fixture):
     def test_a_ledger_without_a_control_plane_is_refused(self):
         with self.assertRaisesRegex(
-                ValueError, "authority_ledger_requires_control_plane"):
+                ValueError, "authority_ledger_requires_bound_gateway"):
             GovernedServingGateway(
                 self.fixture.registry,
                 repository_registry=self.fixture.repo_registry,
+                authority_ledger=object())
+
+    def test_a_ledger_without_a_binding_authority_is_refused(self):
+        with self.assertRaisesRegex(
+                ValueError, "authority_ledger_requires_bound_gateway"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                control_plane=self.fixture.control_plane,
                 authority_ledger=object())
 
     def test_a_policy_without_a_provider_is_refused(self):

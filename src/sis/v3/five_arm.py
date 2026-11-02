@@ -130,6 +130,8 @@ class CampaignPlan:
 
     def __post_init__(self) -> None:
         validate_design(self.design)
+        if not isinstance(self.protocol, Mapping):
+            raise CampaignError("protocol_must_be_an_object")
         if not self.task_ids:
             raise CampaignError("campaign_requires_tasks")
         if len(set(self.task_ids)) != len(self.task_ids):

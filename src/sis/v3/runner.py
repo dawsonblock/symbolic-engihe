@@ -609,6 +609,14 @@ class LocalSubprocessExecutor:
             "protected_paths": len(self.protected_paths),
         })
 
+    def environment_digest(self) -> str:
+        """The digest of the environment this executor actually provides.
+
+        Public so an evaluator can record the environment it measured in
+        rather than an environment the caller declared.
+        """
+        return self._environment_digest()
+
     @staticmethod
     def _kill_group(proc: subprocess.Popen) -> None:
         try:

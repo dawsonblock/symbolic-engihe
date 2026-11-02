@@ -22,6 +22,8 @@ from sis.v3.control_plane import SqliteControlPlane
 from sis.v3.evidence_custody import (EvidenceCustodyError,
                                      EvidenceCustodyStore,
                                      OfflineEvidencePolicy)
+from sis.v3.authority_ledger import AuthorityLedger
+from sis.v3.evidence_binding import EvidenceBindingAuthority, SigningKey
 from sis.v3.execution_identity import (ExecutionIdentityAuthority,
                                        sign_execution_identity)
 from sis.v3.serving import GovernedServingGateway
@@ -70,8 +72,12 @@ class ProductionFixture:
             expected_policy_version="sis-v3.3.1-authority-policy")
         self.registry.bind_checkpoint_verifier(
             self.verifier, production_serving=True)
+        self.auth_seed, auth_public = signatures.generate_keypair()
+        self.auth_key = "auth-key-1"
         self.control_plane = SqliteControlPlane(
-            root / "control" / "plane.db")
+            root / "control" / "plane.db",
+            signing_key=SigningKey(self.auth_seed, self.auth_key))
+        self.auth_public = auth_public
         self.journal = AuthorityJournal(
             self.registry, self.store, signer_seed=self.authority_seed,
             signer_key_id=self.authority_key, issuer_identity="authority",
@@ -89,17 +95,29 @@ class ProductionFixture:
             base_commit=COMMIT)
         self.identity_seed, identity_public, self.identity_key = _keypair(
             "identity")
+        self.identity_public = identity_public
         self.identity_authority = ExecutionIdentityAuthority(
             trusted_harness_keys={
                 self.identity_key: identity_public.hex()},
             repository_registry=self.repo_registry)
+        self.binding_authority = EvidenceBindingAuthority(
+            trusted_evaluator_keys={
+                self.cert.stack.eval_key: self.cert.stack.eval_public_hex},
+            trusted_harness_keys={self.identity_key: identity_public.hex()},
+            trusted_authorization_keys={self.auth_key: auth_public.hex()})
         self.gateway = GovernedServingGateway(
             self.registry, repository_registry=self.repo_registry,
             production=True,
             execution_identity_authority=self.identity_authority,
             used_session_nonces=set(),
-            control_plane=self.control_plane)
+            control_plane=self.control_plane,
+            binding_authority=self.binding_authority)
 
+        self.ledger_seed, ledger_public = signatures.generate_keypair()
+        self.ledger_key = SigningKey(self.ledger_seed, "ledger-key-1")
+        self.ledger = AuthorityLedger(
+            self.control_plane,
+            signing_key=self.ledger_key)
         self.certificate = self.cert.certificate()
         self.cert.qualify(self.certificate)
 
@@ -110,6 +128,43 @@ class ProductionFixture:
     def publish(self):
         """Anchor the current candidate and custody state."""
         return self.journal.publish()
+
+    def bound_authorization(self, nonce="nonce-1"):
+        return self.control_plane.bound_authorization_for_nonce(nonce)
+
+    def bound_receipt(self, authorization, **overrides):
+        """Mint an evaluator receipt bound to ``authorization``."""
+        from sis.v3.evidence_binding import sign_receipt
+        fields = dict(
+            receipt_id="rcpt-" + authorization.authorization_id[-8:],
+            authorization_id=authorization.authorization_id,
+            attempt_id=authorization.attempt_id,
+            task_id=authorization.task_id,
+            requester_principal_id=authorization.requester_principal_id,
+            repository_id=authorization.repository_id,
+            repository_tree_digest=authorization.repository_tree_digest,
+            base_commit_digest=authorization.base_commit_digest,
+            submitted_artifact_digest="f" * 64,
+            guidance_exposure_digest=(
+                "0" * 64),
+            test_suite_commitment="1" * 64,
+            environment_digest="2" * 64,
+            criterion_version="v1",
+            result="pass",
+            independence=overrides.pop("independence", "independent"),
+            dependency_receipt_digest=overrides.pop(
+                "dependency_receipt_digest", None),
+            evaluator_identity="sis-v3-test-evaluator",
+            issued_at="2026-10-27T00:00:00Z",
+            expires_at="2030-01-01T00:00:00Z",
+            nonce="receipt-" + authorization.authorization_id[-8:],
+            signer_key_id=self.cert.stack.eval_key)
+        fields.update(overrides)
+        if fields["guidance_exposure_digest"] == "0" * 64:
+            from sis.v3.evidence_binding import unreported_exposure_digest
+            fields["guidance_exposure_digest"] = unreported_exposure_digest(
+                authorization)
+        return sign_receipt(self.cert.stack.eval_seed, **fields)
 
     def identity(self, **overrides):
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -158,7 +213,8 @@ class ExecutionIdentityTests(unittest.TestCase):
             production=True,
             execution_identity_authority=self.fixture.identity_authority,
             used_session_nonces=set(), audit_sink=audit.append,
-            control_plane=self.fixture.control_plane)
+            control_plane=self.fixture.control_plane,
+            binding_authority=self.fixture.binding_authority)
         gateway.serve(_request(), repository_id="repo-1",
                       execution_identity=self.fixture.identity(
                           session_nonce="nonce-audit"))

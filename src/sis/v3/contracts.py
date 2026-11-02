@@ -10,7 +10,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, ClassVar
 
 
@@ -46,12 +46,16 @@ _EVIDENCE_CLASSES = {
 }
 _PARTITIONS = {"development", "holdout", "monitoring"}
 _DECISIONS = {"recommend", "advisory", "abstain"}
+_EXPOSURE_STATES = {
+    "not_delivered", "delivered_unread", "used_partial", "used",
+}
 _GENESIS = "0" * 64
 _REASONS = {
     "unverified_task_intent", "precondition_failed", "no_reproducible_failure",
     "conflicting_evidence", "source_mismatch", "prior_negative_transfer",
     "insufficient_support", "no_qualified_procedure", "catalog_unavailable",
     "expired", "revoked", "stale_evidence", "unsupported_context",
+    "rollout_shadow",
 }
 _PRECONDITION_KINDS = {
     "language_is", "toolchain_is", "dependency_digest_is", "file_present",
@@ -226,6 +230,13 @@ def _timestamp(value: Any, name: str) -> None:
     _require(parsed.tzinfo is not None and parsed.utcoffset() is not None, f"{name} must include a UTC offset")
 
 
+def _instant(value: str) -> datetime:
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(candidate)
+    return parsed if parsed.tzinfo is not None else parsed.replace(
+        tzinfo=timezone.utc)
+
+
 def _precondition(value: Any, name: str) -> None:
     _require(isinstance(value, Mapping), f"{name} must be a structured precondition object")
     kind = value.get("kind")
@@ -396,6 +407,166 @@ class OutcomeEnvelopeV2(V1Record):
     signature: str
 
     RECORD_TYPE: ClassVar[str] = "outcome_envelope"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AuthorizationV2(V1Record):
+    """Immutable authorization binding guidance to one execution attempt.
+
+    Every field except the signature is fixed at commit time. The record
+    is the *only* thing an outcome may be attributed to: ``attempt_id``
+    identifies the execution, ``guidance_digest`` the exact text that was
+    authorized, and ``authority_snapshot_digest`` the authority state the
+    decision was made under. A consumer that cannot reproduce every one
+    of these values from the delivery must abstain.
+    """
+
+    authorization_id: str
+    requester_principal_id: str
+    execution_identity_digest: str
+    task_id: str
+    attempt_id: str
+    repository_id: str
+    repository_tree_digest: str
+    base_commit_digest: str | None
+    guidance_digest: str
+    authority_snapshot_digest: str
+    authority_epoch: int
+    decision: str
+    issued_at: str
+    expires_at: str
+    signer_key_id: str
+    authorization_signature: str
+
+    RECORD_TYPE: ClassVar[str] = "authorization_v2"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExecutionAttemptV2(V1Record):
+    """Harness-signed report of what an attempt actually did with guidance.
+
+    ``exposure_state`` separates *delivered* from *used*. An agent may
+    ignore the advice, fail before reading it, or use only part of it;
+    recording that separately is what stops every outcome from being
+    attributed to SIS by default.
+    """
+
+    attempt_id: str
+    execution_identity_digest: str
+    requester_principal_id: str
+    task_id: str
+    repository_id: str
+    repository_tree_digest: str
+    base_commit_digest: str | None
+    authorization_id: str
+    guidance_digest: str
+    exposure_state: str
+    exposure_evidence_digest: str
+    attempt_sequence: int
+    started_at: str
+    ended_at: str | None
+    harness_identity: str
+    signer_key_id: str
+    attestation: str
+
+    RECORD_TYPE: ClassVar[str] = "execution_attempt"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvaluatorReceiptV2(V1Record):
+    """Independently signed measurement of one bound attempt.
+
+    The evaluator states which authorization and attempt it measured, the
+    exact repository snapshot, the artifact it evaluated and the guidance
+    exposure it observed. It never restates the guidance digest on trust:
+    a mismatch is rejected at acceptance, not reconciled.
+
+    ``independence`` is signed here, by the party that ran the evaluation,
+    rather than asserted by the requester at submission time: a caller
+    that could declare its own re-used measurement independent would make
+    the independent-trial count meaningless.
+    """
+
+    receipt_id: str
+    authorization_id: str
+    attempt_id: str
+    task_id: str
+    requester_principal_id: str
+    repository_id: str
+    repository_tree_digest: str
+    base_commit_digest: str | None
+    submitted_artifact_digest: str
+    guidance_exposure_digest: str
+    test_suite_commitment: str
+    environment_digest: str
+    criterion_version: str
+    result: str
+    independence: str
+    dependency_receipt_digest: str | None
+    evaluator_identity: str
+    issued_at: str
+    expires_at: str | None
+    nonce: str
+    signer_key_id: str
+    evaluator_signature: str
+
+    RECORD_TYPE: ClassVar[str] = "evaluator_receipt_v2"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutcomeV2(V1Record):
+    """Verified learning outcome: one measurement of one intervention.
+
+    ``independence`` is explicit because a cached or shared evaluation is
+    not a second trial. A dependent outcome names the receipt it was
+    derived from and is excluded from independent trial counts.
+    """
+
+    outcome_id: str
+    authorization_id: str
+    receipt_digest: str
+    attempt_id: str
+    task_id: str
+    requester_principal_id: str
+    repository_id: str
+    guidance_digest: str
+    guidance_exposure_digest: str
+    result: str
+    independence: str
+    dependency_receipt_digest: str | None
+    authority_snapshot_digest: str
+    bindings_digest: str
+    recorded_at: str
+
+    RECORD_TYPE: ClassVar[str] = "outcome_v2"
+
+
+@dataclass(frozen=True, kw_only=True)
+class AuthoritySnapshotV2(V1Record):
+    """Signed, monotonically epoching view of every authority input.
+
+    One ledger covers candidate status, procedure status, scope grants,
+    signer revocations and the global disable flag, so a decision cannot
+    be authorized against candidate state while a revocation of the same
+    evidence is committing in another database. ``epoch`` increases on
+    every committed change; an authorization pins the epoch it was made
+    under and a later change invalidates it.
+    """
+
+    epoch: int
+    candidate_head: str
+    procedure_head: str
+    scope_grant_head: str
+    revocation_head: str
+    supersession_head: str
+    global_disable: bool
+    subject_count: int
+    policy_version: str
+    issued_at: str
+    signer_key_id: str
+    signature: str
+
+    RECORD_TYPE: ClassVar[str] = "authority_snapshot_v2"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1360,6 +1531,109 @@ def _validate_record(record: V1Record) -> None:
             _require(bool(procedure_ids) and d["revision"] is not None and bool(d["evidence_ids"])
                      and bool(d["matched_preconditions"]) and d["reason_code"] is None,
                      "recommend guidance requires a revision, evidence, matched preconditions, and no abstain reason")
+    elif isinstance(record, AuthorizationV2):
+        _identifier(d["authorization_id"], "authorization_id")
+        _identifier(d["requester_principal_id"], "requester_principal_id")
+        _digest(d["execution_identity_digest"], "execution_identity_digest")
+        _identifier(d["task_id"], "task_id")
+        _identifier(d["attempt_id"], "attempt_id")
+        _identifier(d["repository_id"], "repository_id")
+        _digest(d["repository_tree_digest"], "repository_tree_digest")
+        _revision(d["base_commit_digest"], "base_commit_digest", optional=True)
+        for name in ("guidance_digest", "authority_snapshot_digest"):
+            _digest(d[name], name)
+        _require(type(d["authority_epoch"]) is int
+                 and d["authority_epoch"] >= 0,
+                 "authority_epoch must be a nonnegative integer")
+        _enum(d["decision"], _DECISIONS, "decision")
+        for name in ("issued_at", "expires_at"):
+            _timestamp(d[name], name)
+        _require(_instant(d["expires_at"]) > _instant(d["issued_at"]),
+                 "expires_at must be after issued_at")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["authorization_signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["authorization_signature"])),
+            "authorization_signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, ExecutionAttemptV2):
+        for name in ("attempt_id", "requester_principal_id", "task_id",
+                     "repository_id", "authorization_id", "harness_identity",
+                     "signer_key_id"):
+            _identifier(d[name], name)
+        for name in ("execution_identity_digest", "repository_tree_digest",
+                     "guidance_digest", "exposure_evidence_digest"):
+            _digest(d[name], name)
+        _revision(d["base_commit_digest"], "base_commit_digest", optional=True)
+        _enum(d["exposure_state"], _EXPOSURE_STATES, "exposure_state")
+        _require(type(d["attempt_sequence"]) is int and d["attempt_sequence"] >= 1,
+                 "attempt_sequence must be a positive integer")
+        _timestamp(d["started_at"], "started_at")
+        if d["ended_at"] is not None:
+            _timestamp(d["ended_at"], "ended_at")
+            _require(_instant(d["ended_at"]) >= _instant(d["started_at"]),
+                     "ended_at must not precede started_at")
+        _require(isinstance(d["attestation"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["attestation"])),
+            "attestation must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, EvaluatorReceiptV2):
+        for name in ("receipt_id", "authorization_id", "attempt_id", "task_id",
+                     "requester_principal_id", "repository_id",
+                     "criterion_version", "evaluator_identity", "nonce",
+                     "signer_key_id"):
+            _identifier(d[name], name)
+        for name in ("repository_tree_digest", "submitted_artifact_digest",
+                     "guidance_exposure_digest", "test_suite_commitment",
+                     "environment_digest"):
+            _digest(d[name], name)
+        _revision(d["base_commit_digest"], "base_commit_digest", optional=True)
+        _enum(d["result"], _OUTCOMES, "result")
+        _enum(d["independence"], {"independent", "dependent"}, "independence")
+        if d["independence"] == "dependent":
+            _digest(d["dependency_receipt_digest"], "dependency_receipt_digest")
+        else:
+            _require(d["dependency_receipt_digest"] is None,
+                     "an independent receipt must not name a dependency")
+        _timestamp(d["issued_at"], "issued_at")
+        if d["expires_at"] is not None:
+            _timestamp(d["expires_at"], "expires_at")
+            _require(_instant(d["expires_at"]) > _instant(d["issued_at"]),
+                     "expires_at must be after issued_at")
+        _require(isinstance(d["evaluator_signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["evaluator_signature"])),
+            "evaluator_signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, AuthoritySnapshotV2):
+        _require(type(d["epoch"]) is int and d["epoch"] >= 1,
+                 "epoch must be a positive integer")
+        for name in ("candidate_head", "procedure_head", "scope_grant_head",
+                     "revocation_head", "supersession_head"):
+            _digest(d[name], name)
+        _require(type(d["global_disable"]) is bool,
+                 "global_disable must be a boolean")
+        _require(type(d["subject_count"]) is int and d["subject_count"] >= 0,
+                 "subject_count must be a nonnegative integer")
+        _text(d["policy_version"], "policy_version", maximum=128)
+        _timestamp(d["issued_at"], "issued_at")
+        _identifier(d["signer_key_id"], "signer_key_id")
+        _require(isinstance(d["signature"], str) and bool(
+            re.fullmatch(r"[0-9a-f]{128}", d["signature"])),
+            "signature must be a 64-byte lowercase hexadecimal Ed25519 signature")
+    elif isinstance(record, OutcomeV2):
+        for name in ("outcome_id", "authorization_id", "attempt_id", "task_id",
+                     "requester_principal_id", "repository_id"):
+            _identifier(d[name], name)
+        for name in ("receipt_digest", "guidance_digest",
+                     "guidance_exposure_digest", "authority_snapshot_digest",
+                     "bindings_digest"):
+            _digest(d[name], name)
+        _enum(d["result"], _OUTCOMES, "result")
+        _enum(d["independence"], {"independent", "dependent"}, "independence")
+        if d["independence"] == "dependent":
+            _digest(d["dependency_receipt_digest"], "dependency_receipt_digest")
+            _require(d["dependency_receipt_digest"] != d["receipt_digest"],
+                     "a dependent outcome must name a different receipt")
+        else:
+            _require(d["dependency_receipt_digest"] is None,
+                     "an independent outcome must not name a dependency")
+        _timestamp(d["recorded_at"], "recorded_at")
     else:
         raise ContractError("unsupported record type")
 

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .benchmark import BenchmarkHarness, BudgetCaps
+from .statistical_power import PowerRequirement, StatisticsError
 from .contracts import GuidanceV1, TaskEnvelopeV1, canonical_digest
 from .runner import tree_digest
 from .governed_eval import (GOVERNED_ARMS, assert_partition_disjoint,
@@ -220,11 +221,28 @@ def analyze_report(
     sample_size = protocol.get("sample_size")
     declared_power = protocol.get("power_analysis") or {}
     required_n = declared_power.get("required_n")
+    power_requirement = None
+    power_requirement_error = None
+    declared_requirement = protocol.get("power_requirement")
+    if declared_requirement is not None:
+        if not isinstance(declared_requirement, Mapping):
+            power_requirement_error = "power_requirement_not_an_object"
+        else:
+            try:
+                power_requirement = PowerRequirement.from_dict(
+                    declared_requirement)
+                required_n = power_requirement.required_sample_size()
+            except (StatisticsError, TypeError, KeyError) as exc:
+                # A declared requirement that cannot be evaluated is not a
+                # licence to fall back to a convenient default: the run
+                # is reported as exploratory with the reason attached.
+                power_requirement_error = getattr(
+                    exc, "reason", type(exc).__name__)
     if type(required_n) is not int or required_n < 1:
         required_n = required_sample_size(0.6, 0.4)
     minimum_n = max(
         sample_size if type(sample_size) is int else 0, required_n)
-    underpowered = n_tasks < minimum_n
+    underpowered = n_tasks < minimum_n or power_requirement_error is not None
     if not real_agent:
         evidence_class = DEMONSTRATION
     elif not hidden_holdout or not conformance.get("conforms"):
@@ -254,6 +272,10 @@ def analyze_report(
         limitations.append(
             f"underpowered: ran {n_tasks} tasks; preregistered "
             f"{sample_size}")
+    if power_requirement_error is not None:
+        limitations.append(
+            "declared power requirement is invalid: "
+            + power_requirement_error)
     if not hidden_holdout:
         limitations.append("holdout partition is not hidden/disjoint")
     if not conformance.get("conforms"):
@@ -273,6 +295,10 @@ def analyze_report(
         "tasks": n_tasks,
         "sample_size_preregistered": sample_size,
         "required_sample_size_0_6_vs_0_4": required_sample_size(0.6, 0.4),
+        "power_requirement": (
+            power_requirement.to_dict()
+            if power_requirement is not None else None),
+        "power_requirement_error": power_requirement_error,
         "power_analysis": {
             "expected_baseline": declared_power.get(
                 "expected_baseline", 0.6),

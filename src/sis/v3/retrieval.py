@@ -51,6 +51,7 @@ class RetrievalContext:
     files_present: frozenset[str] = frozenset()
     symbols_present: frozenset[str] = frozenset()
     failure_signatures: frozenset[str] = frozenset()
+    task_signature: str = ""
 
     @classmethod
     def from_request(
@@ -65,6 +66,7 @@ class RetrievalContext:
             files_present=frozenset(files_present),
             symbols_present=frozenset(request.present_symbols) | frozenset(symbols_extra),
             failure_signatures=frozenset(request.failure_signatures),
+            task_signature=request.task_id,
         )
 
 

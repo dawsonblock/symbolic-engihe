@@ -345,6 +345,7 @@ class QualificationValidation:
     ok: bool
     failures: tuple[str, ...]
     checks: Mapping[str, bool] = field(default_factory=dict)
+    details: tuple[str, ...] = ()
 
     def require_ok(self) -> "QualificationValidation":
         if not self.ok:
@@ -354,11 +355,18 @@ class QualificationValidation:
 
     def as_dict(self) -> dict:
         return {"ok": self.ok, "failures": list(self.failures),
-                "checks": dict(self.checks)}
+                "checks": dict(self.checks), "details": list(self.details)}
 
 
 class QualificationValidator:
-    """Re-derive every mandatory qualification check from signed data."""
+    """Checks a certificate against a predeclared, signed bar.
+
+    ``preregistrations`` and ``lineages`` are optional; when supplied the
+    validator enforces the PR-09 requirements (power-derived sample size,
+    an independently timestamped preregistration that predates the
+    evaluation, and lineage-disjoint holdouts) in addition to the
+    v3.3.1 policy checks.
+    """
 
     def __init__(
         self,
@@ -373,6 +381,9 @@ class QualificationValidator:
         revoked_certificates=frozenset(),
         certificate_status: Callable[[str], str] | None = None,
         now: Callable[[], str] = _utcnow,
+        preregistrations=None,
+        lineages=None,
+        snapshot_resolver=None,
     ) -> None:
         self.policy = policy
         self._certificates = certificate_authority
@@ -386,6 +397,9 @@ class QualificationValidator:
         self._revoked = frozenset(revoked_certificates)
         self._status = certificate_status
         self._now = now
+        self._preregistrations = preregistrations
+        self._lineages = lineages
+        self._snapshot_resolver = snapshot_resolver
 
     def validate(
         self,
@@ -393,6 +407,7 @@ class QualificationValidator:
         candidate: CandidateV1,
     ) -> QualificationValidation:
         failures: list[str] = []
+        details: list[str] = []
         checks: dict[str, bool] = {}
 
         def check(name: str, condition: bool) -> None:
@@ -496,7 +511,7 @@ class QualificationValidator:
                 certificate, candidate)
             check("delivery_attestation", delivery_ok)
             if not delivery_ok:
-                failures.append("delivery_attestation:" + delivery_detail)
+                details.append("delivery_attestation:" + delivery_detail)
             check("aggregate_delivery_digest",
                   certificate.candidate_delivery_digest
                   == aggregate_delivery_digest(receipts))
@@ -506,8 +521,52 @@ class QualificationValidator:
             check("receipt_repository_scope",
                   self._verify_receipt_repositories(certificate))
 
+        if self._preregistrations is not None:
+            record = self._preregistrations.resolve(
+                certificate.preregistration_digest)
+            check("preregistration_registered", record is not None)
+            if record is not None:
+                required = record.required_sample_size
+                check("sample_count_meets_preregistered_power",
+                      certificate.sample_count >= required)
+                if certificate.sample_count < required:
+                    details.append(
+                        "underpowered:"
+                        f"{certificate.sample_count}<{required}")
+                check("preregistration_metric",
+                      certificate.primary_metric == record.primary_metric)
+                first_evaluation = certificate.protocol_conformance.get(
+                    "first_evaluation_at")
+                if first_evaluation is None:
+                    first_evaluation = certificate.issued_at
+                check("preregistration_precedes_evaluation",
+                      _parse_instant(record.registered_at)
+                      < _parse_instant(first_evaluation))
+                if self._lineages is not None:
+                    leaked = self._lineage_leaks(certificate, record)
+                    check("lineage_holdout", not leaked)
+                    if leaked:
+                        details.append(
+                            "lineage_leakage:" + ",".join(leaked[:4]))
+
         return QualificationValidation(
-            ok=not failures, failures=tuple(failures), checks=checks)
+            ok=not failures, failures=tuple(failures), checks=checks,
+            details=tuple(details))
+
+    def _lineage_leaks(self, certificate: EvaluationCertificateV1,
+                       record) -> list[str]:
+        """Holdout repositories that share a lineage with the training set."""
+        if self._snapshot_resolver is None:
+            return []
+        training = set(record.training_lineages)
+        leaks: list[str] = []
+        for snapshot in certificate.repository_snapshot_digests:
+            registry_id = self._snapshot_resolver(snapshot)
+            lineage = (self._lineages.lineage_of(registry_id)
+                       if registry_id is not None else None)
+            if lineage is None or lineage in training:
+                leaks.append(registry_id or snapshot)
+        return leaks
 
     def _not_expired(self, certificate: EvaluationCertificateV1) -> bool:
         if certificate.expires_at is None:

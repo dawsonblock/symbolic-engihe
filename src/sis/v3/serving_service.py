@@ -27,7 +27,8 @@ _GUIDANCE_FIELDS = frozenset({
 })
 _OUTCOME_FIELDS = frozenset({
     "task_id", "served_digest", "receipt_digest", "outcome",
-    "authorization_id",
+    "authorization_id", "evaluator_receipt", "attempt", "independence",
+    "dependency_receipt_digest",
 })
 
 
@@ -187,6 +188,9 @@ class V3ServingService:
             "abstained": guidance.decision == "abstain",
             "authorization": authorization,
         }
+        if authorization is not None and authorization.get("attempt_id"):
+            body["attempt_id"] = authorization["attempt_id"]
+            body["authorization_id"] = authorization["authorization_id"]
         if guidance.decision == "abstain":
             body["reason_code"] = guidance.reason_code
         return 200, body
@@ -200,16 +204,32 @@ class V3ServingService:
         if not isinstance(nonce, str) or not nonce:
             return None
         try:
+            bound = getattr(control_plane, "bound_authorization_for_nonce",
+                            None)
+            if callable(bound):
+                record = bound(nonce)
+                if record is None or \
+                        record.guidance_digest != guidance.digest:
+                    # A replay loser must not be handed the winner's
+                    # receipt.
+                    return None
+                return record.to_dict()
             receipt = control_plane.authorization_for_nonce(nonce)
         except Exception:  # noqa: BLE001 - receipt lookup is advisory only
             return None
         if receipt is None or \
                 receipt.get("guidance_digest") != guidance.digest:
-            # A replay loser must not be handed the winner's receipt.
             return None
         return receipt
 
     def _outcome(self, payload: Mapping, requester: str) -> tuple[int, dict]:
+        """Accept an outcome only for the caller's own authorization.
+
+        The authenticated principal is forwarded into acceptance so the
+        gateway can compare it with the authorization it was issued to.
+        An outcome submitted by a different requester is rejected, not
+        silently attributed to the original caller.
+        """
         if not isinstance(payload, Mapping):
             raise ServingServiceError("invalid_request")
         unknown = sorted(set(payload) - _OUTCOME_FIELDS)
@@ -221,29 +241,65 @@ class V3ServingService:
         receipt_digest = payload.get("receipt_digest")
         outcome = payload.get("outcome")
         authorization_id = payload.get("authorization_id")
-        if not (isinstance(task_id, str) and task_id):
-            raise ServingServiceError("task_id_required")
+        evaluator_receipt = payload.get("evaluator_receipt")
+        attempt = payload.get("attempt")
+        independence = payload.get("independence")
+        dependency = payload.get("dependency_receipt_digest")
+        if task_id is not None and not (isinstance(task_id, str) and task_id):
+            raise ServingServiceError("task_id_invalid")
         for name, value in (("served_digest", served_digest),
                             ("receipt_digest", receipt_digest)):
-            if not (isinstance(value, str) and _HEX.fullmatch(value)):
+            if value is not None and not (
+                    isinstance(value, str) and _HEX.fullmatch(value)):
                 raise ServingServiceError(f"{name}_invalid")
-        if outcome not in _OUTCOMES:
+        if outcome is not None and outcome not in _OUTCOMES:
             raise ServingServiceError("outcome_invalid")
         if authorization_id is not None and not (
                 isinstance(authorization_id, str) and authorization_id):
             raise ServingServiceError("authorization_id_invalid")
+        for name, value in (("evaluator_receipt", evaluator_receipt),
+                            ("attempt", attempt)):
+            if value is not None and not isinstance(value, Mapping):
+                raise ServingServiceError(f"{name}_invalid")
+        if independence is not None and independence not in (
+                "independent", "dependent"):
+            raise ServingServiceError("independence_invalid")
+        if dependency is not None and not (
+                isinstance(dependency, str) and _HEX.fullmatch(dependency)):
+            raise ServingServiceError("dependency_receipt_digest_invalid")
         try:
-            self._gateway.record_outcome(
-                task_id=task_id, served_digest=served_digest,
-                receipt_digest=receipt_digest, outcome=outcome,
-                authorization_id=authorization_id)
+            recorded = self._gateway.record_outcome(
+                requester_principal_id=requester,
+                authorization_id=authorization_id,
+                evaluator_receipt=evaluator_receipt,
+                attempt=attempt,
+                task_id=task_id,
+                served_digest=served_digest,
+                receipt_digest=receipt_digest,
+                outcome=outcome,
+                independence=independence,
+                dependency_receipt_digest=dependency)
         except ValueError as exc:
             raise ServingServiceError(str(exc)) from exc
-        return 200, {
+        record = recorded.get("record") if isinstance(recorded, Mapping) \
+            else None
+        body = {
             "recorded": True,
-            "task_id": task_id,
-            "outcome": outcome,
+            "task_id": record.task_id if record is not None else task_id,
+            "outcome": record.result if record is not None else outcome,
         }
+        if record is not None:
+            body.update({
+                "evidence_class": "verified",
+                "outcome_id": record.outcome_id,
+                "authorization_id": record.authorization_id,
+                "attempt_id": record.attempt_id,
+                "independence": record.independence,
+                "bindings_digest": record.bindings_digest,
+            })
+        else:
+            body["evidence_class"] = "legacy_unverified"
+        return 200, body
 
 
 __all__ = ["ServingServiceError", "V3ServingService"]

@@ -46,7 +46,25 @@ from typing import Callable, Mapping
 from .candidates import CandidateError, CandidateRegistry
 from .composition import compose_guidance
 from .control_plane import ControlPlaneError
-from .contracts import CandidateV1, ContractError, GuidanceRequestV1, GuidanceV1, canonical_digest
+from .contracts import (
+    CandidateV1,
+    ContractError,
+    EvaluatorReceiptV2,
+    ExecutionAttemptV2,
+    GuidanceRequestV1,
+    GuidanceV1,
+    OutcomeV2,
+    _instant,
+    canonical_digest,
+)
+from .authority_ledger import AuthorizationRequest, LedgerError
+from .evidence_binding import (
+    BindingError,
+    attempt_id_for_identity,
+    match_chain,
+)
+from .evidence_policy import negative_transfer_guard
+from .evidence_policy import select as select_evidence
 from .guidance import _abstain
 from .retrieval import (RetrievalContext, precondition_holds,
                         suppression_match)
@@ -94,6 +112,12 @@ class GovernedServingGateway:
         require_execution_identity: bool | None = None,
         used_session_nonces: set | None = None,
         control_plane=None,
+        binding_authority=None,
+        authority_ledger=None,
+        evidence_policy=None,
+        evidence_provider=None,
+        rollout=None,
+        monitor=None,
     ) -> None:
         self._candidates = registry
         self._identity_authority = execution_identity_authority
@@ -111,6 +135,26 @@ class GovernedServingGateway:
             # protection. Production must share the nonce constraint.
             raise ValueError("production_requires_control_plane")
         self._control_plane = control_plane
+        self._binding_authority = binding_authority
+        self._ledger = authority_ledger
+        self._evidence_policy = evidence_policy
+        self._evidence_provider = evidence_provider
+        # A rollout state is enforced when supplied: shadow delivers
+        # nothing and advisory delivers no procedure grants. Supplying it
+        # is the deployment's choice; a gateway without one serves at the
+        # stage its operator configured elsewhere.
+        self._rollout = rollout
+        self._monitor = monitor
+        # Bound outcomes require a control plane that can sign an
+        # authorization and a key set that can authenticate the evaluator
+        # and harness. Without both this gateway can still serve (guidance
+        # is not the vulnerable surface) but it may not record an outcome
+        # in production, and readiness reports the gap.
+        self._bound = bool(
+            control_plane is not None
+            and getattr(control_plane, "supports_bound_authorization",
+                        lambda: False)()
+            and binding_authority is not None)
         self._used_nonces = used_session_nonces \
             if used_session_nonces is not None else set()
         # Production serving requires an independently checkpointed
@@ -197,6 +241,28 @@ class GovernedServingGateway:
                                 f"{exc.reason}") from exc
                 served_map["authority"] = snapshot["authority"]
                 served_map["authority_snapshot"] = snapshot["digest"]
+            if self._control_plane is not None:
+                # The kill switch is read from the shared store on every
+                # request, so a disable committed by any replica is
+                # effective here without a restart.
+                try:
+                    ledger_state = self._control_plane.authority_state()
+                except ControlPlaneError as exc:
+                    raise CandidateError(
+                        "control_plane_unavailable:" + exc.reason) from exc
+                if ledger_state.get("global_disable"):
+                    served_map["global_disable"] = True
+                    out = _abstain("catalog_unavailable", (
+                        "Guidance serving is disabled by the operator.",))
+                    self._emit(served_map, out)
+                    return out
+            if self._rollout is not None and not self._rollout.may_serve():
+                # Shadow observes and records; it never delivers guidance.
+                served_map["rollout_stage"] = self._rollout.stage
+                out = _abstain("rollout_shadow", (
+                    "Guidance is in the shadow stage and is not delivered.",))
+                self._emit(served_map, out)
+                return out
             identity_result = None
             if self._require_identity or execution_identity is not None:
                 if self._identity_authority is None:
@@ -240,6 +306,12 @@ class GovernedServingGateway:
             eligible = self._eligible(
                 resolved, request, ctx, revoked_digests, served_map,
                 task_family=task_family)
+            if self._evidence_policy is not None and \
+                    self._evidence_provider is not None:
+                eligible = self._calibrate(
+                    eligible, ctx, served_map)
+            served_map["candidate_ids"] = [c.candidate_id for c in eligible]
+            served_map["basis_digests"] = [c.digest for c in eligible]
             composed = compose_guidance(
                 eligible, conflict_policy=self._conflict_policy,
                 max_steps=self._max_steps, token_budget=self._token_budget)
@@ -251,7 +323,9 @@ class GovernedServingGateway:
                 symbols_extra=symbols_extra, now=now) \
                 if self._strict is not None else None
 
-            if strict is not None and strict.decision == "recommend":
+            if strict is not None and strict.decision == "recommend" and (
+                    self._rollout is None
+                    or self._rollout.may_grant_procedures()):
                 steps = list(strict.helpful_next_checks)
                 added = 0
                 for step in composed.steps:
@@ -380,10 +454,51 @@ class GovernedServingGateway:
                 checks["control_plane"] = {
                     "ok": False, "error": type(exc).__name__}
                 ok = False
+        # Liveness is "the process answers"; readiness is "this deployment
+        # can record trustworthy evidence". A production replica that can
+        # serve but cannot bind an outcome is not ready, even though it is
+        # alive.
+        binding_ready = self._bound or not self._production
+        checks["outcome_binding"] = {
+            "ok": binding_ready,
+            "mode": "bound" if self._bound else "legacy",
+        }
+        ok = ok and binding_ready
+        if self._rollout is not None:
+            # Gates govern promotion, not serving at the current stage;
+            # the stage itself is what readiness reports.
+            checks["rollout"] = {
+                "ok": True,
+                "stage": self._rollout.stage,
+                "ready_to_promote": self._rollout.ready,
+                "failed_gates": list(self._rollout.failed_gates),
+                "may_serve": self._rollout.may_serve(),
+            }
+        if self._monitor is not None:
+            try:
+                report = self._monitor.scan()
+                allowed = bool(report.get("serving_allowed"))
+                checks["authority_monitor"] = {
+                    "ok": allowed,
+                    "critical": report.get("critical", 0),
+                    "warning": report.get("warning", 0),
+                    "findings": [finding["code"]
+                                 for finding in report.get("findings", [])],
+                }
+                ok = ok and allowed
+            except Exception as exc:  # noqa: BLE001 - fail closed
+                checks["authority_monitor"] = {
+                    "ok": False, "error": type(exc).__name__}
+                ok = False
         return {
             "ok": ok,
+            "ready": ok,
+            "alive": True,
             "serving_mode": "production" if self._production
             else "development",
+            "outcome_binding": "bound" if self._bound else "legacy",
+            "rollout_stage": (self._rollout.stage
+                              if self._rollout is not None else None),
             "checks": checks,
         }
 
@@ -431,7 +546,78 @@ class GovernedServingGateway:
             try:
                 if snapshot is not None:
                     self._revalidate(snapshot)
-                if self._control_plane is not None:
+                snapshot_digest = (
+                    snapshot["digest"] if snapshot is not None
+                    else canonical_digest(
+                        "authority_snapshot", 1, {"mode": "development"}))
+                if self._ledger is not None and self._bound:
+                    record = self._ledger.authorize(AuthorizationRequest(
+                        attempt_id=attempt_id_for_identity(
+                            identity_result.identity),
+                        nonce=identity_result.identity.session_nonce,
+                        session_digest=identity_result.identity.digest,
+                        execution_identity_digest=(
+                            identity_result.identity.digest),
+                        requester_principal_id=(
+                            identity_result.identity.requester_identity),
+                        task_id=task_id,
+                        repository_id=(
+                            served_map.get("repository_id")
+                            or identity_result.identity.repository_id),
+                        repository_tree_digest=(
+                            identity_result.identity.repository_tree_digest),
+                        base_commit_digest=(
+                            identity_result.identity.repository_commit),
+                        guidance_digest=out.digest,
+                        decision=out.decision,
+                        expires_at=identity_result.identity.expires_at,
+                        identity_expires_at=(
+                            identity_result.identity.expires_at),
+                        candidate_ids=tuple(
+                            served_map.get("candidate_ids", ())),
+                        procedure_ids=tuple(out.procedure_ids),
+                        basis_digests=tuple(
+                            served_map.get("basis_digests", ())),
+                        expected_head=(
+                            snapshot["head"] if snapshot is not None
+                            else None),
+                    ))
+                    served_map["authorization_id"] = record.authorization_id
+                    served_map["attempt_id"] = record.attempt_id
+                    served_map["execution_identity_digest"] = \
+                        record.execution_identity_digest
+                    served_map["authority_epoch"] = record.authority_epoch
+                elif self._control_plane is not None and self._bound:
+                    record = self._control_plane.commit_bound_authorization(
+                        attempt_id=attempt_id_for_identity(
+                            identity_result.identity),
+                        nonce=identity_result.identity.session_nonce,
+                        session_digest=identity_result.identity.digest,
+                        execution_identity_digest=(
+                            identity_result.identity.digest),
+                        requester_principal_id=(
+                            identity_result.identity.requester_identity),
+                        task_id=task_id,
+                        repository_id=(
+                            served_map.get("repository_id")
+                            or identity_result.identity.repository_id),
+                        repository_tree_digest=(
+                            identity_result.identity.repository_tree_digest),
+                        base_commit_digest=(
+                            identity_result.identity.repository_commit),
+                        guidance_digest=out.digest,
+                        decision=out.decision,
+                        expires_at=identity_result.identity.expires_at,
+                        expected_head=(
+                            snapshot["head"] if snapshot is not None
+                            else None),
+                    )
+                    served_map["authorization_id"] = record.authorization_id
+                    served_map["attempt_id"] = record.attempt_id
+                    served_map["execution_identity_digest"] = \
+                        record.execution_identity_digest
+                    served_map["authority_epoch"] = record.authority_epoch
+                elif self._control_plane is not None:
                     receipt = self._control_plane.commit_authorization(
                         nonce=identity_result.identity.session_nonce,
                         session_digest=identity_result.identity.digest,
@@ -440,19 +626,16 @@ class GovernedServingGateway:
                         repository_id=served_map.get("repository_id"),
                         guidance_digest=out.digest,
                         decision=out.decision,
-                        snapshot_digest=(
-                            snapshot["digest"] if snapshot is not None
-                            else canonical_digest(
-                                "authority_snapshot", 1,
-                                {"mode": "development"})),
+                        snapshot_digest=snapshot_digest,
                         expected_head=(
                             snapshot["head"] if snapshot is not None
                             else None),
                     )
                     served_map["authorization_id"] = \
                         receipt["authorization_id"]
-                    self._served[task_id] = out.digest
-            except (ControlPlaneError, CandidateError) as exc:
+                self._served[task_id] = out.digest
+            except (ControlPlaneError, CandidateError, ContractError,
+                    LedgerError) as exc:
                 reason = getattr(exc, "reason", str(exc))
                 served_map["commit_error"] = reason
                 if reason == "session_nonce_replayed":
@@ -466,6 +649,41 @@ class GovernedServingGateway:
                 out = _abstain("catalog_unavailable", (detail,))
         self._emit(served_map, out)
         return out
+
+    def _calibrate(self, eligible, ctx, served_map: dict):
+        """Apply the evidence-calibrated policy to the eligible set."""
+        evidence = []
+        for candidate in eligible:
+            try:
+                item = self._evidence_provider(candidate)
+            except Exception as exc:  # noqa: BLE001 - fail closed per rule
+                served_map["rejections"].append({
+                    "candidate_id": candidate.candidate_id,
+                    "reason": "evidence_unavailable",
+                    "detail": type(exc).__name__})
+                continue
+            blocked = negative_transfer_guard(
+                item, task_signature=ctx.task_signature,
+                known_failures=item.known_failure_signatures)
+            if blocked is not None:
+                # A rule that already made a resembling task worse is not
+                # a candidate, whatever its utility score says.
+                served_map["rejections"].append({
+                    "candidate_id": item.candidate_id,
+                    "reason": blocked})
+                continue
+            evidence.append(item)
+        if not evidence:
+            return []
+        decisions = select_evidence(
+            evidence, ctx, self._evidence_policy,
+            token_budget=self._token_budget, max_rules=self._max_steps)
+        served_map["policy_decisions"] = [d.to_dict() for d in decisions]
+        served_map["rejections"].extend(
+            {"candidate_id": d.candidate_id, "reason": d.reason}
+            for d in decisions if not d.serve)
+        keep = {d.candidate_id for d in decisions if d.serve}
+        return [c for c in eligible if c.candidate_id in keep]
 
     def _resolve_repository(self, repository_id: str) -> str | None:
         if not repository_id or self._registry is None:
@@ -543,16 +761,169 @@ class GovernedServingGateway:
             isinstance(cx, str) and suppression_match(haystack, cx)
             for cx in cand.known_counterexamples)
 
-    def record_outcome(self, *, task_id: str, served_digest: str,
-                       receipt_digest: str, outcome: str,
-                       authorization_id: str | None = None) -> None:
-        """Bind the outcome that followed to the guidance that was served.
+    def record_outcome(
+        self, *, requester_principal_id: str | None = None,
+        authorization_id: str | None = None,
+        evaluator_receipt: EvaluatorReceiptV2 | Mapping | None = None,
+        attempt: ExecutionAttemptV2 | Mapping | None = None,
+        task_id: str | None = None,
+        served_digest: str | None = None,
+        receipt_digest: str | None = None,
+        outcome: str | None = None,
+        independence: str | None = None,
+        dependency_receipt_digest: str | None = None,
+    ) -> dict:
+        """Record one verified outcome for one bound intervention.
+
+        Bound mode (any gateway with a signing control plane) requires the
+        full V2 chain. Every binding is compared exactly: requester,
+        execution identity, task, attempt, repository, tree, commit,
+        guidance and exposure. A missing or mismatched field is rejected;
+        there is no fallback that records an unbound outcome.
+
+        Legacy mode (development gateways with no control plane) keeps the
+        schema-1 path so local experiments still work, and marks the
+        result ``legacy_unverified``: it is never independent evidence.
+        """
+        if self._bound:
+            return self._record_bound_outcome(
+                requester_principal_id=requester_principal_id,
+                authorization_id=authorization_id,
+                evaluator_receipt=evaluator_receipt,
+                attempt=attempt,
+                task_id=task_id,
+                served_digest=served_digest,
+                receipt_digest=receipt_digest,
+                outcome=outcome,
+                independence=independence,
+                dependency_receipt_digest=dependency_receipt_digest)
+        return self._record_legacy_outcome(
+            task_id=task_id, served_digest=served_digest,
+            receipt_digest=receipt_digest, outcome=outcome,
+            authorization_id=authorization_id)
+
+    def _record_bound_outcome(
+        self, *, requester_principal_id, authorization_id, evaluator_receipt,
+        attempt, task_id, served_digest, receipt_digest, outcome,
+        independence, dependency_receipt_digest,
+    ) -> dict:
+        if not (isinstance(requester_principal_id, str)
+                and requester_principal_id):
+            raise ValueError("requester_identity_required")
+        if not (isinstance(authorization_id, str) and authorization_id):
+            # An implicit "latest authorization for this task" is exactly
+            # how one receipt used to be credited to two interventions.
+            raise ValueError("authorization_id_required")
+        if evaluator_receipt is None:
+            raise ValueError("evaluator_receipt_required")
+        try:
+            authorization = self._control_plane.bound_authorization(
+                authorization_id)
+        except ControlPlaneError as exc:
+            raise ValueError(exc.reason) from exc
+        if authorization is None:
+            raise ValueError("authorization_unknown")
+
+        try:
+            receipt = self._binding_authority.receipt(evaluator_receipt)
+            attempt_record = (self._binding_authority.attempt(attempt)
+                              if attempt is not None else None)
+            revoked_signers, revoked_digests = \
+                self._binding_authority.revocation_state()
+            match = match_chain(
+                authorization=authorization,
+                attempt=attempt_record,
+                receipt=receipt,
+                requester_principal_id=requester_principal_id,
+                now=self._binding_authority.now,
+                revoked_signers=revoked_signers,
+                revoked_digests=revoked_digests,
+            )
+        except BindingError as exc:
+            raise ValueError(exc.reason) from exc
+
+        # Caller-asserted values must agree with the binding; they are
+        # never used as the source of truth.
+        if task_id is not None and task_id != authorization.task_id:
+            raise ValueError("outcome_task_mismatch")
+        if served_digest is not None and \
+                served_digest != authorization.guidance_digest:
+            raise ValueError("served_guidance_unknown")
+        if receipt_digest is not None and receipt_digest != receipt.digest:
+            raise ValueError("receipt_digest_mismatch")
+        if outcome is not None and outcome != receipt.result:
+            raise ValueError("receipt_outcome_mismatch")
+        if independence is not None and independence != receipt.independence:
+            # Independence is the evaluator's signed statement, not the
+            # requester's: a caller may restate it, not change it.
+            raise ValueError("independence_mismatch")
+        if dependency_receipt_digest is not None and \
+                dependency_receipt_digest != receipt.dependency_receipt_digest:
+            raise ValueError("dependency_receipt_mismatch")
+
+        try:
+            if attempt_record is not None:
+                self._control_plane.record_attempt_exposure(attempt_record)
+            self._control_plane.record_evaluator_receipt(receipt)
+            record = OutcomeV2(
+                schema_version=1,
+                outcome_id="out-" + match.bindings_digest[:32],
+                authorization_id=authorization.authorization_id,
+                receipt_digest=receipt.digest,
+                attempt_id=authorization.attempt_id,
+                task_id=authorization.task_id,
+                requester_principal_id=authorization.requester_principal_id,
+                repository_id=authorization.repository_id,
+                guidance_digest=authorization.guidance_digest,
+                guidance_exposure_digest=receipt.guidance_exposure_digest,
+                result=receipt.result,
+                independence=match.independence,
+                dependency_receipt_digest=match.dependency_receipt_digest,
+                authority_snapshot_digest=(
+                    authorization.authority_snapshot_digest),
+                bindings_digest=match.bindings_digest,
+                recorded_at=self._binding_authority.now,
+            )
+            stored = self._control_plane.record_bound_outcome(record)
+        except ControlPlaneError as exc:
+            raise ValueError(exc.reason) from exc
+        except ContractError as exc:
+            raise ValueError("outcome_malformed") from exc
+
+        self._audit_record({
+            "schema_version": 2,
+            "kind": "serving_outcome",
+            "evidence_class": "verified",
+            "outcome_id": record.outcome_id,
+            "authorization_id": record.authorization_id,
+            "attempt_id": record.attempt_id,
+            "execution_identity_digest":
+                authorization.execution_identity_digest,
+            "requester_principal_id": record.requester_principal_id,
+            "repository_id": record.repository_id,
+            "task_id": record.task_id,
+            "served_digest": record.guidance_digest,
+            "guidance_exposure_digest": record.guidance_exposure_digest,
+            "receipt_digest": record.receipt_digest,
+            "outcome": record.result,
+            "independence": record.independence,
+            "bindings_digest": record.bindings_digest,
+        })
+        return {"record": record, "stored": stored}
+
+    def _record_legacy_outcome(self, *, task_id: str, served_digest: str,
+                               receipt_digest: str, outcome: str,
+                               authorization_id: str | None = None) -> dict:
+        """Schema-1 path: dev-only, quarantined as legacy evidence.
 
         The digest must be the guidance this gateway actually delivered
         for ``task_id``; the receipt must resolve through the trusted
         evaluator boundary, authenticate, carry the same task and the
         same outcome. An unauthenticated digest is not an outcome.
         """
+        if self._production:
+            # Production evidence is only ever the verified chain.
+            raise ValueError("bound_outcome_required")
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("task_id must be a nonempty string")
         if not (isinstance(served_digest, str) and _HEX.fullmatch(served_digest)):
@@ -598,11 +969,61 @@ class GovernedServingGateway:
         self._audit_record({
             "schema_version": 1,
             "kind": "serving_outcome",
+            "evidence_class": "legacy_unverified",
             "task_id": task_id,
             "served_digest": served_digest,
             "receipt_digest": receipt_digest,
             "outcome": outcome,
         })
+        return {"record": None, "legacy": True}
+
+    def recheck(self, authorization_id: str) -> dict:
+        """Fresh authorization check before a delayed delivery.
+
+        Guidance that was authorized earlier may be delivered later. The
+        authorization is re-read from the shared store and every
+        condition that can have changed since is re-evaluated: expiry,
+        signer/digest revocation, the global kill switch and the ledger
+        epoch. Anything that cannot be re-verified is a refusal.
+        """
+        if self._control_plane is None:
+            raise ValueError("control_plane_required")
+        try:
+            authorization = self._control_plane.bound_authorization(
+                authorization_id)
+        except ControlPlaneError as exc:
+            raise ValueError(exc.reason) from exc
+        if authorization is None:
+            raise ValueError("authorization_unknown")
+        now = (self._binding_authority.now
+               if self._binding_authority is not None else None)
+        if now is not None and _instant(now) >= _instant(
+                authorization.expires_at):
+            # Both sides are parsed: comparing ISO strings accepts an
+            # expired authorization whenever the recorded offset is not
+            # "Z" (e.g. 14:00+05:00 is 09:00Z).
+            raise ValueError("authorization_expired")
+        if self._binding_authority is not None:
+            signers, digests = self._binding_authority.revocation_state()
+            if authorization.signer_key_id in signers:
+                raise ValueError("authorization_signer_revoked")
+            if authorization.digest in digests:
+                raise ValueError("authorization_revoked")
+        state = self._control_plane.authority_state()
+        if state.get("global_disable"):
+            raise ValueError("global_disable")
+        epoch = state.get("epoch") or 0
+        if authorization.authority_epoch != epoch:
+            # The ledger moved after this decision; a delayed delivery is
+            # a delivery under a state the decision never saw.
+            raise ValueError("authority_epoch_changed")
+        return {
+            "authorization_id": authorization.authorization_id,
+            "attempt_id": authorization.attempt_id,
+            "authority_epoch": authorization.authority_epoch,
+            "ledger_epoch": epoch,
+            "expires_at": authorization.expires_at,
+        }
 
     def _emit(self, served_map: dict, guidance: GuidanceV1) -> None:
         task_id = served_map.get("task_id")
@@ -628,6 +1049,12 @@ class GovernedServingGateway:
             record["identity_error"] = served_map["identity_error"]
         if served_map.get("integrity_error"):
             record["integrity_error"] = served_map["integrity_error"]
+        if served_map.get("policy_decisions"):
+            record["policy_decisions"] = served_map["policy_decisions"]
+        if served_map.get("authority_epoch"):
+            record["authority_epoch"] = served_map["authority_epoch"]
+        if served_map.get("global_disable"):
+            record["global_disable"] = True
         self._audit_record(record)
 
     def _audit_record(self, record: dict) -> None:

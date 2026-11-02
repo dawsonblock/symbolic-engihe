@@ -25,7 +25,9 @@ from sis.server import create_server
 from sis.v3 import serving as serving_mod
 from sis.v3.checkpoints import (AuthorityStateVerifier, CheckpointConflict,
                                 sign_checkpoint)
-from sis.v3.control_plane import (ControlPlaneError, SqliteControlPlane)
+from sis.v3.control_plane import (SCHEMA_VERSION, ControlPlaneError,
+                                  SqliteControlPlane)
+from sis.v3.evidence_binding import SigningKey
 from sis.v3.evaluation_runtime import (SANDBOX_FAILURE, TASK_PASS,
                                        classify_execution)
 from sis.v3.evidence_custody import EvidenceCustodyStore
@@ -54,6 +56,8 @@ class _Base(unittest.TestCase):
         kwargs.setdefault("execution_identity_authority",
                           self.fixture.identity_authority)
         kwargs.setdefault("control_plane", self.fixture.control_plane)
+        kwargs.setdefault("binding_authority",
+                          self.fixture.binding_authority)
         return GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
@@ -115,15 +119,18 @@ class ReplayTests(_Base):
         self.assertEqual(first.decision, "advisory")
         self.assertEqual(second.decision, "abstain")
         self.assertEqual(second.reason_code, "catalog_unavailable")
-        receipt = self.fixture.control_plane.authorization_for_nonce(
+        receipt = self.fixture.control_plane.bound_authorization_for_nonce(
             "nonce-1")
         self.assertIsNotNone(receipt)
-        self.assertEqual(receipt["guidance_digest"], first.digest)
+        self.assertEqual(receipt.guidance_digest, first.digest)
 
     def test_replay_across_separate_control_plane_instances(self):
         # Two connections to the same database model two serving
         # processes; the uniqueness constraint, not a Python set, decides.
-        second_plane = SqliteControlPlane(self.fixture.control_plane.path)
+        second_plane = SqliteControlPlane(
+            self.fixture.control_plane.path,
+            signing_key=SigningKey(self.fixture.auth_seed,
+                                   self.fixture.auth_key))
         self.addCleanup(second_plane.close)
         identity = self.fixture.identity()
         first = self.gateway().serve(
@@ -134,14 +141,15 @@ class ReplayTests(_Base):
             repository_registry=self.fixture.repo_registry,
             production=True,
             execution_identity_authority=self.fixture.identity_authority,
-            control_plane=second_plane).serve(
+            control_plane=second_plane,
+            binding_authority=self.fixture.binding_authority).serve(
                 _request(), repository_id="repo-1",
                 execution_identity=identity)
         self.assertEqual(first.decision, "advisory")
         self.assertEqual(second.decision, "abstain")
         self.assertEqual(
-            self.fixture.control_plane.authorization_for_nonce(
-                "nonce-1")["guidance_digest"], first.digest)
+            self.fixture.control_plane.bound_authorization_for_nonce(
+                "nonce-1").guidance_digest, first.digest)
 
     def test_control_plane_outage_abstains(self):
         gateway = self.gateway()
@@ -155,7 +163,7 @@ class ReplayTests(_Base):
     def test_schema_version_is_recorded(self):
         plane = SqliteControlPlane(self.root / "schema.db")
         self.addCleanup(plane.close)
-        self.assertEqual(plane.schema_version(), 1)
+        self.assertEqual(plane.schema_version(), SCHEMA_VERSION)
 
     def test_newer_schema_is_refused(self):
         path = self.root / "schema-new.db"
@@ -179,7 +187,7 @@ class ReplayTests(_Base):
         con.close()
         plane = SqliteControlPlane(path)
         self.addCleanup(plane.close)
-        self.assertEqual(plane.schema_version(), 1)
+        self.assertEqual(plane.schema_version(), SCHEMA_VERSION)
 
     def test_checkpoint_ahead_of_head_abstains_then_recovers(self):
         latest = self.fixture.store.get_latest()
@@ -542,31 +550,37 @@ class LegacyCheckpointTests(unittest.TestCase):
 class ControlPlaneTests(_Base):
     def test_outcome_binds_to_committed_receipt(self):
         identity = self.fixture.identity()
-        gateway = self.gateway(
-            receipt_authority=lambda digest: SimpleNamespace(
-                task_id="task-1", outcome="pass"))
+        gateway = self.gateway()
         guidance = gateway.serve(
             _request(), repository_id="repo-1",
             execution_identity=identity)
-        gateway.record_outcome(
-            task_id="task-1", served_digest=guidance.digest,
-            receipt_digest="e" * 64, outcome="pass")
-        receipt = self.fixture.control_plane.authorization_for_task("task-1")
-        outcome = self.fixture.control_plane.outcome(
-            receipt["authorization_id"])
-        self.assertEqual(outcome["outcome"], "pass")
+        authorization = self.fixture.bound_authorization()
+        self.assertEqual(authorization.guidance_digest, guidance.digest)
+        receipt = self.fixture.bound_receipt(authorization)
+        recorded = gateway.record_outcome(
+            requester_principal_id="agent-1",
+            authorization_id=authorization.authorization_id,
+            evaluator_receipt=receipt, task_id="task-1",
+            served_digest=guidance.digest)
+        self.assertEqual(recorded["record"].result, "pass")
+        outcome = self.fixture.control_plane.bound_outcome(
+            authorization.authorization_id)
+        self.assertEqual(outcome["result"], "pass")
+        self.assertEqual(outcome["evidence_class"], "verified")
 
     def test_outcome_rejects_wrong_served_digest(self):
         identity = self.fixture.identity()
-        gateway = self.gateway(
-            receipt_authority=lambda digest: SimpleNamespace(
-                task_id="task-1", outcome="pass"))
+        gateway = self.gateway()
         gateway.serve(_request(), repository_id="repo-1",
                       execution_identity=identity)
+        authorization = self.fixture.bound_authorization()
+        receipt = self.fixture.bound_receipt(authorization)
         with self.assertRaisesRegex(ValueError, "served_guidance_unknown"):
             gateway.record_outcome(
-                task_id="task-1", served_digest="f" * 64,
-                receipt_digest="e" * 64, outcome="pass")
+                requester_principal_id="agent-1",
+                authorization_id=authorization.authorization_id,
+                evaluator_receipt=receipt, task_id="task-1",
+                served_digest="f" * 64)
 
     def test_authority_head_is_monotonic(self):
         current = self.fixture.control_plane.authority_head()
@@ -643,23 +657,25 @@ class ServingServiceTests(_Base):
 
     def test_outcome_endpoint_persists(self):
         service = V3ServingService(
-            self.gateway(receipt_authority=lambda digest: SimpleNamespace(
-                task_id="task-1", outcome="pass")),
-            api_keys={TOKEN: "agent-1"})
+            self.gateway(), api_keys={TOKEN: "agent-1"})
         code, body = service.handle(
             "/v3/guidance", self.payload(),
             {"Authorization": f"Bearer {TOKEN}"})
         self.assertEqual(code, 200)
         authorization_id = body["authorization"]["authorization_id"]
+        authorization = self.fixture.bound_authorization()
+        receipt = self.fixture.bound_receipt(authorization)
         code, body = service.handle(
             "/v3/outcome",
             {"task_id": "task-1",
              "served_digest": body["guidance_digest"],
-             "receipt_digest": "e" * 64, "outcome": "pass",
+             "evaluator_receipt": receipt.to_dict(),
              "authorization_id": authorization_id},
             {"Authorization": f"Bearer {TOKEN}"})
-        self.assertEqual(code, 200)
+        self.assertEqual(code, 200, body)
         self.assertTrue(body["recorded"])
+        self.assertEqual(body["evidence_class"], "verified")
+        self.assertEqual(body["attempt_id"], authorization.attempt_id)
 
     def test_health_reports_ok(self):
         health = self.service().health()
@@ -698,22 +714,22 @@ class ServingServiceTests(_Base):
 
     def test_outcome_rejects_unknown_authorization_id(self):
         service = V3ServingService(
-            self.gateway(receipt_authority=lambda digest: SimpleNamespace(
-                task_id="task-1", outcome="pass")),
-            api_keys={TOKEN: "agent-1"})
+            self.gateway(), api_keys={TOKEN: "agent-1"})
         code, body = service.handle(
             "/v3/guidance", self.payload(),
             {"Authorization": f"Bearer {TOKEN}"})
         self.assertEqual(code, 200)
+        authorization = self.fixture.bound_authorization()
+        receipt = self.fixture.bound_receipt(authorization)
         code, body = service.handle(
             "/v3/outcome",
             {"task_id": "task-1",
              "served_digest": body["guidance_digest"],
-             "receipt_digest": "e" * 64, "outcome": "pass",
+             "evaluator_receipt": receipt.to_dict(),
              "authorization_id": "auth-unknown"},
             {"Authorization": f"Bearer {TOKEN}"})
         self.assertEqual(code, 400)
-        self.assertEqual(body["error"], "served_guidance_unknown")
+        self.assertEqual(body["error"], "authorization_unknown")
 
 
 class HttpBoundaryTests(_Base):

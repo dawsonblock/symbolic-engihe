@@ -102,16 +102,90 @@ def evaluate_via_subprocess(
     return WorkerResult(receipt=receipt, exit_status=proc.returncode, stderr_tail=tail)
 
 
+def _bound_receipt(receipt_out: str) -> int:
+    """Measure a submission and sign an EvaluatorReceiptV2 for it.
+
+    The binding on stdin says *what* to evaluate, never *what the result
+    is*. The child runs the registered acceptance command here, derives
+    the outcome, artifact digest, suite commitment and environment digest
+    from that run, and signs the receipt with the evaluator seed. The
+    parent cannot read the key and cannot supply the measurement.
+    """
+    from .evaluator_isolation import IsolationError, sign_bound_receipt
+    from .runner import LocalSubprocessExecutor
+    from .verifier import EvaluationRejected, OutcomeVerifier
+
+    raw = sys.stdin.buffer.read(1_048_576)
+    try:
+        binding = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        print("rejected: binding_not_json", file=sys.stderr)
+        return 2
+    try:
+        task = TaskEnvelopeV1.from_json(
+            json.dumps(binding["task"]).encode("utf-8"))
+        executor = LocalSubprocessExecutor(binding.get("executor_root"))
+        verifier = OutcomeVerifier(
+            executor=executor, key_dir=binding["key_dir"],
+            registry_dir=binding["registry_dir"])
+        measured = verifier.evaluate(
+            actor_role="evaluator", task=task,
+            submission_dir=binding["submission"],
+            evaluation_nonce=binding["measurement_nonce"])
+    except EvaluationRejected as exc:
+        print(f"rejected: {exc.reason}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, KeyError, TypeError, ContractError) as exc:
+        print(f"rejected: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    binding["measured"] = {
+        "result": measured.outcome,
+        "artifact_digest": measured.evaluated_repo_digest,
+        "test_suite_commitment": measured.test_suite_commitment,
+        "criterion_version": measured.criterion_version,
+        "environment_digest": executor.environment_digest(),
+    }
+    seed_path = Path(binding["seed_path"])
+    seed = b""
+    try:
+        seed = seed_path.read_bytes()
+        if len(seed) != 32:
+            raise ValueError("seed_malformed")
+        receipt = sign_bound_receipt(binding, seed)
+    except (OSError, ValueError, KeyError, TypeError, IsolationError) as exc:
+        print(f"rejected: {type(exc).__name__}", file=sys.stderr)
+        return 2
+    finally:
+        # Best effort: rebinding a local does not wipe the original
+        # immutable bytes object, but it drops this reference.
+        seed = b"\x00" * 32
+        del seed
+    Path(receipt_out).write_bytes(receipt.canonical_bytes())
+    return 0
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(prog="sis.v3.evaluator_worker")
-    parser.add_argument("--key-dir", required=True)
-    parser.add_argument("--registry-dir", required=True)
-    parser.add_argument("--submission", required=True)
-    parser.add_argument("--nonce", required=True)
+    parser.add_argument("--bound-receipt", action="store_true",
+                        help="sign an EvaluatorReceiptV2 from stdin")
     parser.add_argument("--receipt-out", required=True)
+    parser.add_argument("--key-dir")
+    parser.add_argument("--registry-dir")
+    parser.add_argument("--submission")
+    parser.add_argument("--nonce")
     parser.add_argument("--executor-root", default=None)
-    parser.add_argument("--task-json", required=True)
+    parser.add_argument("--task-json", default=None)
     args = parser.parse_args()
+
+    if args.bound_receipt:
+        return _bound_receipt(args.receipt_out)
+
+    missing = [name for name in ("key_dir", "registry_dir", "submission",
+                                 "nonce", "task_json")
+               if getattr(args, name) is None]
+    if missing:
+        print("rejected: missing " + ",".join(missing), file=sys.stderr)
+        return 2
 
     if args.task_json == "-":
         raw = sys.stdin.buffer.read(65_537)

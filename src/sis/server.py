@@ -92,9 +92,26 @@ def _handler_class(*, key, admin_key, service, v3_only, v3_service):
 
         def do_GET(self):
             try:
+                u = urlsplit(self.path)
+                # Health probes are unauthenticated by design: an
+                # orchestrator must be able to ask "alive?" and "ready?"
+                # without holding an API key, and a 401 from a liveness
+                # probe reads as a dead process.
+                if u.path == "/livez":
+                    # Liveness only: the process answers. Never gated on
+                    # authority state, so a degraded authority does not
+                    # make the orchestrator restart a healthy process.
+                    return self.respond(200, {"alive": True})
+                if u.path == "/readyz":
+                    if v3_service is None:
+                        return self.respond(200, {"ready": True})
+                    readiness = v3_service.health()
+                    return self.respond(
+                        200 if readiness.get("ready") else 503,
+                        {"ready": bool(readiness.get("ready")),
+                         "checks": readiness.get("checks", {})})
                 if not self.authorized():
                     return self.respond(401, {"error": "unauthorized"})
-                u = urlsplit(self.path)
                 if v3_only and u.path.startswith("/v1/"):
                     return self.respond(404, {"error": "not found"})
                 if u.path == "/health":

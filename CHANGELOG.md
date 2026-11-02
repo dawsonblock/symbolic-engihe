@@ -1,3 +1,132 @@
+## Unreleased — SIS v3.4.0 evidence-chain and authority upgrade (PR-01…PR-12)
+
+Closes the three reproduced P0 outcome-attribution defects and rebuilds the
+authorization-to-evidence boundary. Baseline and reproduction evidence:
+`docs/v3/V340_BASELINE.md`; implementation record:
+`docs/v3/V340_IMPLEMENTATION.md`; operating instructions:
+`docs/v3/V340_RUNBOOK.md`.
+
+- **PR-01** `tools/reproduce_v340_defects.py` reproduces all three P0
+  defects against v3.3.2 and reports zero open now;
+  `tools/check_runtime.py` pins the interpreter and dependencies; legacy
+  schema-1 outcomes are quarantined as `legacy_unverified` and never
+  counted as independent evidence.
+- **PR-02** new `AuthorizationV2`, `ExecutionAttemptV2`,
+  `EvaluatorReceiptV2`, `OutcomeV2` and `AuthoritySnapshotV2` contracts,
+  with domain-separated signing and `match_chain` as the single
+  attribution decision point. Guidance *exposure* is recorded separately
+  from guidance *delivery*.
+- **PR-03** control-plane schema 2 (bound evidence chain) and schema 3
+  (unified authority ledger) for both SQLite and PostgreSQL, with
+  `UNIQUE(attempt_id)`, `UNIQUE(authorization_id)` and a partial unique
+  index on independent receipt digests.
+- **PR-04** `/v3/outcome` forwards the authenticated requester; acceptance
+  requires an exact match across requester, execution identity, task,
+  attempt, repository, tree, commit, guidance and exposure. Production
+  refuses the legacy path entirely.
+- **PR-05** attribution is enforced by database constraints, verified with
+  real child processes: six racing submissions produce exactly one
+  accepted result, and the constraint survives a restart.
+- **PR-06** one authority ledger with signed, monotonically epoching
+  snapshots; the authorization predicate is evaluated inside the
+  committing transaction, so a revocation or disable that commits first
+  cannot be overtaken.
+- **PR-07** kill switch read per request and re-read inside the commit;
+  identity expiry rechecked at commit; `recheck()` for delayed delivery;
+  `/livez` (liveness) separated from `/readyz` (readiness to record
+  trustworthy evidence).
+- **PR-08** four-identity key custody (owner-only seeds, no shared keys)
+  and an isolated evaluator that refuses to call an unisolated run a
+  production evaluation and signs nothing when it crashes.
+- **PR-09** power-derived sample sizes, timestamp-authority-signed
+  preregistration that must predate the evaluation, and repository
+  lineage holdouts. A confirmatory certificate that violates its
+  preregistered requirement is rejected.
+- **PR-10** controlled five-arm campaign with a component manifest, a
+  seeded arm order and an after-cost verdict (`no_advantage_after_cost`
+  when the solve rate is unchanged at more than twice the tokens).
+- **PR-11** evidence-calibrated selection with an explicit utility
+  trade-off, decisive abstention conditions and a negative-transfer
+  guard.
+- **PR-12** authority monitor with severities, staged rollout gates,
+  reversible schema migration with a verified backup, and five encoded
+  recovery drills.
+
+- **PostgreSQL profile fix (found by running it).** Every statement shared
+  by both backends was written with `?` parameters, which SQLite accepts
+  and psycopg rejects; `_ParamStyle` now adapts the PostgreSQL connection
+  so one statement serves both drivers. `_is_integrity_error` was missing
+  on the PostgreSQL backend, so duplicate outcomes surfaced as
+  `control_plane_unavailable` instead of `outcome_already_recorded`. Both
+  were invisible to a green SQLite-only suite.
+
+### Review corrections (found by reviewing the branch)
+
+- **`recheck()` parsed timestamps as strings.** `now >= expires_at` on
+  ISO text accepts an expired authorization whenever the recorded offset
+  is not `Z` (`14:00+05:00` is `09:00Z`). Both sides are now parsed, and
+  `recheck()` also refuses when the ledger epoch moved
+  (`authority_epoch_changed`), which its docstring already claimed.
+- **The PostgreSQL epoch read had no lock.** `authorize_bound` and
+  `_bump_epoch` now read `authority_state` with `FOR UPDATE` on the
+  PostgreSQL backend, so a revocation that commits between the read and
+  the INSERT cannot be overtaken. SQLite is unchanged (`BEGIN IMMEDIATE`
+  already serializes it).
+- **The isolated evaluator signed a caller-supplied result.**
+  `run_isolated` no longer accepts `result`, `artifact_digest` or
+  `test_suite_commitment`: the child runs the registered acceptance
+  command, derives the measurement and the environment digest itself,
+  and refuses to sign without one (`measurement_missing`). The evaluator
+  key can no longer be used as a signature oracle.
+- **`AuthorityLedger.publish()` was four transactions.** Epoch, heads and
+  the signed record are now read and written in one control-plane
+  transaction (`publish_authority_snapshot`), and the snapshot signature
+  is verified on read (`readiness()["snapshot_verified"]`); a tampered
+  snapshot is not ready.
+- **`authority_epoch` / `authority_snapshot_digest` had two meanings.**
+  Both commit paths now derive them from the ledger inside the
+  committing transaction, through one function. The epoch is the ledger
+  epoch (0 for an empty ledger), not the checkpoint sequence.
+- **Independence is signed by the evaluator, not asserted by the
+  requester.** `EvaluatorReceiptV2` carries `independence` and
+  `dependency_receipt_digest`; `match_chain` reads them from the receipt,
+  a dependent outcome must name a receipt that exists for the same task,
+  and a request that restates independence differently is refused
+  (`independence_mismatch`).
+- **`evidence_policy.select()` iterated its `Iterable` twice**, so a
+  generator raised `KeyError`. It materializes once.
+- **The monitor and the rollout were not wired.** `AuthorityMonitor` can
+  be given to a gateway and gates readiness (`authority_monitor` check);
+  a `RolloutState` is enforced in `serve()` — shadow delivers nothing
+  (`rollout_shadow`), advisory grants no procedures.
+- **The negative-transfer guard was never applied.** It now runs in
+  `_calibrate` against the candidate's signed failure signatures and the
+  request's task signature.
+- **`migrate_control_plane.py --to 2` silently landed at 3.** An
+  intermediate target now drops the tables a later schema introduced and
+  records the requested version; the downgrade backup is `0600`.
+- **Smaller corrections.** `/livez` and `/readyz` answer before the API
+  key check (a 401 from a liveness probe reads as a dead process);
+  `_ParamStyle` no longer rewrites `?` inside string literals; custody
+  checks the seed's owner as well as its mode bits; a ledger may not
+  sign snapshots with the authorization key; `analyze_report` reports an
+  invalid power requirement instead of falling back silently;
+  `QualificationValidator` puts detail in `details` rather than a
+  duplicate failure entry; `attempt_id` is re-derived at commit; a
+  budget-exceeded five-arm run is not a solve; `rollback()` keeps the
+  gate status it was given; the `ControlPlane` protocol no longer
+  declares `bound_authorizations` twice.
+
+- `RELEASE_SHA256.json` regenerated and `tools/verify_release.py .`
+  verifies the tree (exit 0).
+
+Suite, SQLite profile: **1268 passed, 10 skipped** (including 30
+regressions in `tests/v3/test_v340_review_fixes.py`).
+The PostgreSQL profile is **not re-run in this environment** (no DSN);
+run it per `docs/v3/V340_RUNBOOK.md` §1 before a release. The `FOR UPDATE`
+lock and the additive-column migration are the two paths that only the
+PostgreSQL run exercises.
+
 ## Unreleased — review corrections
 
 - The CLI/HTTP smoke test now reads `sis.__version__` instead of asserting

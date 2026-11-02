@@ -16,6 +16,8 @@ consults it in ``health()``, so an orchestrator removes the replica.
 from __future__ import annotations
 
 import stat
+import threading
+import time
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
@@ -36,17 +38,47 @@ class Finding:
 
 
 class AuthorityMonitor:
-    """Read-only consistency scan over the durable authority stores."""
+    """Read-only consistency scan over the durable authority stores.
+
+    A scan reads every verified and legacy outcome, so it is cached for
+    ``cache_seconds`` (default 30): readiness probes run every few
+    seconds and must not turn into a full-table scan per probe. Use
+    ``refresh()`` to force a fresh report.
+    """
 
     def __init__(self, *, control_plane, ledger=None, custody=None,
-                 registry=None, clock=None) -> None:
+                 registry=None, clock=None, cache_seconds: float = 30.0):
         self._plane = control_plane
         self._ledger = ledger
         self._custody = custody
         self._registry = registry
-        self._clock = clock
+        self._clock = clock or time.monotonic
+        if not isinstance(cache_seconds, (int, float)) or cache_seconds < 0:
+            raise ValueError("cache_seconds must be nonnegative")
+        self._cache_seconds = float(cache_seconds)
+        self._cached: dict | None = None
+        self._cached_at: float | None = None
+        self._lock = threading.RLock()
 
     def scan(self) -> dict:
+        """Return the current report, reusing a fresh cached one."""
+        with self._lock:
+            now = self._clock()
+            if (self._cached is not None and self._cached_at is not None
+                    and now - self._cached_at < self._cache_seconds):
+                return self._cached
+            report = self._scan()
+            self._cached, self._cached_at = report, now
+            return report
+
+    def refresh(self) -> dict:
+        """Drop the cache and scan again (an incident, not a probe)."""
+        with self._lock:
+            self._cached = None
+            self._cached_at = None
+        return self.scan()
+
+    def _scan(self) -> dict:
         findings: list[Finding] = []
         counts: dict[str, int] = {}
         try:

@@ -58,6 +58,10 @@ class CustodianKey:
             raise CustodyError("unknown_role", self.role)
         if not (isinstance(self.public_hex, str) and len(self.public_hex) == 64):
             raise CustodyError("public_key_invalid", self.role)
+        try:
+            bytes.fromhex(self.public_hex)
+        except ValueError as exc:
+            raise CustodyError("public_key_invalid", self.role) from exc
 
     def __repr__(self) -> str:  # never leak the path into logs
         return (f"CustodianKey(role={self.role!r}, key_id={self.key_id!r},"
@@ -81,11 +85,12 @@ class KeyCustody:
         if role not in SIGNING_ROLES:
             raise CustodyError("role_cannot_sign", role)
         path = Path(seed_path)
-        self._check_seed_file(path)
-        seed = path.read_bytes()
-        if len(seed) != 32:
-            raise CustodyError("seed_malformed", role)
-        public = signatures.public_key(seed).hex()
+        seed = self._read_seed(path)
+        try:
+            public = signatures.public_key(seed).hex()
+        finally:
+            seed = b"\x00" * 32
+            del seed
         key_id = role + "-" + public[:24]
         key = CustodianKey(role=role, key_id=key_id, public_hex=public,
                            seed_path=path)
@@ -139,11 +144,8 @@ class KeyCustody:
         logged, not that the memory is zeroed.
         """
         key = self.key(role)
-        self._check_seed_file(key.seed_path)
-        seed = key.seed_path.read_bytes()
+        seed = self._read_seed(key.seed_path)
         try:
-            if len(seed) != 32:
-                raise CustodyError("seed_malformed", role)
             return signatures.sign(seed, message)
         finally:
             seed = b"\x00" * 32
@@ -193,12 +195,34 @@ class KeyCustody:
             and SERVING_AUTHORITY in self._keys,
         }
 
+    @classmethod
+    def _read_seed(cls, path: Path) -> bytes:
+        """Open the seed without following a link, then re-check it."""
+        cls._check_seed_file(path)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise CustodyError("seed_unreadable", str(path)) from exc
+        try:
+            seed = os.read(descriptor, 33)
+        finally:
+            os.close(descriptor)
+        if len(seed) != 32:
+            raise CustodyError("seed_malformed", str(path))
+        return seed
+
     @staticmethod
     def _check_seed_file(path: Path) -> None:
         try:
-            info = path.stat()
+            # lstat, not stat: a symlink is not a seed with custody. The
+            # link itself can be replaced by anyone who can write the
+            # directory, which is not an owner-only property.
+            info = path.lstat()
         except OSError as exc:
             raise CustodyError("seed_unreadable", str(path)) from exc
+        if stat.S_ISLNK(info.st_mode):
+            raise CustodyError("seed_is_a_symlink", str(path))
         if not stat.S_ISREG(info.st_mode):
             raise CustodyError("seed_not_a_regular_file", str(path))
         if info.st_size != 32:

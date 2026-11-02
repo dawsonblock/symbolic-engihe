@@ -123,6 +123,17 @@ class IsolationProfile:
             "production_ready": self.production_ready,
         }
 
+    @classmethod
+    def from_dict(cls, value: dict) -> "IsolationProfile":
+        """Rebuild the declared profile a parent sent to the worker."""
+        if not isinstance(value, dict):
+            raise IsolationError("profile_invalid")
+        fields = {name: value[name] for name in (
+            "network", "memory_bytes", "cpu_seconds", "wall_seconds",
+            "open_files", "file_bytes", "read_only_root", "inherit_env",
+            "image_digest") if name in value}
+        return cls(**fields)
+
 
 def development_profile() -> IsolationProfile:
     return IsolationProfile(network=NETWORK_HOST, read_only_root=False,
@@ -184,30 +195,38 @@ def _clean_env() -> dict:
     return env
 
 
-def _limits(profile: IsolationProfile):
-    """Apply the POSIX limits this platform supports.
+def apply_limits(profile: IsolationProfile) -> tuple[str, ...]:
+    """Apply the POSIX limits this platform supports, in this process.
+
+    Called by the worker itself rather than through ``preexec_fn``:
+    ``preexec_fn`` runs between fork and exec and is documented as unsafe
+    in a threaded parent. The child applies the same limits to itself and
+    to every process it starts, and reports which ones took.
 
     Each limit is applied independently: a kernel that does not support
     ``RLIMIT_AS`` (macOS in several configurations) must not turn every
-    evaluation into a launch failure. ``applied_limits`` reports which
-    ones a run actually got.
+    evaluation into a launch failure.
     """
-    def apply():  # pragma: no cover - runs in the child
+    try:
         import resource
-        for name, value in (
-            ("RLIMIT_AS", profile.memory_bytes),
-            ("RLIMIT_CPU", profile.cpu_seconds),
-            ("RLIMIT_FSIZE", profile.file_bytes),
-            ("RLIMIT_NOFILE", profile.open_files),
-        ):
-            limit = getattr(resource, name, None)
-            if limit is None:
-                continue
-            try:
-                resource.setrlimit(limit, (value, value))
-            except (ValueError, OSError):
-                continue
-    return apply
+    except ImportError:  # pragma: no cover - non-POSIX
+        return ()
+    applied: list[str] = []
+    for name, value in (
+        ("RLIMIT_AS", profile.memory_bytes),
+        ("RLIMIT_CPU", profile.cpu_seconds),
+        ("RLIMIT_FSIZE", profile.file_bytes),
+        ("RLIMIT_NOFILE", profile.open_files),
+    ):
+        limit = getattr(resource, name, None)
+        if limit is None:
+            continue
+        try:
+            resource.setrlimit(limit, (value, value))
+        except (ValueError, OSError):
+            continue
+        applied.append(name)
+    return tuple(applied)
 
 
 def run_isolated(
@@ -280,7 +299,6 @@ def run_isolated(
         }
         if os.name == "posix":
             launch["start_new_session"] = True
-            launch["preexec_fn"] = _limits(profile)
         proc = subprocess.Popen(argv, **launch)
     except OSError as exc:
         raise IsolationError("worker_launch_failed", str(exc)) from exc
@@ -369,6 +387,7 @@ __all__ = [
     "NETWORK_HOST",
     "NETWORK_LOOPBACK",
     "NETWORK_NONE",
+    "apply_limits",
     "development_profile",
     "production_profile",
     "run_isolated",

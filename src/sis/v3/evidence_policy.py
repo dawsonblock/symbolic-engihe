@@ -128,6 +128,23 @@ class CalibrationPolicy:
     uncertainty_weight_milli: int = 1
     allow_exploratory: bool = False
 
+    def __post_init__(self) -> None:
+        for name, minimum, maximum in (
+            ("min_supporting_attempts", 0, 10_000),
+            ("min_gain_lower_milli", -1000, 1000),
+            ("max_regression_risk_milli", 0, 1000),
+            ("max_token_cost", 1, 1_000_000),
+            ("max_latency_ms", 0, 86_400_000),
+            ("token_weight_milli", 0, 1000),
+            ("latency_weight_milli", 0, 1000),
+            ("uncertainty_weight_milli", 0, 1000),
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or not minimum <= value <= maximum:
+                raise EvidencePolicyError(f"{name}_invalid", str(value))
+        if not isinstance(self.allow_exploratory, bool):
+            raise EvidencePolicyError("allow_exploratory_invalid")
+
     def utility(self, evidence: RuleEvidence) -> int:
         return (evidence.expected_gain_milli
                 - self.token_weight_milli * evidence.token_cost
@@ -212,6 +229,10 @@ def select(
     budget = policy.max_token_cost if token_budget is None \
         else token_budget
     evidence = list(evidence)
+    if len({item.candidate_id for item in evidence}) != len(evidence):
+        # Two declarations for one candidate would rank it twice and
+        # double-count its token cost; the caller must merge them first.
+        raise EvidencePolicyError("duplicate_candidate_id")
     decisions = [policy.decide(item, context) for item in evidence]
     ranked = sorted(
         decisions,

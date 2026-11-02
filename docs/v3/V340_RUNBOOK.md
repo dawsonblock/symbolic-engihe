@@ -16,9 +16,11 @@ a pinned-runtime result.
 python3 -m pytest -q
 ```
 
-Expected, SQLite profile: **1268 passed, 10 skipped**.
-Expected, PostgreSQL profile: run it and record the count; the
-multi-replica profile is not re-run by the SQLite suite.
+Expected, SQLite profile: **1277 passed, 12 skipped**.
+Expected, PostgreSQL profile: **1286 passed, 3 skipped** (measured on
+PostgreSQL 14.20 with the commands below). The 9 tests that only run
+with a DSN are the multi-replica profile; a green SQLite run says
+nothing about them.
 
 Run both before a release. The 7 extra tests in the PostgreSQL run are the
 multi-replica profile; a green SQLite run says nothing about them — it did
@@ -114,7 +116,9 @@ gateway.health()["checks"]["authority_monitor"]   # {"ok": False, ...}
 ```
 
 The scan is a readiness check, not a per-request gate; `serve()` reads
-the kill switch, not the full scan.
+the kill switch, not the full scan. It is cached for 30 seconds
+(`AuthorityMonitor(..., cache_seconds=30)`); call `refresh()` during an
+incident to force a new report.
 
 ## 6. Migration and rollback
 

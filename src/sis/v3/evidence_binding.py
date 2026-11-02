@@ -285,7 +285,10 @@ def match_chain(
             and requester_principal_id):
         raise BindingError("requester_identity_required")
 
-    instant = _instant(now or _utcnow())
+    try:
+        instant = _instant(now or _utcnow())
+    except (TypeError, ValueError) as exc:
+        raise BindingError("clock_invalid") from exc
     revoked_signers = frozenset(revoked_signers)
     revoked_digests = frozenset(revoked_digests)
 

@@ -534,7 +534,8 @@ class _SqlControlPlane:
             return {row[1] for row in rows}
         rows = con.execute(
             "SELECT column_name FROM information_schema.columns"
-            " WHERE table_name=?", (table,)).fetchall()
+            " WHERE table_name=? AND table_schema=current_schema()",
+            (table,)).fetchall()
         return {row[0] for row in rows}
 
     def _ensure_columns(self, con) -> None:
@@ -1075,7 +1076,27 @@ class _SqlControlPlane:
     # ------------------------------------------------------------------ #
     # Schema 3: unified authority ledger
     # ------------------------------------------------------------------ #
+    def _ensure_ledger_row(self, con) -> None:
+        """Create the singleton epoch row if it does not exist.
+
+        ``SELECT … FOR UPDATE`` on a missing row locks nothing, so the
+        first authorization and the first revocation on a fresh ledger
+        could otherwise race with no shared row to serialize on.
+        """
+        statement = (
+            "INSERT OR IGNORE INTO authority_state"
+            " (singleton, epoch, global_disable, disable_reason, updated_at)"
+            " VALUES (1, 0, 0, NULL, ?)"
+            if self.placeholder == "?" else
+            "INSERT INTO authority_state"
+            " (singleton, epoch, global_disable, disable_reason, updated_at)"
+            " VALUES (1, 0, 0, NULL, ?)"
+            " ON CONFLICT (singleton) DO NOTHING")
+        con.execute(statement, (_utcnow(),))
+
     def _ledger_state(self, con, *, for_update: bool = False) -> dict:
+        if for_update:
+            self._ensure_ledger_row(con)
         query = (
             "SELECT epoch, global_disable, disable_reason, updated_at"
             " FROM authority_state WHERE singleton=1")
@@ -1129,7 +1150,7 @@ class _SqlControlPlane:
             raise ControlPlaneError("global_disable_invalid")
         stamp = now or _utcnow()
         with self._transaction() as con:
-            state = self._ledger_state(con)
+            state = self._ledger_state(con, for_update=True)
             if state["global_disable"] == enabled:
                 return state
             epoch = self._bump_epoch(

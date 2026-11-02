@@ -71,7 +71,9 @@ authorization-to-evidence boundary. Baseline and reproduction evidence:
   `_bump_epoch` now read `authority_state` with `FOR UPDATE` on the
   PostgreSQL backend, so a revocation that commits between the read and
   the INSERT cannot be overtaken. SQLite is unchanged (`BEGIN IMMEDIATE`
-  already serializes it).
+  already serializes it). A missing row cannot be locked, so the singleton
+  is seeded inside the locking transaction first — found by the new
+  cross-process test, which failed until the seed was added.
 - **The isolated evaluator signed a caller-supplied result.**
   `run_isolated` no longer accepts `result`, `artifact_digest` or
   `test_suite_commitment`: the child runs the registered acceptance
@@ -108,24 +110,34 @@ authorization-to-evidence boundary. Baseline and reproduction evidence:
 - **Smaller corrections.** `/livez` and `/readyz` answer before the API
   key check (a 401 from a liveness probe reads as a dead process);
   `_ParamStyle` no longer rewrites `?` inside string literals; custody
-  checks the seed's owner as well as its mode bits; a ledger may not
-  sign snapshots with the authorization key; `analyze_report` reports an
-  invalid power requirement instead of falling back silently;
-  `QualificationValidator` puts detail in `details` rather than a
-  duplicate failure entry; `attempt_id` is re-derived at commit; a
-  budget-exceeded five-arm run is not a solve; `rollback()` keeps the
-  gate status it was given; the `ControlPlane` protocol no longer
-  declares `bound_authorizations` twice.
+  rejects a symlinked seed and opens seeds with `O_NOFOLLOW`, checks the
+  seed's owner as well as its mode bits, and validates the public key;
+  a ledger may not sign snapshots with the authorization key;
+  `analyze_report` reports an invalid power requirement instead of
+  falling back silently; `QualificationValidator` puts detail in
+  `details` rather than a duplicate failure entry; `attempt_id` is
+  re-derived at commit; a budget-exceeded five-arm run is not a solve;
+  `rollback()` keeps the gate status it was given; the `ControlPlane`
+  protocol no longer declares `bound_authorizations` twice.
+- **Resource limits moved into the worker.** `preexec_fn` runs between
+  fork and exec and is documented as unsafe in a threaded parent; the
+  child now applies the profile's rlimits to itself, and the limits are
+  inherited by the acceptance command.
+- **The monitor scan is cached** for 30 seconds (`refresh()` forces), so
+  a readiness probe every few seconds is not a full-table scan.
+- **The five-arm plan records a per-task arm order** and computes the
+  abstention, negative-transfer and integrity metrics from the outcomes
+  instead of reporting zeros.
 
 - `RELEASE_SHA256.json` regenerated and `tools/verify_release.py .`
   verifies the tree (exit 0).
 
-Suite, SQLite profile: **1268 passed, 10 skipped** (including 30
+Suite, SQLite profile: **1277 passed, 12 skipped** (including 39
 regressions in `tests/v3/test_v340_review_fixes.py`).
-The PostgreSQL profile is **not re-run in this environment** (no DSN);
-run it per `docs/v3/V340_RUNBOOK.md` §1 before a release. The `FOR UPDATE`
-lock and the additive-column migration are the two paths that only the
-PostgreSQL run exercises.
+Suite, PostgreSQL profile (PostgreSQL 14.20, `SIS_POSTGRES_DSN` set):
+**1286 passed, 3 skipped**. The extra tests are the multi-replica
+profile, including a cross-process test proving a revocation waits for
+the authorization's epoch lock.
 
 ## Unreleased — review corrections
 

@@ -22,6 +22,7 @@ advantage.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -146,16 +147,18 @@ class CampaignPlan:
     def powered(self) -> bool:
         return len(self.task_ids) >= self.required_sample_size
 
-    def arm_order(self) -> tuple[str, ...]:
-        """Deterministic, seed-dependent arm order per task.
+    def arm_order(self, task_id: str | None = None) -> tuple[str, ...]:
+        """Deterministic, seed-dependent arm order for one task.
 
-        The order is fixed by the seed rather than by wall-clock or
+        The order is fixed by the seed and the task, not by wall-clock or
         dictionary order, so a rerun of the same plan runs the same arms
         in the same sequence and a differing result is a real difference.
+        The order is recorded per task in the report so an auditor can
+        check that the campaign followed the plan.
         """
-        return tuple(sorted(
-            ARMS, key=lambda arm: ((self.seed * 2654435761) ^ ord(arm))
-            % 1_000_003))
+        key = f"{self.seed}:{task_id or ''}".encode("utf-8")
+        return tuple(sorted(ARMS, key=lambda arm: hashlib.blake2b(
+            arm.encode("utf-8"), digest_size=8, key=key).digest()))
 
     def to_dict(self) -> dict:
         return {
@@ -168,6 +171,8 @@ class CampaignPlan:
             "seed": self.seed,
             "arms": [config.to_dict() for config in self.design],
             "arm_order": list(self.arm_order()),
+            "task_arm_orders": {task_id: list(self.arm_order(task_id))
+                                for task_id in self.task_ids},
             "budgets": {
                 "max_tokens_per_task": self.max_tokens_per_task,
                 "max_wall_seconds_per_task": self.max_wall_seconds_per_task,
@@ -182,6 +187,9 @@ class ArmOutcome:
     tokens: int
     wall_seconds: float
     tool_calls: int = 0
+    abstained: bool = False
+    negative_transfer: bool = False
+    integrity_failures: int = 0
 
 
 def build_report(plan: CampaignPlan,
@@ -191,11 +199,13 @@ def build_report(plan: CampaignPlan,
     """Assemble the report shape ``analyze_report`` consumes."""
     per_task: list[dict] = []
     totals: dict[str, dict[str, float]] = {
-        arm: {"solved": 0, "tokens": 0, "wall": 0.0, "tools": 0, "n": 0}
+        arm: {"solved": 0, "tokens": 0, "wall": 0.0, "tools": 0, "n": 0,
+              "abstained": 0, "negative": 0, "integrity": 0}
         for arm in ARMS
     }
     for task_id, arms in outcomes:
-        row = {"task_id": task_id, "arms": {}}
+        row = {"task_id": task_id, "arms": {},
+               "arm_order": list(plan.arm_order(task_id))}
         for arm in ARMS:
             outcome = arms.get(arm)
             if outcome is None:
@@ -222,6 +232,9 @@ def build_report(plan: CampaignPlan,
             bucket["tokens"] += outcome.tokens
             bucket["wall"] += outcome.wall_seconds
             bucket["tools"] += outcome.tool_calls
+            bucket["abstained"] += int(outcome.abstained)
+            bucket["negative"] += int(outcome.negative_transfer)
+            bucket["integrity"] += outcome.integrity_failures
             bucket["n"] += 1
         per_task.append(row)
     n = len(per_task)
@@ -232,9 +245,9 @@ def build_report(plan: CampaignPlan,
             "mean_tokens_per_task": bucket["tokens"] / n if n else None,
             "mean_wall_seconds_per_task": bucket["wall"] / n if n else None,
             "mean_tool_calls_per_task": bucket["tools"] / n if n else None,
-            "abstention_rate": 0.0,
-            "negative_transfer_rate": 0.0,
-            "evaluation_integrity_failures": 0,
+            "abstention_rate": bucket["abstained"] / n if n else 0.0,
+            "negative_transfer_rate": bucket["negative"] / n if n else 0.0,
+            "evaluation_integrity_failures": bucket["integrity"],
         }
     return {
         "schema_version": 1,

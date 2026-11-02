@@ -111,7 +111,12 @@ def _bound_receipt(receipt_out: str) -> int:
     from that run, and signs the receipt with the evaluator seed. The
     parent cannot read the key and cannot supply the measurement.
     """
-    from .evaluator_isolation import IsolationError, sign_bound_receipt
+    from .evaluator_isolation import (
+        IsolationError,
+        IsolationProfile,
+        apply_limits,
+        sign_bound_receipt,
+    )
     from .runner import LocalSubprocessExecutor
     from .verifier import EvaluationRejected, OutcomeVerifier
 
@@ -122,6 +127,9 @@ def _bound_receipt(receipt_out: str) -> int:
         print("rejected: binding_not_json", file=sys.stderr)
         return 2
     try:
+        # The child bounds itself: preexec_fn is unsafe in a threaded
+        # parent, and the limits must cover the evaluator's own children.
+        apply_limits(IsolationProfile.from_dict(binding.get("isolation", {})))
         task = TaskEnvelopeV1.from_json(
             json.dumps(binding["task"]).encode("utf-8"))
         executor = LocalSubprocessExecutor(binding.get("executor_root"))

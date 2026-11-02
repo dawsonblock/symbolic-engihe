@@ -23,6 +23,7 @@ from sis.v3.control_plane import (
 )
 from sis.v3.evidence_binding import (
     SigningKey,
+    attempt_id_for_digest,
     attempt_id_for_identity,
     bindings_digest,
     sign_authorization,
@@ -75,7 +76,7 @@ def build_chain(seed: bytes, key_id: str):
         guidance_exposure_digest=unreported_exposure_digest(authorization),
         test_suite_commitment="1" * 64, environment_digest="2" * 64,
         criterion_version="v1", result="pass",
-        independence="independent", dependency_receipt_digest=None,
+            independence="independent", dependency_receipt_digest=None,
         evaluator_identity="sis-v3-test-evaluator", issued_at=ts(3),
         expires_at=ts(60), nonce="receipt-nonce-fixed-1",
         signer_key_id=key_id)
@@ -186,7 +187,7 @@ class CrossProcessTests(unittest.TestCase):
             guidance_exposure_digest=unreported_exposure_digest(committed),
             test_suite_commitment="1" * 64, environment_digest="2" * 64,
             criterion_version="v1", result="pass",
-        independence="independent", dependency_receipt_digest=None,
+            independence="independent", dependency_receipt_digest=None,
             evaluator_identity="sis-v3-test-evaluator", issued_at=ts(3),
             expires_at=ts(120), nonce="receipt-" + nonce,
             signer_key_id=self.key_id)
@@ -287,7 +288,7 @@ class PostgresConstraintTests(unittest.TestCase):
             guidance_exposure_digest=unreported_exposure_digest(committed),
             test_suite_commitment="1" * 64, environment_digest="2" * 64,
             criterion_version="v1", result="pass",
-        independence="independent", dependency_receipt_digest=None,
+            independence="independent", dependency_receipt_digest=None,
             evaluator_identity="sis-v3-test-evaluator", issued_at=ts(3),
             expires_at=ts(60), nonce="pg-receipt-nonce-1",
             signer_key_id=self.key_id)
@@ -309,6 +310,126 @@ class PostgresConstraintTests(unittest.TestCase):
                                     "outcome_already_recorded"):
             self.plane.record_bound_outcome(outcome)
         self.assertEqual(len(self.plane.independent_outcomes()), 1)
+
+
+def _authorize_holding_the_epoch_lock(dsn, seed_hex, key_id, started,
+                                      release, queue) -> None:
+    """Authorize with a guard that holds the transaction open."""
+    plane = PostgresControlPlane(
+        dsn, signing_key=SigningKey(bytes.fromhex(seed_hex), key_id))
+
+    def guard(view):
+        started.set()
+        release.wait(30)
+        return True
+
+    try:
+        record = plane.authorize_bound(
+            attempt_id=attempt_id_for_digest("b" * 64),
+            nonce="pg-lock-nonce", session_digest="b" * 64,
+            execution_identity_digest="b" * 64,
+            requester_principal_id="agent-1", task_id="task-1",
+            repository_id="repo-1", repository_tree_digest=TREE,
+            base_commit_digest=COMMIT, guidance_digest="c" * 64,
+            decision="advisory", expires_at=ts(30),
+            identity_expires_at=ts(30), guard=guard, committed_at=ts(0))
+        queue.put(("accepted", record.authority_epoch))
+    except ControlPlaneError as exc:
+        queue.put(("rejected", exc.reason))
+    finally:
+        plane.close()
+
+
+def _revoke_while_locked(dsn, attempting, queue) -> None:
+    plane = PostgresControlPlane(dsn)
+    attempting.set()
+    try:
+        result = plane.set_authority_revocation(
+            revocation_kind="signer", target="auth-key-1")
+        queue.put(("revoked", result["epoch"]))
+    except ControlPlaneError as exc:
+        queue.put(("error", exc.reason))
+    finally:
+        plane.close()
+
+
+@unittest.skipUnless(DSN, "SIS_POSTGRES_DSN not configured")
+class PostgresEpochLockTests(unittest.TestCase):
+    """A revocation cannot commit while an authorization holds the epoch.
+
+    This is the cross-replica property the SQLite suite cannot show: the
+    thread lock serializes one process, but only the row lock serializes
+    two.
+    """
+
+    def setUp(self):
+        self.plane = PostgresControlPlane(DSN)
+        with self.plane._transaction() as con:
+            for table in ("outcome_v2", "evaluator_receipt_v2",
+                          "attempt_exposure", "authorization_v2",
+                          "guidance_outcome", "authorization_receipt",
+                          "session_nonce", "authority_head",
+                          "authority_event", "authority_snapshot_v2",
+                          "authority_revocation", "authority_subject",
+                          "authority_state"):
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+        self.plane.close()
+        self.seed, _ = signatures.generate_keypair()
+        self.key_id = "auth-key-1"
+        self.plane = PostgresControlPlane(
+            DSN, signing_key=SigningKey(self.seed, self.key_id))
+        self.addCleanup(self.plane.close)
+
+    def test_a_revocation_waits_for_the_authorization_lock(self):
+        context = multiprocessing.get_context("spawn")
+        started = context.Event()
+        release = context.Event()
+        attempting = context.Event()
+        auth_queue = context.Queue()
+        revoke_queue = context.Queue()
+        authorizer = context.Process(
+            target=_authorize_holding_the_epoch_lock,
+            args=(DSN, self.seed.hex(), self.key_id, started, release,
+                  auth_queue))
+        revoker = context.Process(
+            target=_revoke_while_locked,
+            args=(DSN, attempting, revoke_queue))
+        authorizer.start()
+        self.assertTrue(started.wait(30), "authorizer never took the lock")
+        revoker.start()
+        self.assertTrue(attempting.wait(30), "revoker never started")
+        try:
+            revoke_queue.get(timeout=2)
+        except Exception:  # noqa: BLE001 - empty means "still blocked"
+            pass
+        else:
+            self.fail("the revocation committed while the authorization "
+                      "held the epoch row")
+        release.set()
+        self.assertEqual(auth_queue.get(timeout=60)[0], "accepted")
+        verdict, epoch = revoke_queue.get(timeout=60)
+        self.assertEqual(verdict, "revoked")
+        self.assertEqual(epoch, 1)
+        for proc in (authorizer, revoker):
+            proc.join(timeout=60)
+            self.assertFalse(proc.is_alive())
+
+    def test_an_authorization_sees_a_revocation_that_committed_first(self):
+        self.plane.set_authority_revocation(
+            revocation_kind="signer", target="auth-key-1")
+        with self.assertRaisesRegex(ControlPlaneError, "signer_revoked"):
+            self.plane.authorize_bound(
+                attempt_id=attempt_id_for_digest("b" * 64),
+                nonce="pg-lock-nonce-2", session_digest="b" * 64,
+                execution_identity_digest="b" * 64,
+                requester_principal_id="agent-1", task_id="task-1",
+                repository_id="repo-1", repository_tree_digest=TREE,
+                base_commit_digest=COMMIT, guidance_digest="c" * 64,
+                decision="advisory", expires_at=ts(30),
+                identity_expires_at=ts(30), committed_at=ts(0),
+                guard=lambda view: (
+                    "signer_revoked"
+                    if view.is_revoked("signer", "auth-key-1") else True))
 
 
 if __name__ == "__main__":

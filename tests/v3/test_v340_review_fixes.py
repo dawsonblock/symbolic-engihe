@@ -24,6 +24,7 @@ from sis.v3.control_plane import (
 )
 from sis.v3.evidence_binding import SigningKey, attempt_id_for_digest
 from sis.v3.evidence_policy import RuleEvidence, select
+from sis.v3.key_custody import four_identity_custody
 from sis.v3.five_arm import ArmOutcome, build_report, assess
 from sis.v3.learning_qualification import analyze_report
 from sis.v3.operations import AuthorityMonitor
@@ -210,7 +211,10 @@ class PostgresLockTests(unittest.TestCase):
     def test_postgres_reads_the_epoch_row_for_update(self):
         con = self._Con()
         self._plane("%s")._ledger_state(con, for_update=True)
-        self.assertIn("FOR UPDATE", con.sql[0])
+        # The first statement seeds the singleton row (a missing row
+        # cannot be locked); the read that follows takes the lock.
+        self.assertIn("INSERT", con.sql[0])
+        self.assertIn("FOR UPDATE", con.sql[-1])
 
     def test_sqlite_does_not_use_for_update(self):
         con = self._Con()
@@ -474,6 +478,119 @@ class FiveArmBudgetTests(unittest.TestCase):
         verdict = assess(report, plan=campaign)
         self.assertEqual(report["budget_exceeded"], 29)
         self.assertEqual(verdict["solve_rate"]["E"], 0.0)
+
+
+class CustodyHardeningTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.custody = four_identity_custody(self.root / "keys")
+
+    def test_a_symlinked_seed_is_refused(self):
+        from sis.v3.key_custody import EVALUATOR, CustodyError, KeyCustody
+        key = self.custody.key(EVALUATOR)
+        link = self.root / "link.seed"
+        link.symlink_to(key.seed_path)
+        other = KeyCustody(self.root / "second")
+        with self.assertRaisesRegex(CustodyError, "seed_is_a_symlink"):
+            other.enroll(EVALUATOR, link)
+
+    def test_a_non_hex_public_key_is_refused(self):
+        from sis.v3.key_custody import CustodianKey, CustodyError
+        with self.assertRaisesRegex(CustodyError, "public_key_invalid"):
+            CustodianKey(role="evaluator", key_id="k",
+                         public_hex="z" * 64, seed_path=self.root / "x")
+
+
+class MonitorCacheTests(unittest.TestCase):
+    def test_a_scan_is_reused_until_the_cache_expires(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plane = SqliteControlPlane(Path(tmp) / "plane.db")
+            self.addCleanup(plane.close)
+            clock = [0.0]
+            monitor = AuthorityMonitor(control_plane=plane,
+                                       clock=lambda: clock[0],
+                                       cache_seconds=30)
+            first = monitor.scan()
+            self.assertIs(monitor.scan(), first)
+            clock[0] = 31.0
+            second = monitor.scan()
+            self.assertIsNot(second, first)
+            third = monitor.refresh()
+            self.assertIsNot(third, second)
+            self.assertIs(monitor.scan(), third)
+
+    def test_a_zero_cache_scans_every_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plane = SqliteControlPlane(Path(tmp) / "plane.db")
+            self.addCleanup(plane.close)
+            monitor = AuthorityMonitor(control_plane=plane, cache_seconds=0)
+            self.assertIsNot(monitor.scan(), monitor.scan())
+
+
+class PolicyValidationTests(unittest.TestCase):
+    def test_a_negative_weight_is_refused(self):
+        from sis.v3.evidence_policy import CalibrationPolicy, EvidencePolicyError
+        with self.assertRaisesRegex(EvidencePolicyError,
+                                    "token_weight_milli_invalid"):
+            CalibrationPolicy(token_weight_milli=-1)
+
+    def test_a_zero_token_ceiling_is_refused(self):
+        from sis.v3.evidence_policy import CalibrationPolicy, EvidencePolicyError
+        with self.assertRaisesRegex(EvidencePolicyError,
+                                    "max_token_cost_invalid"):
+            CalibrationPolicy(max_token_cost=0)
+
+    def test_duplicate_candidate_declarations_are_refused(self):
+        from sis.v3.evidence_policy import (
+            EvidencePolicyError,
+            RuleEvidence,
+            select,
+        )
+        evidence = RuleEvidence(
+            candidate_id="cand-1", qualification_status="qualified",
+            supporting_attempts=5, counterexamples=0,
+            expected_gain_milli=300, gain_lower_milli=100,
+            gain_upper_milli=500, token_cost=10, latency_ms=10,
+            regression_risk_milli=0)
+        with self.assertRaisesRegex(EvidencePolicyError,
+                                    "duplicate_candidate_id"):
+            select([evidence, evidence], RetrievalContext(language="python"))
+
+
+class FiveArmOrderTests(unittest.TestCase):
+    def test_the_arm_order_is_a_stable_permutation_per_task(self):
+        campaign = plan(tasks=3)
+        for task_id in campaign.task_ids:
+            order = campaign.arm_order(task_id)
+            self.assertEqual(sorted(order), sorted(("A", "B", "C", "D", "E")))
+            self.assertEqual(order, campaign.arm_order(task_id))
+        orders = {campaign.arm_order(task) for task in campaign.task_ids}
+        self.assertGreater(len(orders), 1)
+
+    def test_the_report_records_the_order_and_the_metrics(self):
+        campaign = plan(tasks=2)
+        outcomes = [
+            ("t0", {arm: ArmOutcome(arm=arm, valid_solve=True, tokens=10,
+                                    wall_seconds=1.0, abstained=(arm == "B"),
+                                    negative_transfer=(arm == "C"),
+                                    integrity_failures=(1 if arm == "D" else 0))
+                    for arm in ("A", "B", "C", "D", "E")}),
+            ("t1", {arm: ArmOutcome(arm=arm, valid_solve=True, tokens=10,
+                                    wall_seconds=1.0)
+                    for arm in ("A", "B", "C", "D", "E")}),
+        ]
+        report = build_report(campaign, outcomes)
+        self.assertEqual(report["per_task"][0]["arm_order"],
+                         list(campaign.arm_order("t0")))
+        self.assertEqual(report["governed"]["metrics"]["B"]["abstention_rate"],
+                         0.5)
+        self.assertEqual(
+            report["governed"]["metrics"]["C"]["negative_transfer_rate"], 0.5)
+        self.assertEqual(
+            report["governed"]["metrics"]["D"][
+                "evaluation_integrity_failures"], 1)
 
 
 class RollbackTests(unittest.TestCase):

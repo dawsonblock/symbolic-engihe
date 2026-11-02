@@ -22,16 +22,15 @@ Operating instructions: `docs/v3/V340_RUNBOOK.md`.
 | PR-11 | Evidence-calibrated retrieval and negative-transfer controls | done |
 | PR-12 | Monitoring, staged rollout, reversible migration, recovery drills | done |
 
-Suite, SQLite profile: **1268 passed, 10 skipped**.
-Suite, PostgreSQL profile (`SIS_POSTGRES_DSN` set): run per
-`V340_RUNBOOK.md` §1; it was not re-run in the environment that applied
-the review corrections, so its count is not restated here.
+Suite, SQLite profile: **1277 passed, 12 skipped**.
+Suite, PostgreSQL profile (`SIS_POSTGRES_DSN` set, PostgreSQL 14.20):
+**1286 passed, 3 skipped**.
 
 Baseline was 986 passed, 8 skipped.
 
-The 7 tests that only run with a DSN are the multi-replica profile: 4
-control-plane tests and the 3 PostgreSQL constraint tests in
-`test_v340_concurrency.py`.
+The 9 tests that only run with a DSN are the multi-replica profile: 4
+control-plane tests, the 3 PostgreSQL constraint tests and the 2
+epoch-lock tests in `test_v340_concurrency.py`.
 
 ## PR-01 — evidence chain baseline
 
@@ -133,6 +132,11 @@ authorization. The epoch row is read there — with `SELECT … FOR UPDATE`
 on PostgreSQL, and under SQLite's `BEGIN IMMEDIATE` write lock — so a
 revocation or disable that commits first cannot be overtaken, and a
 decision that observed a stale epoch is refused (`authority_epoch_changed`).
+A missing row cannot be locked, so the singleton is inserted (idempotently)
+inside the locking transaction before the read; without that, the first
+authorization and the first revocation on a fresh ledger could race with
+no shared row to serialize on. `test_v340_concurrency.py` proves the
+lock with two real processes.
 
 `AuthoritySnapshotV2` is signed and monotonic; `publish()` is idempotent
 per epoch and reads the epoch, every head and the signed record in one
@@ -179,6 +183,10 @@ that run, and only then loads the evaluator seed and signs. A binding
 without a measurement is refused (`measurement_missing`), so the
 evaluator key is not a signature oracle for a caller-chosen result.
 
+The child applies the profile's rlimits to itself rather than inheriting
+them through `preexec_fn`, which Python documents as unsafe in a threaded
+parent; the acceptance command inherits the same limits.
+
 ## PR-09 — statistical defensibility
 
 `statistical_power.py` implements the paired McNemar and two-proportion
@@ -213,7 +221,10 @@ token ratio and a verdict: `supported`, `no_evidence`, `regressed`,
 `underpowered`, `no_advantage_after_cost`, or `invalid_holdout`. More
 than twice the tokens for the same solve rate is not an advantage, and a
 run that exceeded its declared token or wall budget is recorded as a
-failure rather than a solve (`budget_exceeded`).
+failure rather than a solve (`budget_exceeded`). The plan records a
+seeded arm order per task, and the report computes abstention,
+negative-transfer and integrity metrics from the outcomes rather than
+reporting zeros.
 
 ## PR-11 — evidence-calibrated retrieval
 
@@ -244,7 +255,8 @@ task. A request that restates independence differently is refused
 - `operations.py` scans for authority inconsistencies with explicit
   severities; `critical` means serving must stop. A gateway given a
   monitor consults it in `health()`, so a critical finding removes the
-  replica from service.
+  replica from service. The scan is cached for 30 seconds (`refresh()`
+  forces) because readiness probes run every few seconds.
 - `rollout.py` enforces shadow → advisory → full, stepwise, with eight
   release gates. A missing gate is a failed gate; rollback is always
   available and keeps the gate status it was given. A gateway given a

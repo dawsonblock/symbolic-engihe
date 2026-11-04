@@ -147,6 +147,42 @@ class ProductionRequirements:
             self.binding_authority, self.ledger))
         return tuple(reasons)
 
+    @classmethod
+    def from_components(cls, *, control_plane, binding_authority, ledger,
+                        monitor, custody, evidence_policy, evidence_provider,
+                        rollout) -> "ProductionRequirements":
+        """Build the profile from the components the gateway actually holds.
+
+        This is the only supported construction path for a production
+        gateway. A caller-supplied profile is never authoritative: it can
+        describe components the gateway does not have.
+        """
+        return cls(control_plane=control_plane,
+                   binding_authority=binding_authority, ledger=ledger,
+                   monitor=monitor, custody=custody,
+                   evidence_policy=evidence_policy,
+                   evidence_provider=evidence_provider, rollout=rollout)
+
+    def components(self) -> dict[str, object]:
+        return {
+            "control_plane": self.control_plane,
+            "binding_authority": self.binding_authority,
+            "ledger": self.ledger,
+            "monitor": self.monitor,
+            "custody": self.custody,
+            "evidence_policy": self.evidence_policy,
+            "evidence_provider": self.evidence_provider,
+            "rollout": self.rollout,
+        }
+
+    def mismatched_components(self, other: "ProductionRequirements"
+                              ) -> tuple[str, ...]:
+        """Names whose object identity differs from another profile."""
+        mine = self.components()
+        theirs = other.components()
+        return tuple(name for name in mine
+                     if mine[name] is not theirs[name])
+
     @property
     def complete(self) -> bool:
         return not self.problems()
@@ -259,22 +295,22 @@ class GovernedServingGateway:
         self._rollout = rollout
         self._monitor = monitor
         self._custody = custody
-        self._production_requirements = production_requirements
         # Bound outcomes require a control plane that can sign an
         # authorization and a key set that can authenticate the evaluator
-        # and harness. Without both this gateway can still serve (guidance
-        # is not the vulnerable surface) but it may not record an outcome
-        # in production, and readiness reports the gap.
+        # and harness.
         self._bound = bool(
             control_plane is not None
             and getattr(control_plane, "supports_bound_authorization",
                         lambda: False)()
             and binding_authority is not None)
+        # Readiness is always derived from the objects this gateway is
+        # actually wired to. ``production_requirements`` remains accepted
+        # for compatibility, but only as an assertion: every component in
+        # it must be the identical object the gateway holds. A green
+        # profile describing components that were never wired is refused.
+        self._production_requirements = None
         if self._production:
-            # A production gateway may not be missing any control. This
-            # is checked here, in health(), and in serve(): a caller that
-            # invokes the gateway directly must not bypass /readyz.
-            requirements = production_requirements or ProductionRequirements(
+            actual = ProductionRequirements.from_components(
                 control_plane=control_plane,
                 binding_authority=binding_authority,
                 ledger=authority_ledger,
@@ -283,8 +319,19 @@ class GovernedServingGateway:
                 evidence_policy=evidence_policy,
                 evidence_provider=evidence_provider,
                 rollout=rollout)
-            self._production_requirements = requirements
-            problems = requirements.problems()
+            if production_requirements is not None:
+                if not isinstance(production_requirements,
+                                  ProductionRequirements):
+                    raise ValueError(
+                        "production_requirements_invalid")
+                mismatched = actual.mismatched_components(
+                    production_requirements)
+                if mismatched:
+                    raise ValueError(
+                        "production_requirements_mismatch:"
+                        + ",".join(mismatched))
+            self._production_requirements = actual
+            problems = actual.problems()
             if problems:
                 raise ValueError(
                     "production_requirements_missing:"
@@ -419,7 +466,7 @@ class GovernedServingGateway:
                 served_map["execution_identity"] = \
                     identity_result.identity.digest
             if self._production_requirements is not None:
-                problems = self._production_requirements.problems()
+                problems = self._current_production_requirements().problems()
                 if problems:
                     # The constructor rejected an incomplete profile; this
                     # catches a component that degraded at runtime.
@@ -561,6 +608,25 @@ class GovernedServingGateway:
     def control_plane(self):
         return self._control_plane
 
+    def _current_production_requirements(self):
+        """Re-derive readiness from the components wired right now.
+
+        The stored profile is never consulted: a caller that replaces it
+        (or a component that degrades) must not be able to make a
+        production gateway look ready.
+        """
+        if not self._production:
+            return None
+        return ProductionRequirements.from_components(
+            control_plane=self._control_plane,
+            binding_authority=self._binding_authority,
+            ledger=self._ledger,
+            monitor=self._monitor,
+            custody=self._custody,
+            evidence_policy=self._evidence_policy,
+            evidence_provider=self._evidence_provider,
+            rollout=self._rollout)
+
     def health(self) -> dict:
         """Readiness of the authority inputs a decision depends on."""
         checks: dict[str, dict] = {}
@@ -623,7 +689,7 @@ class GovernedServingGateway:
                 "may_serve": self._rollout.may_serve(),
             }
         if self._production_requirements is not None:
-            profile = self._production_requirements.to_dict()
+            profile = self._current_production_requirements().to_dict()
             checks["production_profile"] = {"ok": profile["complete"],
                                             **profile}
             ok = ok and profile["complete"]

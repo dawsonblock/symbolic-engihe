@@ -351,6 +351,16 @@ class LineageRegistry:
     def resolve(self, registry_id: str) -> RepositoryLineage | None:
         return self._by_registry.get(registry_id)
 
+    def entries(self) -> tuple[dict, ...]:
+        """Canonical, serializable view used to sign an analysis manifest."""
+        return tuple({
+            "registry_id": entry.registry_id,
+            "lineage_id": entry.lineage_id,
+            "family_id": entry.family_id,
+            "ancestor_registry_id": entry.ancestor_registry_id,
+        } for entry in sorted(self._by_registry.values(),
+                              key=lambda item: item.registry_id))
+
     def __len__(self) -> int:
         return len(self._by_registry)
 

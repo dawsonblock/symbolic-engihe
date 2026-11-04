@@ -21,6 +21,7 @@ from sis.v3.statistical_power import (
     RepositoryLineage,
     sign_preregistration,
 )
+from tests.v3 import five_arm_testkit as kit
 from tests.v3.test_evaluation_certificates import PROTOCOL_DIGEST
 
 
@@ -125,7 +126,9 @@ def outcomes(tasks, *, e_solves=(), b_solves=(), e_tokens=1000,
             arm: ArmOutcome(
                 arm=arm, valid_solve=solved[arm],
                 tokens=e_tokens if arm == "E" else a_tokens,
-                wall_seconds=10.0, tool_calls=5)
+                wall_seconds=10.0, tool_calls=5,
+                receipt=kit.receipt_for(
+                    task, arm, "pass" if solved[arm] else "fail"))
             for arm in ARMS
         }))
     return rows
@@ -133,23 +136,30 @@ def outcomes(tasks, *, e_solves=(), b_solves=(), e_tokens=1000,
 
 def manifest(protocol_digest=PROTOCOL_DIGEST, *, training=("lin-t",),
              holdout=("lin-h",), registered_at="2026-01-01T00:00:00Z",
-             first_evaluation="2026-02-01T00:00:00Z"):
-    preregistration = sign_preregistration(
-        b"\x01" * 32,
-        preregistration_id="pre-1", protocol_digest=protocol_digest,
-        primary_metric="paired solved_delta E vs A",
-        power=power().to_dict(),
-        holdout_lineages=holdout, training_lineages=training,
-        registered_at=registered_at, timestamp_authority="tsa",
-        signer_key_id="tsa-key")
-    lineages = LineageRegistry()
-    lineages.add(RepositoryLineage(
-        registry_id="repo-1", lineage_id=holdout[0], family_id="fam"))
-    return AnalysisManifest(
-        protocol_digest=protocol_digest,
-        preregistration=preregistration, lineages=lineages,
-        first_evaluation_at=first_evaluation,
-        holdout_repositories=("repo-1",))
+             first_evaluation="2026-02-01T00:00:00Z", signed=True):
+    return kit.manifest(
+        protocol_digest=protocol_digest, training=training, holdout=holdout,
+        registered_at=registered_at, first_evaluation=first_evaluation,
+        signed=signed)
+
+
+def authority():
+    return kit.receipt_authority()
+
+
+def trusted_analysis():
+    return kit.trusted_analysis_keys()
+
+
+def trusted_timestamp():
+    return kit.trusted_timestamp_keys()
+
+
+def verdict_for(report, campaign, analysis=None):
+    return assess(report, plan=campaign, analysis=analysis,
+                  receipt_authority=authority(),
+                  trusted_analysis_keys=trusted_analysis(),
+                  trusted_timestamp_keys=trusted_timestamp())
 
 
 class AssessmentTests(unittest.TestCase):
@@ -159,15 +169,15 @@ class AssessmentTests(unittest.TestCase):
             plan(tasks=tasks),
             outcomes(tasks, e_solves={f"t{i}" for i in range(20)}),
             evidence_class="confirmatory")
-        verdict = assess(report, plan=plan(tasks=tasks),
-                         analysis=manifest())
+        verdict = verdict_for(report, plan(tasks=tasks),
+                              analysis=manifest())
         self.assertEqual(verdict["verdict"], "supported")
         self.assertEqual(verdict["evidence_class"], "confirmatory")
 
     def test_the_same_solve_rate_is_no_evidence(self):
         tasks = 29
         report = build_report(plan(tasks=tasks), outcomes(tasks))
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(verdict["verdict"], "no_evidence")
 
     def test_more_tokens_for_the_same_rate_is_not_an_advantage(self):
@@ -176,7 +186,7 @@ class AssessmentTests(unittest.TestCase):
             plan(tasks=tasks),
             outcomes(tasks, e_solves={f"t{i}" for i in range(20)},
                      e_tokens=3000, a_tokens=1000))
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(verdict["verdict"], "no_advantage_after_cost")
         self.assertGreater(verdict["token_ratio"], 2.0)
 
@@ -192,13 +202,17 @@ class AssessmentTests(unittest.TestCase):
         for task, arms in outcomes(tasks):
             rows.append((task, {
                 **arms,
-                "A": ArmOutcome(arm="A", valid_solve=True, tokens=1000,
-                                wall_seconds=10.0, tool_calls=5),
-                "E": ArmOutcome(arm="E", valid_solve=False, tokens=1000,
-                                wall_seconds=10.0, tool_calls=5),
+                "A": ArmOutcome(
+                    arm="A", valid_solve=True, tokens=1000,
+                    wall_seconds=10.0, tool_calls=5,
+                    receipt=kit.receipt_for(task, "A", "pass")),
+                "E": ArmOutcome(
+                    arm="E", valid_solve=False, tokens=1000,
+                    wall_seconds=10.0, tool_calls=5,
+                    receipt=kit.receipt_for(task, "E", "fail")),
             }))
         report = build_report(plan(tasks=tasks), rows)
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(verdict["verdict"], "regressed")
 
     def test_an_undersized_run_is_underpowered(self):
@@ -206,7 +220,7 @@ class AssessmentTests(unittest.TestCase):
         report = build_report(
             plan(tasks=tasks),
             outcomes(tasks, e_solves={f"t{i}" for i in range(9)}))
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(verdict["verdict"], "underpowered")
         self.assertTrue(verdict["underpowered"])
 
@@ -216,7 +230,7 @@ class AssessmentTests(unittest.TestCase):
             plan(tasks=tasks),
             outcomes(tasks, e_solves={f"t{i}" for i in range(20)}),
             holdout_disjoint=False)
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(verdict["verdict"], "invalid_holdout")
 
     def test_component_contrasts_are_reported(self):
@@ -225,7 +239,7 @@ class AssessmentTests(unittest.TestCase):
             plan(tasks=tasks),
             outcomes(tasks, e_solves={f"t{i}" for i in range(20)},
                      b_solves={f"t{i}" for i in range(15)}))
-        verdict = assess(report, plan=plan(tasks=tasks))
+        verdict = verdict_for(report, plan(tasks=tasks))
         self.assertEqual(set(verdict["component_contrasts"]),
                          {"B", "C", "D"})
         self.assertEqual(verdict["overhead"]["A"]["mean_tokens_per_task"],

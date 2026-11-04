@@ -19,6 +19,13 @@ from tests.v3.test_authority_checkpoints import _request
 from tests.v3.test_execution_identity_custody import ProductionFixture
 
 
+class _GreenCustody:
+    """A component that *claims* readiness without holding any seed."""
+
+    def custody_report(self):
+        return {"ready": True}
+
+
 class _Fixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -143,6 +150,38 @@ class ConstructorTests(_Fixture):
         self.assertTrue(health["ready"], health["checks"])
         self.assertTrue(health["checks"]["production_profile"]["ok"])
 
+    def test_a_supplied_green_profile_cannot_describe_unwired_components(self):
+        # The audit bypass: an all-green profile supplied independently of
+        # the actual wiring. ``custody`` is not wired, so a profile that
+        # claims a ready custody object is describing a different gateway.
+        green = self.requirements(custody=_GreenCustody())
+        self.assertTrue(green.complete)
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_mismatch:custody"):
+            self.gateway(custody=None, production_requirements=green)
+
+    def test_a_supplied_profile_of_the_wrong_type_is_refused(self):
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_invalid"):
+            self.gateway(production_requirements=object())
+
+    def test_health_recomputes_readiness_from_the_wired_components(self):
+        gateway = self.gateway()
+        gateway._monitor = None
+        health = gateway.health()
+        self.assertFalse(health["ready"])
+        self.assertIn("monitor_missing",
+                      health["checks"]["production_profile"]["problems"])
+
+    def test_replacing_the_cached_profile_does_not_hide_degradation(self):
+        gateway = self.gateway()
+        gateway._monitor = None
+        gateway._production_requirements = self.requirements()
+        health = gateway.health()
+        self.assertFalse(health["ready"])
+        self.assertIn("monitor_missing",
+                      health["checks"]["production_profile"]["problems"])
+
     def test_a_development_gateway_is_not_subject_to_the_profile(self):
         gateway = GovernedServingGateway(
             self.fixture.registry,
@@ -156,8 +195,10 @@ class ServeTests(_Fixture):
     def test_serve_refuses_when_the_profile_degrades_after_construction(self):
         gateway = self.gateway()
         # A component that was present at construction can degrade at
-        # runtime; serve() re-checks instead of trusting /readyz.
-        gateway._production_requirements = self.requirements(monitor=None)
+        # runtime; serve() re-derives the profile instead of trusting
+        # /readyz or a cached all-green object.
+        gateway._monitor = None
+        gateway._production_requirements = self.requirements()
         guidance = gateway.serve(
             _request(), repository_id="repo-1",
             execution_identity=self.fixture.identity())

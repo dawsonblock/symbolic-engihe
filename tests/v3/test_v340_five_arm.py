@@ -5,6 +5,7 @@ import unittest
 
 from sis.v3.five_arm import (
     ARMS,
+    AnalysisManifest,
     ArmConfiguration,
     ArmOutcome,
     CampaignError,
@@ -14,7 +15,12 @@ from sis.v3.five_arm import (
     build_report,
     validate_design,
 )
-from sis.v3.statistical_power import PowerRequirement
+from sis.v3.statistical_power import (
+    LineageRegistry,
+    PowerRequirement,
+    RepositoryLineage,
+    sign_preregistration,
+)
 from tests.v3.test_evaluation_certificates import PROTOCOL_DIGEST
 
 
@@ -53,7 +59,7 @@ class DesignTests(unittest.TestCase):
         design = (ArmConfiguration(arm="A", label="bare", memory=True),) + \
             FIVE_ARM_DESIGN[1:]
         with self.assertRaisesRegex(CampaignError,
-                                    "baseline_arm_must_be_bare"):
+                                    "arm_component_mapping_invalid"):
             validate_design(design)
 
     def test_component_arm_with_two_components_is_refused(self):
@@ -61,7 +67,7 @@ class DesignTests(unittest.TestCase):
             ArmConfiguration(arm="B", label="two", memory=True, skills=True)
             if config.arm == "B" else config for config in FIVE_ARM_DESIGN)
         with self.assertRaisesRegex(
-                CampaignError, "component_arm_must_isolate_one_component"):
+                CampaignError, "arm_component_mapping_invalid"):
             validate_design(design)
 
     def test_integrated_arm_must_enable_everything(self):
@@ -70,7 +76,7 @@ class DesignTests(unittest.TestCase):
                              skills=True)
             if config.arm == "E" else config for config in FIVE_ARM_DESIGN)
         with self.assertRaisesRegex(CampaignError,
-                                    "integrated_arm_must_enable_everything"):
+                                    "arm_component_mapping_invalid"):
             validate_design(design)
 
     def test_arms_must_be_A_through_E(self):
@@ -125,13 +131,36 @@ def outcomes(tasks, *, e_solves=(), b_solves=(), e_tokens=1000,
     return rows
 
 
+def manifest(protocol_digest=PROTOCOL_DIGEST, *, training=("lin-t",),
+             holdout=("lin-h",), registered_at="2026-01-01T00:00:00Z",
+             first_evaluation="2026-02-01T00:00:00Z"):
+    preregistration = sign_preregistration(
+        b"\x01" * 32,
+        preregistration_id="pre-1", protocol_digest=protocol_digest,
+        primary_metric="paired solved_delta E vs A",
+        power=power().to_dict(),
+        holdout_lineages=holdout, training_lineages=training,
+        registered_at=registered_at, timestamp_authority="tsa",
+        signer_key_id="tsa-key")
+    lineages = LineageRegistry()
+    lineages.add(RepositoryLineage(
+        registry_id="repo-1", lineage_id=holdout[0], family_id="fam"))
+    return AnalysisManifest(
+        protocol_digest=protocol_digest,
+        preregistration=preregistration, lineages=lineages,
+        first_evaluation_at=first_evaluation,
+        holdout_repositories=("repo-1",))
+
+
 class AssessmentTests(unittest.TestCase):
     def test_a_real_improvement_at_comparable_cost_is_supported(self):
         tasks = 29
         report = build_report(
             plan(tasks=tasks),
-            outcomes(tasks, e_solves={f"t{i}" for i in range(20)}))
-        verdict = assess(report, plan=plan(tasks=tasks))
+            outcomes(tasks, e_solves={f"t{i}" for i in range(20)}),
+            evidence_class="confirmatory")
+        verdict = assess(report, plan=plan(tasks=tasks),
+                         analysis=manifest())
         self.assertEqual(verdict["verdict"], "supported")
         self.assertEqual(verdict["evidence_class"], "confirmatory")
 

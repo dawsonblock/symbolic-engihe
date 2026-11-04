@@ -27,8 +27,8 @@ is wire-compatible but not constant-time.
 |---|---|
 | v3.4.0 tree, SQLite profile, pinned runtime | 1296 passed, 12 skipped |
 | v3.4.0 tree, PostgreSQL 14.20 profile | 1305 passed, 3 skipped |
-| v3.5.0 tree, SQLite profile, pinned runtime | 1325 passed, 12 skipped |
-| v3.5.0 tree, PostgreSQL 14.20 profile | 1334 passed, 3 skipped |
+| v3.5.0 tree, SQLite profile, pinned runtime | 1346 passed, 12 skipped |
+| v3.5.0 tree, PostgreSQL 14.20 profile | 1355 passed, 3 skipped |
 
 The 12 SQLite skips are 9 DSN-gated multi-replica tests plus the three
 pre-existing environment skips (Windows ACLs, the skills corpus, the

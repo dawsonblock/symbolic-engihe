@@ -12,7 +12,7 @@ implemented here**. Baseline and measured runs: `V350_BASELINE.md`.
 | PR-00 | Freeze and reproduce baseline | done |
 | PR-01 | Mandatory production authority profile | done |
 | PR-02 | Real evaluator execution isolation | **not implemented** |
-| PR-03 | Five-arm evaluation and evidence integrity | **not implemented** |
+| PR-03 | Five-arm evaluation and evidence integrity | done |
 | PR-04 | Key custody, crypto backend, utility semantics | done |
 | PR-05 | Memory/skill/procedure learning quality | **not implemented** |
 | PR-06 | Powered real-agent efficacy evaluation | **not implemented** |
@@ -53,6 +53,34 @@ backend, an invalid rollout state, the constructor refusals, a complete
 production gateway that serves, and a runtime degradation that makes
 `serve()` abstain.
 
+## PR-03 — five-arm evaluation and evidence integrity
+
+- `validate_design` now requires the exact mapping: A bare, B memory,
+  C skills, D procedures, E all three. A subset chain with the components
+  shuffled is refused (`arm_component_mapping_invalid`).
+- `validate_report(report, plan)` checks the report against the plan it
+  claims to implement: exact task set, no duplicates, all five arms per
+  task, the plan's seeded arm order, the arm configuration digest,
+  positive budgets, a plan digest, and no duplicated receipt. It
+  **recomputes every metric** from row-level outcomes and refuses a
+  report whose aggregate block differs (`metrics_mismatch`).
+- `assess(report, plan, analysis)` returns `invalid_report` when the
+  report does not validate, and `supported` only when a signed
+  `AnalysisManifest` supplies a preregistration, a sample size, a
+  registration time before the first evaluation and lineage-disjoint
+  holdouts that `statistical_power.classify` accepts. An exploratory or
+  demonstration input can never be promoted (`input_evidence_not_confirmatory`),
+  and a significant contrast in an exploratory run is reported as
+  `no_evidence`, not `supported`.
+- `build_report` records `plan_digest`, per-arm `arm_config_digest` and
+  `receipt_id`, so the validator has something to check.
+
+`tests/v3/test_v350_campaign_integrity.py` (21) covers undeclared,
+duplicated and missing tasks, missing arms, a reordered run, a forged
+aggregate, a duplicated receipt, a mismatched arm configuration, a
+different plan, a post-hoc preregistration, lineage leakage, an
+exploratory input, a missing manifest, and the exact A/B/C/D/E mapping.
+
 ## PR-04 — custody, crypto backend, utility semantics
 
 - `custody_report()` now re-checks every seed on disk (regular file, not
@@ -85,11 +113,6 @@ These are deliberately not claimed:
   a target runtime this repository does not ship. The current profile
   refuses an unisolated run as a *production evaluation*
   (`verify_profile`), but that is a declaration, not enforcement.
-- **PR-03.** The five-arm design still accepts any singleton B/C/D, and
-  `assess()` does not validate report rows against the plan, recompute
-  metrics from authenticated rows, bind a signed analysis manifest or
-  enforce an evidence ceiling. The audit's "supported + confirmatory for
-  undeclared exploratory rows" reproducer is therefore still open.
 - **PR-05.** Candidate lifecycle, provenance, revocation/requalification
   and conflict/degradation checks are not extended here.
 - **PR-06.** A powered, preregistered, blind, lineage-separated live
@@ -104,8 +127,8 @@ These are deliberately not claimed:
 
 | Run | Result |
 |---|---|
-| SQLite, pinned runtime | 1325 passed, 12 skipped |
-| PostgreSQL 14.20 | 1334 passed, 3 skipped |
+| SQLite, pinned runtime | 1346 passed, 12 skipped |
+| PostgreSQL 14.20 | 1355 passed, 3 skipped |
 | `tools/check_runtime.py` | pins match |
 | `tools/reproduce_v340_defects.py` | 0 open |
 | `tools/verify_release.py .` | manifest verifies |

@@ -26,6 +26,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from .contracts import canonical_digest
 from .governed_eval import GOVERNED_ARMS
 from .learning_qualification import (
     CONFIRMATORY,
@@ -33,11 +34,26 @@ from .learning_qualification import (
     paired_contrast,
     resource_overhead,
 )
-from .statistical_power import PowerRequirement
+from .statistical_power import (
+    LineageRegistry,
+    PowerRequirement,
+    PreregistrationRecord,
+    classify,
+)
 
 ARMS = tuple(GOVERNED_ARMS)
 
 COMPONENTS = ("memory", "skills", "procedures")
+
+#: The only controlled mapping. B/C/D must isolate *their* component, not
+#: merely some singleton subset of E.
+_EXPECTED_COMPONENTS = {
+    "A": frozenset(),
+    "B": frozenset({"memory"}),
+    "C": frozenset({"skills"}),
+    "D": frozenset({"procedures"}),
+    "E": frozenset(COMPONENTS),
+}
 
 
 class CampaignError(RuntimeError):
@@ -93,27 +109,22 @@ FIVE_ARM_DESIGN: tuple[ArmConfiguration, ...] = (
 
 def validate_design(design: Sequence[ArmConfiguration] = FIVE_ARM_DESIGN
                     ) -> None:
-    """Every arm must be a subset of E and differ from A by its component."""
+    """Every arm must enable exactly its declared component.
+
+    A subset chain is not enough: B=skills, C=memory, D=procedures is a
+    subset chain and a different experiment. The mapping is fixed.
+    """
     arms = tuple(config.arm for config in design)
     if arms != ARMS:
         raise CampaignError("design_must_be_A_B_C_D_E", ",".join(arms))
     by_arm = {config.arm: config for config in design}
-    if by_arm["A"].components:
-        raise CampaignError("baseline_arm_must_be_bare")
-    integrated = set(by_arm["E"].components)
-    if integrated != set(COMPONENTS):
-        raise CampaignError("integrated_arm_must_enable_everything")
-    for arm in ("B", "C", "D"):
-        components = set(by_arm[arm].components)
-        if len(components) != 1:
-            raise CampaignError("component_arm_must_isolate_one_component",
-                                arm)
-        if not components <= integrated:
-            raise CampaignError("component_arm_not_subset_of_E", arm)
     for arm in ARMS:
-        config = by_arm[arm]
-        if arm != "A" and not config.components:
-            raise CampaignError("component_arm_is_empty", arm)
+        components = frozenset(by_arm[arm].components)
+        if components != _EXPECTED_COMPONENTS[arm]:
+            raise CampaignError(
+                "arm_component_mapping_invalid",
+                f"{arm}={sorted(components)} expected="
+                f"{sorted(_EXPECTED_COMPONENTS[arm])}")
 
 
 @dataclass(frozen=True)
@@ -199,6 +210,7 @@ class ArmOutcome:
     abstained: bool = False
     negative_transfer: bool = False
     integrity_failures: int = 0
+    receipt_id: str | None = None
 
 
 def build_report(plan: CampaignPlan,
@@ -232,6 +244,11 @@ def build_report(plan: CampaignPlan,
                 "valid_solve": solved,
                 "budget_exceeded": exceeded,
                 "error": None,
+                "receipt_id": outcome.receipt_id,
+                "arm_config_digest": canonical_digest(
+                    "arm_configuration", 1,
+                    next(config for config in plan.design
+                         if config.arm == arm).to_dict()),
                 "tokens": outcome.tokens,
                 "wall_seconds": outcome.wall_seconds,
                 "tool_calls": outcome.tool_calls,
@@ -263,6 +280,7 @@ def build_report(plan: CampaignPlan,
         "kind": "controlled_five_arm_campaign",
         "protocol_digest": plan.protocol.get("protocol_digest"),
         "plan": plan.to_dict(),
+        "plan_digest": canonical_digest("campaign_plan", 1, plan.to_dict()),
         "holdout_disjoint": holdout_disjoint,
         "per_task": per_task,
         "governed": {
@@ -281,14 +299,149 @@ def build_report(plan: CampaignPlan,
     }
 
 
-def assess(report: Mapping, *, plan: CampaignPlan) -> dict:
-    """The E-vs-A verdict, including the after-cost comparison."""
+@dataclass(frozen=True)
+class ReportValidation:
+    """Whether a report is a complete, internally consistent run."""
+
+    ok: bool
+    problems: tuple[str, ...]
+    metrics: Mapping
+
+
+def _recompute_metrics(per_task: Sequence[Mapping]) -> dict:
+    """Recompute every metric from row-level outcomes.
+
+    The report's aggregate block is never trusted: a caller that can
+    write ``solved_task_rate`` can also write a favourable one.
+    """
+    totals = {arm: {"solved": 0, "tokens": 0, "wall": 0.0, "tools": 0,
+                    "n": 0, "abstained": 0, "negative": 0, "integrity": 0}
+              for arm in ARMS}
+    for row in per_task:
+        for arm in ARMS:
+            outcome = row["arms"][arm]
+            exceeded = bool(outcome.get("budget_exceeded"))
+            solved = bool(outcome.get("valid_solve")) and not exceeded
+            bucket = totals[arm]
+            bucket["solved"] += int(solved)
+            bucket["tokens"] += outcome.get("tokens") or 0
+            bucket["wall"] += outcome.get("wall_seconds") or 0.0
+            bucket["tools"] += outcome.get("tool_calls") or 0
+            bucket["abstained"] += int(bool(outcome.get("abstained")))
+            bucket["negative"] += int(bool(outcome.get("negative_transfer")))
+            bucket["integrity"] += int(outcome.get("integrity_failures") or 0)
+            bucket["n"] += 1
+    n = len(per_task)
+    return {
+        arm: {
+            "solved_task_rate": bucket["solved"] / n if n else 0.0,
+            "mean_tokens_per_task": bucket["tokens"] / n if n else None,
+            "mean_wall_seconds_per_task": bucket["wall"] / n if n else None,
+            "mean_tool_calls_per_task": bucket["tools"] / n if n else None,
+            "abstention_rate": bucket["abstained"] / n if n else 0.0,
+            "negative_transfer_rate": bucket["negative"] / n if n else 0.0,
+            "evaluation_integrity_failures": bucket["integrity"],
+        }
+        for arm, bucket in totals.items()
+    }
+
+
+def validate_report(report: Mapping, plan: CampaignPlan) -> ReportValidation:
+    """Check a report against the plan it claims to implement.
+
+    Undeclared, duplicated or missing tasks; missing arms; a reordered
+    run; a different arm configuration; a duplicated receipt; mismatched
+    budgets or a forged aggregate are all failures. An incomplete run is
+    incomplete, not confirmatory.
+    """
+    problems: list[str] = []
+    per_task = report.get("per_task")
+    if not isinstance(per_task, list):
+        return ReportValidation(False, ("per_task_invalid",), {})
+    task_ids = [row.get("task_id") for row in per_task]
+    if any(not isinstance(task, str) or not task for task in task_ids):
+        problems.append("task_id_invalid")
+    if len(set(task_ids)) != len(task_ids):
+        problems.append("task_id_duplicated")
+    if set(task_ids) != set(plan.task_ids):
+        problems.append("task_set_mismatch")
+    if len(task_ids) != len(plan.task_ids):
+        problems.append("task_count_mismatch")
+    receipts: list[str] = []
+    for row in per_task:
+        task = row.get("task_id")
+        arms = row.get("arms")
+        if not isinstance(arms, Mapping) or set(arms) != set(ARMS):
+            problems.append(f"arm_set_mismatch:{task}")
+            continue
+        if list(row.get("arm_order") or ()) != list(plan.arm_order(task)):
+            problems.append(f"arm_order_mismatch:{task}")
+        for arm in ARMS:
+            outcome = arms[arm]
+            if not isinstance(outcome, Mapping):
+                problems.append(f"arm_outcome_invalid:{task}/{arm}")
+                continue
+            expected = canonical_digest(
+                "arm_configuration", 1,
+                next(config for config in plan.design
+                     if config.arm == arm).to_dict())
+            if outcome.get("arm_config_digest") != expected:
+                problems.append(f"arm_config_mismatch:{task}/{arm}")
+            if outcome.get("budget_exceeded") not in (True, False):
+                problems.append(f"budget_flag_invalid:{task}/{arm}")
+            receipt = outcome.get("receipt_id")
+            if receipt is not None:
+                receipts.append(receipt)
+    if len(set(receipts)) != len(receipts):
+        problems.append("receipt_duplicated")
+    declared = report.get("plan") or {}
+    if declared.get("seed") != plan.seed:
+        problems.append("plan_seed_mismatch")
+    if declared.get("protocol_digest") != plan.protocol.get("protocol_digest"):
+        problems.append("plan_protocol_mismatch")
+    if declared.get("budgets") != plan.to_dict()["budgets"]:
+        problems.append("plan_budget_mismatch")
+    if report.get("plan_digest") != canonical_digest(
+            "campaign_plan", 1, plan.to_dict()):
+        problems.append("plan_digest_mismatch")
+    if report.get("protocol_digest") != plan.protocol.get("protocol_digest"):
+        problems.append("protocol_digest_mismatch")
+    metrics = _recompute_metrics(per_task) if not problems else {}
+    if metrics and report.get("governed", {}).get("metrics") != metrics:
+        problems.append("metrics_mismatch")
+    return ReportValidation(not problems, tuple(problems), metrics)
+
+
+@dataclass(frozen=True)
+class AnalysisManifest:
+    """The signed analysis inputs a confirmatory claim must be bound to."""
+
+    protocol_digest: str
+    preregistration: PreregistrationRecord | None
+    lineages: LineageRegistry | None
+    first_evaluation_at: str | None
+    holdout_repositories: tuple[str, ...] = ()
+
+
+def assess(report: Mapping, *, plan: CampaignPlan,
+           analysis: AnalysisManifest | None = None) -> dict:
+    """The E-vs-A verdict, including the after-cost comparison.
+
+    A report that does not validate against its plan is ``invalid_report``.
+    ``supported`` additionally requires a signed analysis manifest whose
+    preregistration, sample size, timing and lineage separation hold, and
+    an input evidence class that is not already exploratory.
+    """
+    validation = validate_report(report, plan)
+    problems = list(validation.problems)
     decisive = paired_contrast(report, baseline="A", treatment="E")
     overhead = resource_overhead(report)
-    a_solved = report["governed"]["metrics"]["A"]["solved_task_rate"]
-    e_solved = report["governed"]["metrics"]["E"]["solved_task_rate"]
-    a_tokens = overhead["A"]["mean_tokens_per_task"]
-    e_tokens = overhead["E"]["mean_tokens_per_task"]
+    metrics = validation.metrics or report.get("governed", {}).get(
+        "metrics", {})
+    a_solved = metrics.get("A", {}).get("solved_task_rate", 0.0)
+    e_solved = metrics.get("E", {}).get("solved_task_rate", 0.0)
+    a_tokens = overhead.get("A", {}).get("mean_tokens_per_task")
+    e_tokens = overhead.get("E", {}).get("mean_tokens_per_task")
     token_ratio = (e_tokens / a_tokens
                    if a_tokens and e_tokens is not None else None)
     # A component arm beating E would mean the integrated system adds
@@ -297,9 +450,36 @@ def assess(report: Mapping, *, plan: CampaignPlan) -> dict:
     for arm in ("B", "C", "D"):
         component_arms[arm] = paired_contrast(
             report, baseline=arm, treatment="E")
-    underpowered = len(report["per_task"]) < plan.required_sample_size
-    if not report.get("holdout_disjoint", True):
+    observed = len(report.get("per_task", []))
+    underpowered = observed < plan.required_sample_size
+    evidence_class = EXPLORATORY
+    classification = None
+    if analysis is None:
+        problems.append("analysis_manifest_missing")
+    else:
+        if analysis.protocol_digest != plan.protocol.get("protocol_digest"):
+            problems.append("analysis_protocol_mismatch")
+        verdict_obj = classify(
+            preregistration=analysis.preregistration,
+            observed_sample_size=observed,
+            first_evaluation_at=analysis.first_evaluation_at,
+            holdout_repositories=analysis.holdout_repositories,
+            lineages=analysis.lineages)
+        classification = verdict_obj.as_dict()
+        problems.extend(verdict_obj.reasons)
+        if verdict_obj.ok:
+            evidence_class = CONFIRMATORY
+    if report.get("evidence_class") in (EXPLORATORY, "demonstration"):
+        # An exploratory or demonstration input can never be promoted by
+        # a helper downstream.
+        evidence_class = EXPLORATORY
+        problems.append("input_evidence_not_confirmatory")
+    if not validation.ok:
+        verdict = "invalid_report"
+        evidence_class = "invalid"
+    elif not report.get("holdout_disjoint", True):
         verdict = "invalid_holdout"
+        evidence_class = "invalid"
     elif decisive["delta"] < 0:
         verdict = "regressed"
     elif decisive["delta"] == 0 or not decisive["significant"]:
@@ -307,10 +487,10 @@ def assess(report: Mapping, *, plan: CampaignPlan) -> dict:
     elif underpowered:
         verdict = "underpowered"
     elif token_ratio is not None and token_ratio > 2.0:
-        # Same-or-better solve rate at more than twice the tokens is not
-        # a demonstrated advantage; it is a more expensive way to reach
-        # the same answer.
         verdict = "no_advantage_after_cost"
+    elif evidence_class != CONFIRMATORY:
+        # A significant contrast in an exploratory run is not a claim.
+        verdict = "no_evidence"
     else:
         verdict = "supported"
     return {
@@ -322,12 +502,14 @@ def assess(report: Mapping, *, plan: CampaignPlan) -> dict:
         "mean_tokens": {"A": a_tokens, "E": e_tokens},
         "token_ratio": token_ratio,
         "required_sample_size": plan.required_sample_size,
-        "observed_sample_size": len(report["per_task"]),
+        "observed_sample_size": observed,
         "underpowered": underpowered,
         "budget_exceeded": report.get("budget_exceeded", 0),
-        "evidence_class": (CONFIRMATORY if not underpowered
-                           and report.get("holdout_disjoint", True)
-                           else EXPLORATORY),
+        "evidence_class": evidence_class,
+        "problems": problems,
+        "validation": {"ok": validation.ok,
+                       "problems": list(validation.problems)},
+        "classification": classification,
         "overhead": overhead,
     }
 
@@ -338,9 +520,12 @@ __all__ = [
     "ArmOutcome",
     "COMPONENTS",
     "CampaignError",
+    "AnalysisManifest",
     "CampaignPlan",
     "FIVE_ARM_DESIGN",
+    "ReportValidation",
     "assess",
     "build_report",
     "validate_design",
+    "validate_report",
 ]

@@ -1,4 +1,4 @@
-## Unreleased — SIS v3.5.0 engineering remediation (PR-00, PR-01, PR-04)
+## Unreleased — SIS v3.5.0 engineering remediation (PR-00, PR-01, PR-03, PR-04)
 
 Implements the parts of the v3.5.0 plan that can be built and verified in
 this repository. Baseline: `docs/v3/V350_BASELINE.md`; status and the
@@ -17,6 +17,16 @@ explicit not-implemented list: `docs/v3/V350_IMPLEMENTATION.md`.
   readiness. Production has exactly one commit path (the ledger); the
   direct `commit_bound_authorization` branch is guarded. Tests:
   `test_v350_production_profile.py` (15).
+- **PR-03** five-arm integrity. `validate_design` requires the exact
+  A/B/C/D/E mapping; `validate_report` checks the task set, all five
+  arms, the seeded order, arm configuration digests, budgets, plan digest,
+  duplicate receipts, and **recomputes every metric** from row-level
+  outcomes. `assess` returns `invalid_report` for an invalid report and
+  `supported` only with a signed `AnalysisManifest` (preregistration,
+  sample size, registration before the first evaluation, lineage-disjoint
+  holdouts). Exploratory input can never be promoted. Tests:
+  `test_v350_campaign_integrity.py` (21), including the audit's
+  "confirmatory from undeclared exploratory rows" reproducer.
 - **PR-04** custody readiness re-checks every seed on disk (mode, owner,
   symlink, size) and requires every signing role; a chmod after
   enrollment makes `ready` false. `require_vetted_backend` refuses the
@@ -28,13 +38,12 @@ explicit not-implemented list: `docs/v3/V350_IMPLEMENTATION.md`.
 - Version 3.5.0.
 
 **Not implemented here, and not claimed:** PR-02 (real sandbox backend and
-separate signer), PR-03 (campaign/report integrity and evidence ceiling),
-PR-05 (learning lifecycle), PR-06 (powered live study), and the
-operational half of PR-07 (structured metrics, signed CI provenance,
-staged approvals). See `V350_IMPLEMENTATION.md`.
+separate signer), PR-05 (learning lifecycle), PR-06 (powered live study),
+and the operational half of PR-07 (structured metrics, signed CI
+provenance, staged approvals). See `V350_IMPLEMENTATION.md`.
 
-Suite, SQLite profile: **1325 passed, 12 skipped**.
-Suite, PostgreSQL profile (14.20, `SIS_POSTGRES_DSN` set): **1334 passed,
+Suite, SQLite profile: **1346 passed, 12 skipped**.
+Suite, PostgreSQL profile (14.20, `SIS_POSTGRES_DSN` set): **1355 passed,
 3 skipped**.
 
 ## Unreleased — SIS v3.4.0 evidence-chain and authority upgrade (PR-01…PR-12)

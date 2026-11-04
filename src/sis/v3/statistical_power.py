@@ -237,7 +237,9 @@ class PreregistrationRecord:
 def sign_preregistration(seed: bytes, **fields) -> PreregistrationRecord:
     power = fields.get("power")
     if isinstance(power, Mapping):
-        fields["power"] = PowerRequirement(**power)
+        # A serialized requirement carries the derived sample size;
+        # from_dict ignores derived fields instead of rejecting them.
+        fields["power"] = PowerRequirement.from_dict(power)
     unsigned = PreregistrationRecord(
         preregistration_id=fields["preregistration_id"],
         protocol_digest=fields["protocol_digest"],

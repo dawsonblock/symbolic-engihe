@@ -1,5 +1,9 @@
 # SIS v3.4.0 operator runbook
 
+> v3.5.0 adds a mandatory production profile and custody/crypto
+> checks. See `V350_IMPLEMENTATION.md` for the current status and
+> `V350_BASELINE.md` for the measured baseline.
+
 Every command below runs from the tree root with `PYTHONPATH=src:.`.
 
 ## 1. Pre-flight
@@ -16,8 +20,8 @@ a pinned-runtime result.
 python3 -m pytest -q
 ```
 
-Expected, SQLite profile: **1296 passed, 12 skipped**.
-Expected, PostgreSQL profile: **1305 passed, 3 skipped** (measured on
+Expected, SQLite profile: **1325 passed, 12 skipped**.
+Expected, PostgreSQL profile: **1334 passed, 3 skipped** (measured on
 PostgreSQL 14.20 with the commands below). The 9 tests that only run
 with a DSN are the multi-replica profile; a green SQLite run says
 nothing about them.

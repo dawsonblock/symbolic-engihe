@@ -41,7 +41,10 @@ Isolation invariants:
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Callable, Mapping
+
+from . import signatures
 
 from .candidates import CandidateError, CandidateRegistry
 from .composition import compose_guidance
@@ -81,6 +84,103 @@ _POLICY = {
 _POLICY_DIGEST = canonical_digest("guidance_policy", 1, _POLICY)
 
 
+@dataclass(frozen=True)
+class ProductionRequirements:
+    """The components a production gateway may not be missing.
+
+    ``problems()`` is the single place that decides whether a production
+    deployment is complete. The constructor calls it, ``health()`` calls
+    it again, and ``serve()`` calls it before issuing guidance: a caller
+    that invokes the gateway directly must not be able to bypass the
+    readiness surface.
+    """
+
+    control_plane: object
+    binding_authority: object
+    ledger: object
+    monitor: object
+    custody: object
+    evidence_policy: object
+    evidence_provider: object
+    rollout: object
+
+    def problems(self) -> tuple[str, ...]:
+        reasons: list[str] = []
+        for name in ("control_plane", "binding_authority", "ledger",
+                     "monitor", "custody", "evidence_policy",
+                     "evidence_provider", "rollout"):
+            if getattr(self, name) is None:
+                reasons.append(f"{name}_missing")
+        if self.control_plane is not None and not getattr(
+                self.control_plane, "supports_bound_authorization",
+                lambda: False)():
+            reasons.append("control_plane_unbound")
+        if self.ledger is not None and getattr(
+                self.ledger, "plane", None) is not self.control_plane:
+            reasons.append("ledger_plane_mismatch")
+        if self.monitor is not None and getattr(
+                self.monitor, "_plane", None) is not self.control_plane:
+            reasons.append("monitor_plane_mismatch")
+        if self.custody is not None:
+            try:
+                report = self.custody.custody_report()
+            except Exception:  # noqa: BLE001 - fail closed
+                reasons.append("custody_unreadable")
+            else:
+                if not report.get("ready"):
+                    reasons.append("custody_not_ready")
+        if self.evidence_policy is not None and not callable(
+                getattr(self.evidence_policy, "digest", None)):
+            reasons.append("evidence_policy_invalid")
+        if self.evidence_provider is not None and not callable(
+                self.evidence_provider):
+            reasons.append("evidence_provider_invalid")
+        if self.rollout is not None and getattr(
+                self.rollout, "stage", None) not in ("shadow", "advisory",
+                                                     "full"):
+            reasons.append("rollout_invalid")
+        try:
+            signatures.require_vetted_backend(production=True)
+        except signatures.CryptoBackendError:
+            reasons.append("crypto_backend_not_vetted")
+        reasons.extend(_signer_separation_problems(
+            self.binding_authority, self.ledger))
+        return tuple(reasons)
+
+    @property
+    def complete(self) -> bool:
+        return not self.problems()
+
+    def to_dict(self) -> dict:
+        return {"complete": self.complete,
+                "problems": list(self.problems())}
+
+
+def _signer_separation_problems(binding_authority, ledger) -> list[str]:
+    """One role per key: evaluator, harness, authorization, ledger."""
+    if binding_authority is None or ledger is None:
+        return []
+    groups = {
+        "evaluator": set(getattr(binding_authority,
+                                 "evaluator_key_ids", lambda: ())()),
+        "harness": set(getattr(binding_authority,
+                               "harness_key_ids", lambda: ())()),
+        "authorization": set(getattr(binding_authority,
+                                     "authorization_key_ids", lambda: ())()),
+        "ledger": {getattr(ledger, "key_id", None)},
+    }
+    problems: list[str] = []
+    for name in ("evaluator", "harness", "authorization"):
+        if not groups[name]:
+            problems.append(f"{name}_keys_missing")
+    names = list(groups)
+    for index, left in enumerate(names):
+        for right in names[index + 1:]:
+            if groups[left] & groups[right]:
+                problems.append(f"{left}_and_{right}_share_a_key")
+    return problems
+
+
 def _unique_digests(digests) -> list[str]:
     """Ordered de-dup: one audit entry per delivered candidate."""
     out: list[str] = []
@@ -118,6 +218,8 @@ class GovernedServingGateway:
         evidence_provider=None,
         rollout=None,
         monitor=None,
+        custody=None,
+        production_requirements: "ProductionRequirements | None" = None,
     ) -> None:
         self._candidates = registry
         self._identity_authority = execution_identity_authority
@@ -135,6 +237,7 @@ class GovernedServingGateway:
             # protection. Production must share the nonce constraint.
             raise ValueError("production_requires_control_plane")
         self._control_plane = control_plane
+        self._production = bool(production)
         if authority_ledger is not None and (
                 control_plane is None or binding_authority is None):
             # The ledger is consulted only on the bound commit path; a
@@ -155,6 +258,8 @@ class GovernedServingGateway:
         # stage its operator configured elsewhere.
         self._rollout = rollout
         self._monitor = monitor
+        self._custody = custody
+        self._production_requirements = production_requirements
         # Bound outcomes require a control plane that can sign an
         # authorization and a key set that can authenticate the evaluator
         # and harness. Without both this gateway can still serve (guidance
@@ -165,13 +270,31 @@ class GovernedServingGateway:
             and getattr(control_plane, "supports_bound_authorization",
                         lambda: False)()
             and binding_authority is not None)
+        if self._production:
+            # A production gateway may not be missing any control. This
+            # is checked here, in health(), and in serve(): a caller that
+            # invokes the gateway directly must not bypass /readyz.
+            requirements = production_requirements or ProductionRequirements(
+                control_plane=control_plane,
+                binding_authority=binding_authority,
+                ledger=authority_ledger,
+                monitor=monitor,
+                custody=custody,
+                evidence_policy=evidence_policy,
+                evidence_provider=evidence_provider,
+                rollout=rollout)
+            self._production_requirements = requirements
+            problems = requirements.problems()
+            if problems:
+                raise ValueError(
+                    "production_requirements_missing:"
+                    + ",".join(problems))
         self._used_nonces = used_session_nonces \
             if used_session_nonces is not None else set()
         # Production serving requires an independently checkpointed
         # registry. Development/tests may run uncheckpointed, but the
         # audit record says so explicitly; it is never presented as
         # production-qualified serving.
-        self._production = bool(production)
         self._registry = repository_registry
         self._strict = strict_gateway
         self._allow_global = allow_global_scope
@@ -295,6 +418,16 @@ class GovernedServingGateway:
                         identity_result.identity.session_nonce)
                 served_map["execution_identity"] = \
                     identity_result.identity.digest
+            if self._production_requirements is not None:
+                problems = self._production_requirements.problems()
+                if problems:
+                    # The constructor rejected an incomplete profile; this
+                    # catches a component that degraded at runtime.
+                    served_map["production_problems"] = list(problems)
+                    out = _abstain("production_profile_incomplete", (
+                        "Production requirements are not met.",))
+                    self._emit(served_map, out)
+                    return out
             if self._rollout is not None and not self._rollout.may_serve():
                 # Shadow observes and records, and never delivers. The
                 # identity is verified first so the audit record says who
@@ -489,6 +622,11 @@ class GovernedServingGateway:
                 "failed_gates": list(self._rollout.failed_gates),
                 "may_serve": self._rollout.may_serve(),
             }
+        if self._production_requirements is not None:
+            profile = self._production_requirements.to_dict()
+            checks["production_profile"] = {"ok": profile["complete"],
+                                            **profile}
+            ok = ok and profile["complete"]
         if self._ledger is not None:
             # A configured ledger is the authority the decisions cite; if
             # its signed snapshot is missing, stale or unverifiable, this
@@ -616,6 +754,11 @@ class GovernedServingGateway:
                         record.execution_identity_digest
                     served_map["authority_epoch"] = record.authority_epoch
                 elif self._control_plane is not None and self._bound:
+                    if self._production:
+                        # Production has exactly one commit path: the
+                        # ledger. The constructor requires it, so this is
+                        # a defensive assertion, not a branch.
+                        raise ControlPlaneError("production_requires_ledger")
                     record = self._control_plane.commit_bound_authorization(
                         attempt_id=attempt_id_for_identity(
                             identity_result.identity),
@@ -707,6 +850,9 @@ class GovernedServingGateway:
             evidence, ctx, self._evidence_policy,
             token_budget=self._token_budget, max_rules=self._max_steps)
         served_map["policy_decisions"] = [d.to_dict() for d in decisions]
+        digest = getattr(self._evidence_policy, "digest", None)
+        if callable(digest):
+            served_map["evidence_policy_digest"] = digest()
         served_map["rejections"].extend(
             {"candidate_id": d.candidate_id, "reason": d.reason}
             for d in decisions if not d.serve)
@@ -1079,12 +1225,17 @@ class GovernedServingGateway:
             record["integrity_error"] = served_map["integrity_error"]
         if served_map.get("policy_decisions"):
             record["policy_decisions"] = served_map["policy_decisions"]
+        if served_map.get("evidence_policy_digest"):
+            record["evidence_policy_digest"] = served_map[
+                "evidence_policy_digest"]
         if served_map.get("authority_epoch"):
             record["authority_epoch"] = served_map["authority_epoch"]
         if served_map.get("global_disable"):
             record["global_disable"] = True
         if served_map.get("rollout_stage"):
             record["rollout_stage"] = served_map["rollout_stage"]
+        if served_map.get("production_problems"):
+            record["production_problems"] = served_map["production_problems"]
         self._audit_record(record)
 
     def _audit_record(self, record: dict) -> None:

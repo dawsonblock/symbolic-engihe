@@ -161,6 +161,32 @@ def backend() -> str:
     return "cryptography" if _HAS_CRYPTOGRAPHY else "vendored-python"
 
 
+#: The only backend accepted for production signing: vetted, constant-time.
+VETTED_BACKEND = "cryptography"
+
+
+class CryptoBackendError(RuntimeError):
+    """The deployment's signing backend is not the vetted one."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        self.reason = reason
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def require_vetted_backend(*, production: bool = True) -> str:
+    """Fail closed when production would sign with the vendored backend.
+
+    The vendored implementation is wire-compatible and tested, but its
+    scalar arithmetic is not constant-time. A production deployment that
+    silently fell back to it would be signing evidence with a weaker
+    primitive than the one it claims.
+    """
+    name = backend()
+    if production and name != VETTED_BACKEND:
+        raise CryptoBackendError("crypto_backend_not_vetted", name)
+    return name
+
+
 def public_key(seed: bytes) -> bytes:
     """Derive the 32-byte Ed25519 public key for a 32-byte secret seed."""
     if not _HAS_CRYPTOGRAPHY:

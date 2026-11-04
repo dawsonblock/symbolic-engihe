@@ -60,6 +60,7 @@ def _service(fixture):
         control_plane=fixture.control_plane,
         binding_authority=fixture.binding_authority,
         receipt_authority=fixture.cert.stack.resolve_receipt,
+        **fixture.production_kwargs(),
     )
     return V3ServingService(
         gateway, api_keys={TOKEN_A: "agent-1", TOKEN_B: "agent-2"})

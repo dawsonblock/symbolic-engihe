@@ -23,6 +23,10 @@ from sis.v3.evidence_custody import (EvidenceCustodyError,
                                      EvidenceCustodyStore,
                                      OfflineEvidencePolicy)
 from sis.v3.authority_ledger import AuthorityLedger
+from sis.v3.evidence_policy import CalibrationPolicy, RuleEvidence
+from sis.v3.key_custody import four_identity_custody
+from sis.v3.operations import AuthorityMonitor
+from sis.v3.rollout import DEFAULT_GATES, FULL, evaluate
 from sis.v3.evidence_binding import EvidenceBindingAuthority, SigningKey
 from sis.v3.execution_identity import (ExecutionIdentityAuthority,
                                        sign_execution_identity)
@@ -105,21 +109,62 @@ class ProductionFixture:
                 self.cert.stack.eval_key: self.cert.stack.eval_public_hex},
             trusted_harness_keys={self.identity_key: identity_public.hex()},
             trusted_authorization_keys={self.auth_key: auth_public.hex()})
+        self.ledger_seed, ledger_public = signatures.generate_keypair()
+        self.ledger_key = SigningKey(self.ledger_seed, "ledger-key-1")
+        self.ledger = AuthorityLedger(
+            self.control_plane,
+            signing_key=self.ledger_key)
+        # A production gateway requires a current signed snapshot, so the
+        # fixture publishes one before it is constructed.
+        self.ledger.set_candidate_status(
+            self.cert.candidate.candidate_id, "qualified")
+        self.ledger.publish()
+
+        # ``self.custody`` is the evidence store; signing custody is
+        # a separate object with separate keys.
+        self.key_custody = four_identity_custody(root / "identity-keys")
+        self.monitor = AuthorityMonitor(
+            control_plane=self.control_plane, ledger=self.ledger,
+            custody=self.key_custody)
+        self.rollout = evaluate(
+            {gate.name: True for gate in DEFAULT_GATES}, stage=FULL)
+        self.evidence_policy = CalibrationPolicy()
+
+        def evidence(candidate):
+            return RuleEvidence(
+                candidate_id=candidate.candidate_id,
+                qualification_status="qualified",
+                supporting_attempts=5, counterexamples=0,
+                expected_gain_milli=300, gain_lower_milli=100,
+                gain_upper_milli=500, token_cost=10, latency_ms=10,
+                regression_risk_milli=0)
+
+        self.evidence_provider = evidence
         self.gateway = GovernedServingGateway(
             self.registry, repository_registry=self.repo_registry,
             production=True,
             execution_identity_authority=self.identity_authority,
             used_session_nonces=set(),
             control_plane=self.control_plane,
-            binding_authority=self.binding_authority)
-
-        self.ledger_seed, ledger_public = signatures.generate_keypair()
-        self.ledger_key = SigningKey(self.ledger_seed, "ledger-key-1")
-        self.ledger = AuthorityLedger(
-            self.control_plane,
-            signing_key=self.ledger_key)
+            binding_authority=self.binding_authority,
+            authority_ledger=self.ledger,
+            custody=self.key_custody,
+            monitor=self.monitor,
+            rollout=self.rollout,
+            evidence_policy=self.evidence_policy,
+            evidence_provider=self.evidence_provider)
         self.certificate = self.cert.certificate()
         self.cert.qualify(self.certificate)
+
+    def production_kwargs(self) -> dict:
+        """The components a production gateway may not be missing."""
+        return dict(
+            authority_ledger=self.ledger,
+            custody=self.key_custody,
+            monitor=self.monitor,
+            rollout=self.rollout,
+            evidence_policy=self.evidence_policy,
+            evidence_provider=self.evidence_provider)
 
     def close(self):
         self.stack.close()
@@ -214,7 +259,8 @@ class ExecutionIdentityTests(unittest.TestCase):
             execution_identity_authority=self.fixture.identity_authority,
             used_session_nonces=set(), audit_sink=audit.append,
             control_plane=self.fixture.control_plane,
-            binding_authority=self.fixture.binding_authority)
+            binding_authority=self.fixture.binding_authority,
+            **self.fixture.production_kwargs())
         gateway.serve(_request(), repository_id="repo-1",
                       execution_identity=self.fixture.identity(
                           session_nonce="nonce-audit"))

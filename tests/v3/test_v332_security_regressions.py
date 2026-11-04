@@ -58,6 +58,8 @@ class _Base(unittest.TestCase):
         kwargs.setdefault("control_plane", self.fixture.control_plane)
         kwargs.setdefault("binding_authority",
                           self.fixture.binding_authority)
+        for key, value in self.fixture.production_kwargs().items():
+            kwargs.setdefault(key, value)
         return GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
@@ -139,7 +141,7 @@ class ReplayTests(_Base):
         second = GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
-            production=True,
+            production=False,
             execution_identity_authority=self.fixture.identity_authority,
             control_plane=second_plane,
             binding_authority=self.fixture.binding_authority).serve(
@@ -225,7 +227,26 @@ class ReplayTests(_Base):
         # authoritative, the control-plane database is empty.
         fresh = SqliteControlPlane(self.root / "fresh-control.db")
         self.addCleanup(fresh.close)
-        gateway = self.gateway(control_plane=fresh)
+        # The ledger is bound to the fixture's plane; a replica modelled
+        # by a second plane is exercised through the replay constraint,
+        # not through the production profile (which correctly rejects a
+        # ledger bound to another plane).
+        # This drill models a v3.3.1 upgrade: the upgrade step seeds the
+        # fresh plane from the authoritative checkpoint, and the gateway
+        # then serves against the witnessed head.
+        latest = self.fixture.store.get_latest()
+        fresh.advance_authority_head({
+            "sequence": latest.sequence,
+            "checkpoint_digest": latest.digest,
+            "journal_head": latest.journal_head,
+            "revocation_head": latest.revocation_head,
+            "supersession_head": latest.supersession_head,
+            "custody_entry_count": latest.custody_entry_count,
+            "updated_at": latest.issued_at,
+        })
+        gateway = self.gateway(
+            control_plane=fresh, production=False,
+            binding_authority=None, authority_ledger=None)
         guidance = gateway.serve(
             _request(), repository_id="repo-1",
             execution_identity=self.fixture.identity())

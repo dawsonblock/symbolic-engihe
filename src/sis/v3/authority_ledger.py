@@ -132,6 +132,10 @@ class AuthorityLedger:
     def plane(self):
         return self._plane
 
+    @property
+    def key_id(self) -> str:
+        return self._key.key_id
+
     # -- authority changes --------------------------------------------- #
     def set_candidate_status(self, candidate_id: str, status: str, *,
                              detail: str | None = None) -> dict:

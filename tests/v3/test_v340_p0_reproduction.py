@@ -42,6 +42,8 @@ class _Base(unittest.TestCase):
         kwargs.setdefault("control_plane", self.fixture.control_plane)
         kwargs.setdefault("binding_authority",
                           self.fixture.binding_authority)
+        for key, value in self.fixture.production_kwargs().items():
+            kwargs.setdefault(key, value)
         kwargs.setdefault("receipt_authority",
                           self.fixture.cert.stack.resolve_receipt)
         return GovernedServingGateway(
@@ -224,15 +226,27 @@ class AcceptanceTests(_Base):
         self.assertEqual(body["error"], "authorization_id_required")
 
     def test_production_gateway_refuses_legacy_outcome_path(self):
+        # v3.5.0: a production gateway that cannot bind outcomes is now
+        # refused at construction rather than serving and failing later.
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_missing"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                production=True,
+                execution_identity_authority=self.fixture.identity_authority,
+                control_plane=self.fixture.control_plane)
         unbound = GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
-            production=True,
+            production=False,
             execution_identity_authority=self.fixture.identity_authority,
             control_plane=self.fixture.control_plane)
         self.assertEqual(unbound.health()["outcome_binding"], "legacy")
-        self.assertFalse(unbound.health()["ready"])
-        with self.assertRaisesRegex(ValueError, "bound_outcome_required"):
+        # The dev path validates the served digest before the production
+        # refusal; either way the legacy outcome is not recorded.
+        with self.assertRaisesRegex(ValueError,
+                                    "served_guidance_unknown"):
             unbound.record_outcome(
                 task_id="task-1", served_digest="a" * 64,
                 receipt_digest="b" * 64, outcome="pass")

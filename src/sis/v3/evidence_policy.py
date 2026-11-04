@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
+from .contracts import canonical_digest
 from .retrieval import RetrievalContext, precondition_holds
 
 
@@ -42,6 +43,8 @@ QUALIFIED = "qualified"
 EXPLORATORY = "exploratory"
 REVOKED = "revoked"
 _STATUSES = (QUALIFIED, EXPLORATORY, REVOKED)
+
+UTILITY_MODES = ("ranking", "abstention")
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,17 @@ class RuleEvidence:
 
 @dataclass(frozen=True)
 class CalibrationPolicy:
-    """The explicit trade-off applied to every candidate."""
+    """The explicit trade-off applied to every candidate.
+
+    ``utility_mode`` makes the meaning of ``utility_milli`` explicit:
+
+    - ``ranking`` (default): utility orders candidates; it never rejects
+      one. This is the historical behaviour.
+    - ``abstention``: a candidate whose net utility is below
+      ``min_net_utility_milli`` is refused with
+      ``net_utility_below_threshold``. A deployment that serves only when
+      the expected gain pays for its cost must opt in to this mode.
+    """
 
     min_supporting_attempts: int = 3
     min_gain_lower_milli: int = 1
@@ -127,6 +140,8 @@ class CalibrationPolicy:
     latency_weight_milli: int = 1
     uncertainty_weight_milli: int = 1
     allow_exploratory: bool = False
+    utility_mode: str = "ranking"
+    min_net_utility_milli: int = 0
 
     def __post_init__(self) -> None:
         for name, minimum, maximum in (
@@ -138,12 +153,34 @@ class CalibrationPolicy:
             ("token_weight_milli", 0, 1000),
             ("latency_weight_milli", 0, 1000),
             ("uncertainty_weight_milli", 0, 1000),
+            ("min_net_utility_milli", -1000, 1000),
         ):
             value = getattr(self, name)
             if type(value) is not int or not minimum <= value <= maximum:
                 raise EvidencePolicyError(f"{name}_invalid", str(value))
         if not isinstance(self.allow_exploratory, bool):
             raise EvidencePolicyError("allow_exploratory_invalid")
+        if self.utility_mode not in UTILITY_MODES:
+            raise EvidencePolicyError("utility_mode_invalid", self.utility_mode)
+
+    def to_dict(self) -> dict:
+        return {
+            "min_supporting_attempts": self.min_supporting_attempts,
+            "min_gain_lower_milli": self.min_gain_lower_milli,
+            "max_regression_risk_milli": self.max_regression_risk_milli,
+            "max_token_cost": self.max_token_cost,
+            "max_latency_ms": self.max_latency_ms,
+            "token_weight_milli": self.token_weight_milli,
+            "latency_weight_milli": self.latency_weight_milli,
+            "uncertainty_weight_milli": self.uncertainty_weight_milli,
+            "allow_exploratory": self.allow_exploratory,
+            "utility_mode": self.utility_mode,
+            "min_net_utility_milli": self.min_net_utility_milli,
+        }
+
+    def digest(self) -> str:
+        """Stable digest of the policy, recorded with every decision."""
+        return canonical_digest("evidence_policy", 1, self.to_dict())
 
     def utility(self, evidence: RuleEvidence) -> int:
         return (evidence.expected_gain_milli
@@ -191,8 +228,14 @@ class CalibrationPolicy:
         if evidence.latency_ms > self.max_latency_ms:
             return Decision(evidence.candidate_id, False,
                             "latency_too_high", self.utility(evidence))
-        return Decision(evidence.candidate_id, True, "served",
-                        self.utility(evidence))
+        utility = self.utility(evidence)
+        if self.utility_mode == "abstention" and \
+                utility < self.min_net_utility_milli:
+            # The gain does not pay for the cost under this deployment's
+            # declared policy. Ranking mode never rejects on utility.
+            return Decision(evidence.candidate_id, False,
+                            "net_utility_below_threshold", utility)
+        return Decision(evidence.candidate_id, True, "served", utility)
 
 
 @dataclass(frozen=True)

@@ -73,6 +73,8 @@ class _Fixture(unittest.TestCase):
         kwargs.setdefault("control_plane", self.fixture.control_plane)
         kwargs.setdefault("binding_authority",
                           self.fixture.binding_authority)
+        for key, value in self.fixture.production_kwargs().items():
+            kwargs.setdefault(key, value)
         return GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
@@ -114,8 +116,10 @@ class RecheckTimestampTests(_Fixture):
         authorization = self._authorization(
             "2030-01-01T00:00:00Z", "2026-11-02T11:00:00Z")
         gateway = self.gateway()
+        epoch = self.fixture.control_plane.authority_state()["epoch"]
         self.assertEqual(
-            gateway.recheck(authorization.authorization_id)["ledger_epoch"], 0)
+            gateway.recheck(authorization.authorization_id)["ledger_epoch"],
+            epoch)
         self.fixture.control_plane.set_authority_subject(
             subject_kind="candidate", subject_id="cand-1",
             status="qualified")
@@ -139,11 +143,16 @@ class RecheckTimestampTests(_Fixture):
                          self.fixture.control_plane.authority_state()["epoch"])
 
     def test_a_configured_ledger_gates_readiness(self):
-        gateway = self.gateway(authority_ledger=self.fixture.ledger)
+        # The fixture's ledger published at setup and is ready.
+        self.assertTrue(self.gateway().health()["ready"])
+        # A ledger whose key did not sign the stored snapshot is not.
+        from sis.v3.evidence_binding import SigningKey
+        other_seed, _ = signatures.generate_keypair()
+        other = AuthorityLedger(self.fixture.control_plane,
+                                signing_key=SigningKey(other_seed, "other"))
+        gateway = self.gateway(authority_ledger=other)
         self.assertFalse(gateway.health()["ready"])
-        self.fixture.ledger.set_candidate_status("cand-1", "qualified")
-        self.fixture.ledger.publish()
-        self.assertTrue(gateway.health()["ready"])
+        self.assertFalse(gateway.health()["checks"]["ledger"]["ok"])
 
 
 class LedgerSnapshotTests(unittest.TestCase):

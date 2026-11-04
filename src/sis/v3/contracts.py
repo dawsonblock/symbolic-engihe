@@ -55,7 +55,7 @@ _REASONS = {
     "conflicting_evidence", "source_mismatch", "prior_negative_transfer",
     "insufficient_support", "no_qualified_procedure", "catalog_unavailable",
     "expired", "revoked", "stale_evidence", "unsupported_context",
-    "rollout_shadow",
+    "rollout_shadow", "production_profile_incomplete",
 }
 _PRECONDITION_KINDS = {
     "language_is", "toolchain_is", "dependency_digest_is", "file_present",

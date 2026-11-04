@@ -183,32 +183,58 @@ class KeyCustody:
 
         Reports roles, key ids and file modes. It never reports a seed and
         never reports a full public key beyond what is already public.
+
+        ``ready`` is a statement about what is actually on disk right now,
+        not about what was true at enrollment: every signing role must be
+        enrolled and every seed must still pass the same checks ``sign()``
+        applies (regular file, owner-only, owned by this principal, 32
+        bytes). A chmod after enrollment makes readiness false.
         """
         roles = []
+        valid_roles: set[str] = set()
         for role in ROLES:
             key = self._keys.get(role)
             if key is None:
                 roles.append({"role": role, "enrolled": False})
                 continue
-            mode = stat.S_IMODE(key.seed_path.stat().st_mode)
-            roles.append({
+            entry = {
                 "role": role,
                 "enrolled": True,
                 "key_id": key.key_id,
                 "public_prefix": key.public_hex[:16],
-                "seed_mode": oct(mode),
-                "owner_only": mode & _GROUP_OTHER_BITS == 0,
-            })
+            }
+            try:
+                self._check_seed_file(key.seed_path)
+            except CustodyError as exc:
+                entry["valid"] = False
+                entry["problem"] = exc.reason
+                entry["seed_mode"] = self._mode(key.seed_path)
+                entry["owner_only"] = False
+            else:
+                mode = stat.S_IMODE(key.seed_path.stat().st_mode)
+                entry["valid"] = True
+                entry["seed_mode"] = oct(mode)
+                entry["owner_only"] = mode & _GROUP_OTHER_BITS == 0
+                valid_roles.add(role)
+            roles.append(entry)
         distinct = len({k.public_hex for k in self._keys.values()}) == \
             len(self._keys)
+        missing = sorted(set(SIGNING_ROLES) - valid_roles)
         return {
             "schema_version": 1,
             "roles": roles,
             "enrolled_count": len(self._keys),
             "distinct_identities": distinct,
-            "ready": distinct and EVALUATOR in self._keys
-            and SERVING_AUTHORITY in self._keys,
+            "missing_roles": missing,
+            "ready": distinct and not missing,
         }
+
+    @staticmethod
+    def _mode(path: Path) -> str:
+        try:
+            return oct(stat.S_IMODE(path.lstat().st_mode))
+        except OSError:
+            return "missing"
 
     @classmethod
     def _read_seed(cls, path: Path) -> bytes:

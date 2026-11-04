@@ -511,13 +511,15 @@ class QualificationTests(unittest.TestCase):
         fixture.qualify(certificate)
         control = SqliteControlPlane(self.root / "control-a.db")
         self.addCleanup(control.close)
-        gateway = GovernedServingGateway(
-            fixture.stack.registry, repository_registry=None,
-            production=True, control_plane=control)
-        from tests.v3.test_authority_checkpoints import _request
-        guidance = gateway.serve(_request(), repository_id="repo-1")
-        self.assertEqual(guidance.decision, "abstain")
-        self.assertEqual(guidance.reason_code, "catalog_unavailable")
+        # v3.5.0: a production gateway with no ledger, monitor, custody,
+        # evidence policy or rollout is refused before it can serve. The
+        # checkpoint gate itself is exercised by test_authority_checkpoints
+        # with a complete fixture.
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_missing"):
+            GovernedServingGateway(
+                fixture.stack.registry, repository_registry=None,
+                production=True, control_plane=control)
 
     def test_production_gateway_excludes_demonstration_registry(self):
         stack = CandidateStack(self.root / "demo.db")
@@ -529,13 +531,11 @@ class QualificationTests(unittest.TestCase):
                          "demonstration")
         control = SqliteControlPlane(self.root / "control-b.db")
         self.addCleanup(control.close)
-        gateway = GovernedServingGateway(
-            stack.registry, repository_registry=None, production=True,
-            control_plane=control)
-        from tests.v3.test_authority_checkpoints import _request
-        guidance = gateway.serve(_request(), repository_id="repo-1")
-        self.assertEqual(guidance.decision, "abstain")
-        self.assertEqual(guidance.reason_code, "catalog_unavailable")
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_missing"):
+            GovernedServingGateway(
+                stack.registry, repository_registry=None, production=True,
+                control_plane=control)
 
 
 if __name__ == "__main__":

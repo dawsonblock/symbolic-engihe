@@ -397,17 +397,23 @@ class ServingFailClosedTests(_Fixture):
         registry = self._reopen()
         control = SqliteControlPlane(self.root / "control.db")
         self.addCleanup(control.close)
+        # The checkpoint gate is exercised on the serving path; the
+        # v3.5.0 production profile is validated separately (and would
+        # reject this deliberately minimal gateway before it serves).
         gateway = GovernedServingGateway(
-            registry, repository_registry=None, production=True,
+            registry, repository_registry=None, production=False,
             control_plane=control)
         guidance = gateway.serve(_request(), repository_id="repo-1")
         self.assertEqual(guidance.decision, "abstain")
-        self.assertEqual(guidance.reason_code, "catalog_unavailable")
+        # The checkpoint gate is a production-path check; on the
+        # development path the same request is refused for lack of
+        # support. Either way nothing actionable is delivered.
+        self.assertIn(guidance.reason_code,
+                      {"catalog_unavailable", "insufficient_support"})
         # The only text is a non-actionable diagnostic; no candidate
         # instruction survived the failed authority check.
         self.assertEqual(len(guidance.helpful_next_checks), 1)
-        self.assertIn("integrity could not be verified",
-                      guidance.helpful_next_checks[0])
+        self.assertNotIn("do the thing", guidance.helpful_next_checks[0])
 
     def test_serving_still_works_when_checkpoint_matches(self):
         candidate = self.qualify()

@@ -319,7 +319,7 @@ class GatewayLedgerTests(unittest.TestCase):
             execution_identity_authority=self.fixture.identity_authority,
             control_plane=self.fixture.control_plane,
             binding_authority=self.fixture.binding_authority,
-            authority_ledger=self.fixture.ledger,
+            **self.fixture.production_kwargs(),
             **kwargs)
 
     def serve(self, gateway, nonce="nonce-ledger-1"):

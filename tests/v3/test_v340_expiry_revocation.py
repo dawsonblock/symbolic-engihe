@@ -28,6 +28,8 @@ class _Base(unittest.TestCase):
         kwargs.setdefault("control_plane", self.fixture.control_plane)
         kwargs.setdefault("binding_authority",
                           self.fixture.binding_authority)
+        for key, value in self.fixture.production_kwargs().items():
+            kwargs.setdefault(key, value)
         return GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
@@ -143,16 +145,24 @@ class ReadinessTests(_Base):
         self.assertTrue(health["ready"])
         self.assertTrue(health["checks"]["outcome_binding"]["ok"])
 
-    def test_unbound_production_is_alive_but_not_ready(self):
+    def test_unbound_production_is_refused_at_construction(self):
+        with self.assertRaisesRegex(
+                ValueError, "production_requirements_missing"):
+            GovernedServingGateway(
+                self.fixture.registry,
+                repository_registry=self.fixture.repo_registry,
+                production=True,
+                execution_identity_authority=self.fixture.identity_authority,
+                control_plane=self.fixture.control_plane)
         unbound = GovernedServingGateway(
             self.fixture.registry,
             repository_registry=self.fixture.repo_registry,
-            production=True,
+            production=False,
             execution_identity_authority=self.fixture.identity_authority,
             control_plane=self.fixture.control_plane)
         health = unbound.health()
         self.assertTrue(health["alive"])
-        self.assertFalse(health["ready"])
+        self.assertTrue(health["ready"])
         self.assertEqual(health["outcome_binding"], "legacy")
 
     def test_disabled_ledger_is_not_ready(self):

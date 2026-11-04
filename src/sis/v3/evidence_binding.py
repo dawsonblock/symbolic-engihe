@@ -449,6 +449,15 @@ class EvidenceBindingAuthority:
     def now(self) -> str:
         return self._clock()
 
+    def evaluator_key_ids(self) -> frozenset[str]:
+        return frozenset(self._evaluator)
+
+    def harness_key_ids(self) -> frozenset[str]:
+        return frozenset(self._harness)
+
+    def authorization_key_ids(self) -> frozenset[str]:
+        return frozenset(self._authorization)
+
     def revocation_state(self) -> tuple[frozenset[str], frozenset[str]]:
         if self._revocations is None:
             return frozenset(), frozenset()

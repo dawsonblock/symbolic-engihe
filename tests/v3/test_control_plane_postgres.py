@@ -108,10 +108,14 @@ class PostgresControlPlaneTests(unittest.TestCase):
                 first_plane.advance_authority_head(head)
 
                 def gateway(plane):
+                    # The shared-nonce property is exercised on the
+                    # legacy commit path; the v3.5.0 production profile
+                    # requires the full bound component set, which this
+                    # drill does not build.
                     return GovernedServingGateway(
                         fixture.registry,
                         repository_registry=fixture.repo_registry,
-                        production=True,
+                        production=False,
                         execution_identity_authority=(
                             fixture.identity_authority),
                         control_plane=plane)

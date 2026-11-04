@@ -1,3 +1,42 @@
+## Unreleased — SIS v3.5.0 engineering remediation (PR-00, PR-01, PR-04)
+
+Implements the parts of the v3.5.0 plan that can be built and verified in
+this repository. Baseline: `docs/v3/V350_BASELINE.md`; status and the
+explicit not-implemented list: `docs/v3/V350_IMPLEMENTATION.md`.
+
+- **PR-00** baseline frozen: pinned runtime (Python 3.12.0, pytest 8.4.2,
+  psycopg 3.3.4, cryptography 48.0.1, setuptools 82.0.1), both profiles
+  measured, manifest and reproductions recorded. The deep audit's
+  1,249/45/14 came from a non-pinned environment and is not used as an
+  acceptance number.
+- **PR-01** mandatory production profile. `ProductionRequirements` names
+  the control plane, binding authority, ledger, monitor, signing custody,
+  evidence policy/provider, rollout state, vetted crypto backend and
+  disjoint key roles. The constructor refuses an incomplete profile, and
+  `health()` and `serve()` re-check it, so a direct caller cannot bypass
+  readiness. Production has exactly one commit path (the ledger); the
+  direct `commit_bound_authorization` branch is guarded. Tests:
+  `test_v350_production_profile.py` (15).
+- **PR-04** custody readiness re-checks every seed on disk (mode, owner,
+  symlink, size) and requires every signing role; a chmod after
+  enrollment makes `ready` false. `require_vetted_backend` refuses the
+  vendored Ed25519 implementation in production; `cryptography` is pinned
+  and a `crypto` extra. `CalibrationPolicy.utility_mode` makes utility
+  explicit (`ranking` default, `abstention` with
+  `net_utility_below_threshold`), and the policy digest is recorded with
+  every decision. Tests: `test_v350_custody_and_utility.py` (14).
+- Version 3.5.0.
+
+**Not implemented here, and not claimed:** PR-02 (real sandbox backend and
+separate signer), PR-03 (campaign/report integrity and evidence ceiling),
+PR-05 (learning lifecycle), PR-06 (powered live study), and the
+operational half of PR-07 (structured metrics, signed CI provenance,
+staged approvals). See `V350_IMPLEMENTATION.md`.
+
+Suite, SQLite profile: **1325 passed, 12 skipped**.
+Suite, PostgreSQL profile (14.20, `SIS_POSTGRES_DSN` set): **1334 passed,
+3 skipped**.
+
 ## Unreleased — SIS v3.4.0 evidence-chain and authority upgrade (PR-01…PR-12)
 
 Closes the three reproduced P0 outcome-attribution defects and rebuilds the

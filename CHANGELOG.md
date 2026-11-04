@@ -1,3 +1,97 @@
+## SIS v3.5.1 — evidence attribution, authenticated measurement, enforced isolation
+
+Closes the v3.5.0 evidence-integrity gap that let a valid signature
+support an invalid claim. Baseline: `9491047` (v3.5.0). Every item below
+has a reproducing regression test; see `SIS_v3.5.1_DEFECT_MATRIX.md`.
+
+- **PR-01 trial attribution.** New signed `ExperimentAuthorizationV1`
+  (experiment authority) and `TrialMeasurementV1` (evaluator) in
+  `sis.v3.trial_evidence`. A measurement binds the experiment, the
+  authorization digest, the trial id, the arm and arm-configuration
+  digest, the task and immutable task digest, the model digest, the
+  evaluator identity, and the receipt digest. The authorization also
+  freezes the environment, criterion and test-suite commitments, and
+  each is compared with the receipt: evidence from a different
+  environment, criterion or suite is `invalid_report`, not `supported`.
+  `validate_report` refuses a measurement that names another arm, so
+  exchanging two arms' genuine receipts is `invalid_report`, not
+  `supported`; a `dependent` receipt is not an independent trial and is
+  refused for a confirmatory campaign.
+- **PR-02 authenticated measurement.** Token, wall-clock, tool-call,
+  tool-error and limit-violation counts live in the signed measurement.
+  The report's copies are claims checked against it
+  (`measurement_tokens_mismatch`, `measurement_wall_mismatch`,
+  `measurement_limit_violations_mismatch`, …), and budget eligibility is
+  computed from the signed values. `ArmOutcome` and `build_report` carry
+  `limit_violations`, so a genuine over-limit run is a non-solve rather
+  than an internally inconsistent report. Wall time is compared in
+  milliseconds, not floats. A report that rewrites the baseline's cost
+  to manufacture an advantage is refused. Statistics are computed from a
+  verified view rebuilt from measurements; the report's aggregate block
+  is never the input to a verdict.
+- **PR-03 signer authority.** `EvidenceBindingAuthority` gains
+  `trusted_experiment_keys`, `key_validity`, `authenticated_receipt`,
+  `experiment_authorization`, `measurement` and `validity`. Expired,
+  not-yet-valid, revoked-signer, revoked-evidence, and
+  signing-key-window failures are distinct reasons; `allow_expired`
+  accepts evidence signed inside its window when the operator chooses a
+  historical-evidence policy — for receipts as well as authorizations.
+  A predicate receipt authority that returns any falsy value now fails
+  closed (`is False` → `not`). A malformed `now` is a reported validity
+  failure, never an exception out of the validator.
+- **PR-04 total report validation.** `validate_report` is total over
+  untrusted JSON: no input raises. Fixes `OverflowError` on an
+  arbitrarily large integer, `AttributeError` on a non-mapping
+  `governed` block, `TypeError` on a `per_task` list of integers and on
+  an unhashable `task_id`. `assess` short-circuits to `invalid_report`
+  before computing anything from the report. `holdout_disjoint` must be
+  a boolean. `ReportValidation.authenticated` distinguishes a
+  structurally valid report from an authenticated one. Property-based
+  tests (Hypothesis) plus a sampled leaf-mutation sweep whose
+  unmutated baseline is `supported`.
+- **PR-05 statistical qualification.** Holm step-down correction across
+  the four reported contrasts (`holm_adjusted_p`); `supported` requires
+  the decisive contrast to survive it. The correction is pinned in both
+  directions: a marginal win (unadjusted p ≤ 0.05, Holm p > 0.05) is
+  `no_evidence`. Infrastructure failures (`status == "error"`) are
+  expressible without pretending the task was attempted, are recorded
+  separately, and block a confirmatory verdict instead of counting as an
+  ordinary loss. Non-significance is explicitly not equivalence
+  (`equivalence_established: false`).
+- **PR-06 production profile.** `health()` and `serve()` gate on
+  `self._production`, not on the mutable `_production_requirements`
+  cache, so clearing the cache no longer restores readiness.
+- **PR-07 enforced isolation.** New `sis.v3.container_isolation`: the
+  workload runs in a container with `--network none`, read-only root,
+  capability drop, `no-new-privileges`, memory/cpu/pids limits, a
+  non-root user, two explicit mounts and a pinned image digest. The
+  evaluator signing seed is never mounted. A stale `measurement.json` in
+  the output directory is removed before the run and never read from a
+  failed one; `sign_measurement` takes the completed `ContainerResult`
+  and refuses an unverified run or a boundary that is not
+  production-ready. `production_ready` and `verified_controls()` now
+  reject a root uid instead of claiming `non_root_user` — including a
+  zero-padded uid (`00:00`), which the runtime parses as 0. The
+  capability control requires `--cap-drop ALL`; a partial drop is
+  reported as partial and is not production-ready. The workload is
+  started with a deterministic `--name` and the container is removed on
+  timeout, because killing the `docker run` client leaves the workload
+  running on the daemon.
+- **PR-08 cross-process PostgreSQL.** New
+  `test_v351_postgres_qualification.py` proves exactly-one-commit across
+  four OS processes, duplicate-outcome refusal, transaction rollback and
+  shared authority head against a live server. Its destructive fixture
+  requires `SIS_POSTGRES_ALLOW_DESTRUCTIVE=1`; a DSN alone is not
+  consent to drop tables.
+- **Release.** Version 3.5.1; `RELEASE_SHA256.json` regenerated from the
+  final tree; `hypothesis==6.151.4` pinned. The provenance statement
+  records the dirty-tree state instead of implying the archive was built
+  from the commit, and the qualification harness computes `GO` only when
+  no blocking limitation remains. `package_release.py` removes
+  provenance artifacts it did not produce, so `release/` describes
+  exactly one statement: the v3.5.1 one is unsigned, and the stale
+  v3.3.2 DSSE envelope that sat beside it is gone.
+
 ## Unreleased — SIS v3.5.0 engineering remediation (PR-00, PR-01, PR-03, PR-04)
 
 Implements the parts of the v3.5.0 plan that can be built and verified in

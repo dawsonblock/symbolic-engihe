@@ -19,6 +19,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sis.v3 import signatures
@@ -58,6 +59,8 @@ def build_statement(
     invocation_id: str | None = None,
     started_on: str | None = None,
     finished_on: str | None = None,
+    source_dirty: bool | None = None,
+    dirty_paths: Sequence[str] = (),
 ) -> dict:
     if not (isinstance(archive_sha256, str) and len(archive_sha256) == 64
             and all(char in "0123456789abcdef" for char in archive_sha256)):
@@ -71,6 +74,16 @@ def build_statement(
         raise ValueError("archive_name is required")
     started = started_on or _utcnow()
     finished = finished_on or started
+    external = {
+        "release": release,
+        "branch": branch,
+        "source_commit": source_commit,
+    }
+    if source_dirty is not None:
+        # A dirty tree is not the commit. The statement says so rather
+        # than implying the archive was built from that revision.
+        external["source_dirty"] = bool(source_dirty)
+        external["dirty_paths"] = list(dirty_paths)
     return {
         "_type": STATEMENT_TYPE,
         "subject": [{
@@ -81,11 +94,7 @@ def build_statement(
         "predicate": {
             "buildDefinition": {
                 "buildType": BUILD_TYPE,
-                "externalParameters": {
-                    "release": release,
-                    "branch": branch,
-                    "source_commit": source_commit,
-                },
+                "externalParameters": external,
                 "internalParameters": {
                     "builder": builder,
                 },

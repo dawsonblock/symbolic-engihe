@@ -1,0 +1,126 @@
+{
+  "decision": "CONDITIONAL_GO",
+  "decision_basis": {
+    "blocked": [],
+    "fail": [],
+    "limitations": [
+      "evaluator-key-compromise: a compromised evaluator key can forge that evaluator's measurements (arm, task, model and preregistration come from other keys, so cross-arm re-attribution is still refused)",
+      "unsigned-telemetry: abstained / negative_transfer / integrity_failures are report fields and do not feed the supported verdict",
+      "evaluator-metering-trust: signed token and wall-clock values are what the evaluator reports; 'unmetered' runs cannot support a claim",
+      "single-container-runtime: the enforced boundary was demonstrated with Docker only; podman is supported by name and unexercised",
+      "local-image-pin: image integrity is a re-checked local image id, not a registry attestation chain",
+      "manifest-not-publisher-signed: RELEASE_SHA256.json is locally generated and detects drift, not authorship; the v3.5.1 provenance statement is unsigned, a downgrade from the signed DSSE envelope shipped in v3.3.2",
+      "no-capability-evaluation: no model-weight or task-success benchmark was run; no reasoning-capability improvement is claimed",
+      "audit-baseline-unexplained: the prior audit's 45 baseline failures did not reproduce in the pinned environment and remain unattributed",
+      "uncommitted-source: the archive was built from a working tree with uncommitted changes; it is bound to its own manifest, not to a commit"
+    ]
+  },
+  "environment": {
+    "container_runtime": "docker",
+    "executable": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3",
+    "platform": "macOS-26.2-arm64-arm-64bit",
+    "postgres_dsn_configured": true,
+    "python": "3.12.0"
+  },
+  "gates": [
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 -m pytest -q tests/v3/test_v351_evidence_chain.py tests/v3/test_v351_report_totality.py tests/v3/test_v340_five_arm.py tests/v3/test_v350_campaign_integrity.py tests/v3/test_v350_production_profile.py",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 142,
+        "skipped": 0
+      },
+      "expected": "exit 0",
+      "gate": "evidence_and_report_integrity",
+      "invariant": "A valid signature must be valid for the exact trial, arm, task, outcome and measurement claimed.",
+      "seconds": 71.7,
+      "status": "pass"
+    },
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 -m pytest -q tests/v3/test_v351_container_isolation.py",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 23,
+        "skipped": 0
+      },
+      "expected": "exit 0",
+      "gate": "evaluator_isolation",
+      "invariant": "The workload cannot reach the network, the host filesystem, or the signing key.",
+      "seconds": 16.1,
+      "status": "pass"
+    },
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 -m pytest -q tests/v3/test_control_plane_postgres.py tests/v3/test_v351_postgres_qualification.py",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 10,
+        "skipped": 0
+      },
+      "expected": "exit 0",
+      "gate": "postgres_cross_process",
+      "invariant": "Two processes cannot both commit the same authorization.",
+      "seconds": 2.6,
+      "status": "pass"
+    },
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 -m pytest tests -q",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 1489,
+        "skipped": 3
+      },
+      "expected": "exit 0",
+      "gate": "full_regression",
+      "invariant": "No unexplained regression against the v3.5.0 baseline (1362 passed).",
+      "seconds": 167.3,
+      "status": "pass"
+    },
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 tools/build_release.py --check",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 0,
+        "skipped": 0
+      },
+      "expected": "exit 0",
+      "gate": "release_manifest",
+      "invariant": "Every distributed file matches RELEASE_SHA256.json.",
+      "seconds": 0.2,
+      "status": "pass"
+    },
+    {
+      "actual_returncode": 0,
+      "blocked_reason": null,
+      "command": "/Users/dawsonblock/.pyenv/versions/3.12.0/bin/python3 tools/verify_release.py .",
+      "counts": {
+        "error": 0,
+        "failed": 0,
+        "passed": 0,
+        "skipped": 0
+      },
+      "expected": "exit 0",
+      "gate": "release_verification",
+      "invariant": "A fresh extraction verifies against its own manifest.",
+      "seconds": 0.1,
+      "status": "pass"
+    }
+  ],
+  "generated_at": "2026-11-04T09:25:22Z",
+  "release": "3.5.1",
+  "schema_version": 1
+}

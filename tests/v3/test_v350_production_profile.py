@@ -182,6 +182,44 @@ class ConstructorTests(_Fixture):
         self.assertIn("monitor_missing",
                       health["checks"]["production_profile"]["problems"])
 
+    def test_clearing_the_cached_profile_does_not_restore_readiness(self):
+        # The v3.5.0 bypass: readiness was gated on a mutable attribute,
+        # so one assignment made a degraded production gateway look
+        # ready. Readiness must come from the wiring, not the cache.
+        gateway = self.gateway()
+        gateway._monitor = None
+        gateway._production_requirements = None
+        health = gateway.health()
+        self.assertFalse(health["ready"], health["checks"])
+        self.assertIn("monitor_missing",
+                      health["checks"]["production_profile"]["problems"])
+        guidance = gateway.serve(
+            _request(), repository_id="repo-1",
+            execution_identity=self.fixture.identity())
+        self.assertEqual(guidance.decision, "abstain")
+        self.assertEqual(guidance.reason_code,
+                         "production_profile_incomplete")
+
+    def test_a_replaced_component_is_reported_as_mismatched(self):
+        gateway = self.gateway()
+        gateway._custody = _GreenCustody()
+        # ``_GreenCustody`` claims readiness, so readiness still holds;
+        # what must not hold is a profile that describes a *different*
+        # object than the one wired.
+        mismatched = self.requirements().mismatched_components(
+            self.requirements(custody=_GreenCustody()))
+        self.assertEqual(mismatched, ("custody",))
+
+    def test_an_experiment_key_may_not_be_an_evaluator_key(self):
+        public = self.fixture.cert.stack.eval_public_hex
+        shared = EvidenceBindingAuthority(
+            trusted_evaluator_keys={"shared": public},
+            trusted_harness_keys={},
+            trusted_authorization_keys={},
+            trusted_experiment_keys={"shared": public})
+        problems = self.requirements(binding_authority=shared).problems()
+        self.assertIn("evaluator_and_experiment_share_a_key", problems)
+
     def test_a_development_gateway_is_not_subject_to_the_profile(self):
         gateway = GovernedServingGateway(
             self.fixture.registry,

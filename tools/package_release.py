@@ -159,7 +159,9 @@ def package(root: Path, release: str, *, status: str, passed: int,
         builder="tools/package_release.py",
         invocation_id=f"release-{report['zip_sha256'][:16]}",
         started_on=started,
-        finished_on=_utcnow())
+        finished_on=_utcnow(),
+        source_dirty=report["source"]["dirty"],
+        dirty_paths=report["source"]["dirty_paths"])
     statement_sha256 = hashlib.sha256(
         provenance.canonical_json(statement)).hexdigest()
     if provenance_seed is not None:
@@ -193,6 +195,16 @@ def package(root: Path, release: str, *, status: str, passed: int,
             "statement_sha256": statement_sha256,
             "subject_sha256": report["zip_sha256"],
         }
+    # ``release/`` must describe exactly one provenance statement. A
+    # leftover envelope from an earlier release would sit next to this
+    # one, be absent from SHA256SUMS, and still look like evidence.
+    produced = {provenance_path.name}
+    if provenance_info.get("public_key_path"):
+        produced.add(Path(provenance_info["public_key_path"]).name)
+    for stale in ("provenance.dsse.json", "provenance.intoto.json",
+                  "provenance_public_key.hex"):
+        if stale not in produced and (out / stale).exists():
+            (out / stale).unlink()
     manifest = json.loads((root / "RELEASE_SHA256.json").read_text())
     inventory = {
         "schema_version": 1,
@@ -234,11 +246,7 @@ def package(root: Path, release: str, *, status: str, passed: int,
         "release": release,
         "branch": _git(root, "rev-parse", "--abbrev-ref", "HEAD"),
         "source_commit": report["source"]["commit"],
-        "source_commit_note": (
-            "archive members are byte-identical to this commit for every "
-            "manifest-covered file; the release commit itself touches only "
-            "out-of-band release/ provenance"
-        ),
+        "source_commit_note": _source_note(report["source"]),
         "status": status,
         "test_result": {
             "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
@@ -277,6 +285,34 @@ def package(root: Path, release: str, *, status: str, passed: int,
         sums.append(f"{_sha256(out / name)}  {name}")
     (out / "SHA256SUMS").write_text("\n".join(sums) + "\n")
     return {"release_manifest": release_manifest, "verification": verification}
+
+
+def _source_note(source: dict) -> str:
+    """An honest statement of what the archive is bound to.
+
+    A dirty build is *not* byte-identical to its source commit, and
+    saying so would be a misleading attestation. The note records the
+    dirty state and the paths that differ instead.
+    """
+    if source.get("commit") is None:
+        return "not a git checkout; the archive is bound to its own manifest only"
+    if source.get("dirty"):
+        paths = list(source.get("dirty_paths") or [])
+        shown = paths[:20]
+        more = (f", and {len(paths) - len(shown)} more"
+                if len(paths) > len(shown) else "")
+        listing = ", ".join(shown) + more if shown else "see source_binding"
+        return (
+            "UNCOMMITTED SOURCE: this archive was built from a working tree "
+            f"with uncommitted changes relative to {source['commit']} "
+            f"({listing}). It is bound to its own RELEASE_SHA256.json, not to "
+            "that commit."
+        )
+    return (
+        "archive members are byte-identical to this commit for every "
+        "manifest-covered file; the release commit itself touches only "
+        "out-of-band release/ provenance"
+    )
 
 
 def main() -> int:

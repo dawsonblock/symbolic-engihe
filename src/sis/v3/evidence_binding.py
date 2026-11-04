@@ -36,6 +36,11 @@ from .contracts import (
     canonical_digest,
     canonical_json,
 )
+from .trial_evidence import (
+    ExperimentAuthorizationV1,
+    TrialEvidenceError,
+    TrialMeasurementV1,
+)
 
 AUTHORIZATION_DOMAIN = b"sis-v3:authorization_v2:1\0"
 ATTEMPT_DOMAIN = b"sis-v3:execution_attempt:1\0"
@@ -421,16 +426,21 @@ class EvidenceBindingAuthority:
         trusted_evaluator_keys: Mapping[str, str],
         trusted_harness_keys: Mapping[str, str],
         trusted_authorization_keys: Mapping[str, str] | None = None,
+        trusted_experiment_keys: Mapping[str, str] | None = None,
         revocation_provider: Callable[[], tuple[Iterable[str],
                                                 Iterable[str]]] | None = None,
+        key_validity: Mapping[str, tuple[str, str]] | None = None,
         clock: Callable[[], str] | None = None,
     ) -> None:
         self._evaluator = _key_map(trusted_evaluator_keys, "evaluator")
         self._harness = _key_map(trusted_harness_keys, "harness")
         self._authorization = _key_map(
             trusted_authorization_keys or {}, "authorization")
+        self._experiment = _key_map(
+            trusted_experiment_keys or {}, "experiment")
         self._revocations = revocation_provider
         self._clock = clock or _utcnow
+        self._key_validity = _validity_map(key_validity or {})
 
     # -- key sets ------------------------------------------------------ #
     def add_evaluator_key(self, key_id: str, public_hex: str) -> None:
@@ -445,6 +455,10 @@ class EvidenceBindingAuthority:
         self._authorization[_check_key(
             key_id, public_hex, "authorization")] = public_hex.lower()
 
+    def add_experiment_key(self, key_id: str, public_hex: str) -> None:
+        self._experiment[_check_key(
+            key_id, public_hex, "experiment")] = public_hex.lower()
+
     @property
     def now(self) -> str:
         return self._clock()
@@ -457,6 +471,9 @@ class EvidenceBindingAuthority:
 
     def authorization_key_ids(self) -> frozenset[str]:
         return frozenset(self._authorization)
+
+    def experiment_key_ids(self) -> frozenset[str]:
+        return frozenset(self._experiment)
 
     def revocation_state(self) -> tuple[frozenset[str], frozenset[str]]:
         if self._revocations is None:
@@ -516,6 +533,122 @@ class EvidenceBindingAuthority:
             raise BindingError("authorization_signature_invalid")
         return record
 
+    # -- trial evidence (v3.5.1) ---------------------------------------- #
+    def experiment_authorization(self, record) -> ExperimentAuthorizationV1:
+        """Authenticate the signed experiment the trial claims to serve.
+
+        The experiment authority is a distinct key role from the
+        evaluator: the party that authorizes an experiment must not be
+        the party that measures it.
+        """
+        if not isinstance(record, ExperimentAuthorizationV1):
+            try:
+                record = ExperimentAuthorizationV1.from_dict(record)
+            except (TrialEvidenceError, ContractError, TypeError,
+                    ValueError) as exc:
+                raise BindingError("authorization_malformed") from exc
+        if not self._experiment:
+            raise BindingError("experiment_keys_unpinned")
+        public = self._experiment.get(record.signer_key_id)
+        if public is None:
+            raise BindingError("experiment_untrusted_signer",
+                               record.signer_key_id)
+        if not record.verify(public):
+            raise BindingError("experiment_signature_invalid")
+        return record
+
+    def measurement(self, record) -> TrialMeasurementV1:
+        """Authenticate the evaluator's signed trial measurement."""
+        if not isinstance(record, TrialMeasurementV1):
+            try:
+                record = TrialMeasurementV1.from_dict(record)
+            except (TrialEvidenceError, ContractError, TypeError,
+                    ValueError) as exc:
+                raise BindingError("measurement_malformed") from exc
+        public = self._evaluator.get(record.signer_key_id)
+        if public is None:
+            raise BindingError("measurement_untrusted_signer",
+                               record.signer_key_id)
+        if not record.verify(public):
+            raise BindingError("measurement_signature_invalid")
+        return record
+
+    def authenticated_receipt(self, record,
+                              *, now: str | None = None,
+                              allow_expired: bool = False,
+                              ) -> EvaluatorReceiptV2:
+        """``receipt()`` plus the validity window and revocation state.
+
+        The v3.5.0 ``receipt()`` checked the key and the signature only,
+        so an expired or revoked receipt still authenticated. This keeps
+        that check and adds the two the assessment depends on.
+        """
+        verified = self.receipt(record)
+        reasons = self.validity(
+            signer_key_id=verified.signer_key_id,
+            digest=verified.digest,
+            issued_at=verified.issued_at,
+            expires_at=verified.expires_at,
+            now=now,
+            allow_expired=allow_expired)
+        if reasons:
+            raise BindingError(reasons[0], ",".join(reasons[1:]))
+        return verified
+
+    def validity(self, *, signer_key_id: str, digest: str,
+                 issued_at: str, expires_at: str | None,
+                 now: str | None = None,
+                 allow_expired: bool = False) -> tuple[str, ...]:
+        """Stable reasons a record is not valid at ``now``.
+
+        Expiry, revocation and key-window failures are kept distinct: a
+        key that expired *after* a securely signed issuance instant is a
+        different situation from a key revoked before the run, and the
+        caller decides the policy through ``allow_expired``.
+        """
+        reasons: list[str] = []
+        instant = _instant(now or self.now)
+        revoked_signers, revoked_digests = self.revocation_state()
+        if signer_key_id in revoked_signers:
+            reasons.append("signer_revoked")
+        if digest in revoked_digests:
+            reasons.append("evidence_revoked")
+        signed_at = _instant(issued_at)
+        if signed_at > instant:
+            reasons.append("evidence_not_yet_valid")
+        window = self._key_validity.get(signer_key_id)
+        if window is not None:
+            not_before, not_after = window
+            if signed_at < not_before:
+                reasons.append("signing_key_not_yet_valid")
+            elif signed_at >= not_after:
+                reasons.append("signing_key_expired")
+        if expires_at is not None:
+            expires = _instant(expires_at)
+            if instant >= expires:
+                # ``allow_expired`` accepts evidence that was signed
+                # inside its window: the signed issuance instant is the
+                # trusted timestamp, so the record is historically valid
+                # even though it is stale for a new decision.
+                if not (allow_expired and signed_at < expires):
+                    reasons.append("evidence_expired")
+        return tuple(reasons)
+
+
+def _validity_map(intervals: Mapping[str, tuple[str, str]]
+                  ) -> dict[str, tuple[datetime, datetime]]:
+    out: dict[str, tuple[datetime, datetime]] = {}
+    for key_id, window in intervals.items():
+        if not (isinstance(key_id, str) and key_id):
+            raise BindingError("key_validity_id_invalid")
+        if not (isinstance(window, (tuple, list)) and len(window) == 2):
+            raise BindingError("key_validity_window_invalid", key_id)
+        not_before, not_after = (_instant(window[0]), _instant(window[1]))
+        if not_after <= not_before:
+            raise BindingError("key_validity_window_invalid", key_id)
+        out[key_id] = (not_before, not_after)
+    return out
+
 
 def _key_map(keys: Mapping[str, str], kind: str) -> dict[str, str]:
     out: dict[str, str] = {}
@@ -547,7 +680,9 @@ __all__ = [
     "BindingError",
     "ChainMatch",
     "EvidenceBindingAuthority",
+    "ExperimentAuthorizationV1",
     "SigningKey",
+    "TrialMeasurementV1",
     "attempt_id_for_identity",
     "attempt_id_for_digest",
     "authorization_body",

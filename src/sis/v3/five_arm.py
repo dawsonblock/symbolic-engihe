@@ -29,7 +29,6 @@ from typing import Iterable, Mapping, Sequence
 
 from . import signatures
 from .contracts import ContractError, EvaluatorReceiptV2, canonical_digest, canonical_json
-from .evidence_binding import verify_receipt
 from .governed_eval import GOVERNED_ARMS
 from .learning_qualification import (
     CONFIRMATORY,
@@ -43,6 +42,11 @@ from .statistical_power import (
     PreregistrationRecord,
     classify,
     verify_preregistration,
+)
+from .trial_evidence import (
+    ExperimentAuthorizationV1,
+    TrialEvidenceError,
+    TrialMeasurementV1,
 )
 
 ARMS = tuple(GOVERNED_ARMS)
@@ -220,6 +224,21 @@ class ArmOutcome:
     #: The evaluator's signed measurement. A bare id is not evidence; the
     #: report carries the receipt so ``assess`` can verify it.
     receipt: Mapping | None = None
+    #: The evaluator's signed *trial* record: which arm, which model,
+    #: which task digest, and what the run cost. Without it the report
+    #: cannot say that a receipt belongs to this arm, and cannot defend
+    #: the numbers the verdict is computed from.
+    measurement: Mapping | None = None
+    #: Limits the run is reported to have hit. They are signed in the
+    #: measurement; this field lets the report carry the same claim so a
+    #: genuine over-limit run is a non-solve, not an inconsistent report.
+    limit_violations: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        violations = self.limit_violations
+        if not isinstance(violations, (list, tuple)):
+            raise CampaignError("limit_violations_invalid", self.arm)
+        object.__setattr__(self, "limit_violations", tuple(violations))
 
 
 def _receipt_id(outcome: ArmOutcome) -> str | None:
@@ -257,7 +276,8 @@ def build_report(plan: CampaignPlan,
                 raise CampaignError("missing_arm_outcome", f"{task_id}/{arm}")
             exceeded = (outcome.tokens > plan.max_tokens_per_task
                         or outcome.wall_seconds >
-                        plan.max_wall_seconds_per_task)
+                        plan.max_wall_seconds_per_task
+                        or bool(outcome.limit_violations))
             # A run that blew its declared budget did not solve the task
             # inside the envelope the campaign was powered for; counting
             # it as a solve is exactly the "more expensive answer" the
@@ -272,6 +292,10 @@ def build_report(plan: CampaignPlan,
                 "receipt": (dict(outcome.receipt)
                             if isinstance(outcome.receipt, Mapping)
                             else None),
+                "measurement": (dict(outcome.measurement)
+                                if isinstance(outcome.measurement, Mapping)
+                                else None),
+                "limit_violations": list(outcome.limit_violations),
                 "arm_config_digest": canonical_digest(
                     "arm_configuration", 1,
                     next(config for config in plan.design
@@ -338,11 +362,22 @@ def build_report(plan: CampaignPlan,
 
 @dataclass(frozen=True)
 class ReportValidation:
-    """Whether a report is a complete, internally consistent run."""
+    """Whether a report is a complete, internally consistent run.
+
+    ``verified`` is the authenticated view of the run, rebuilt from the
+    evaluator-signed measurements rather than from the report's own
+    numbers. It is ``None`` when no measurement could be authenticated,
+    which is the only correct answer for a legacy report: such a report
+    may be analysed exploratorily but never promoted.
+    """
 
     ok: bool
     problems: tuple[str, ...]
     metrics: Mapping
+    verified: Mapping | None = None
+    #: Whether the report's chain was authenticated, not merely parsed.
+    #: ``ok`` is structural; a caller that needs evidence must check this.
+    authenticated: bool = False
 
 
 def _recompute_metrics(per_task: Sequence[Mapping]) -> dict:
@@ -390,11 +425,38 @@ def _is_int(value) -> bool:
 
 
 def _is_finite_number(value) -> bool:
-    return (type(value) in (int, float)
-            and math.isfinite(float(value)))
+    # ``float(10**400)`` raises OverflowError, so an arbitrarily large
+    # integer in an untrusted report would crash the validator instead of
+    # being rejected. Integers are finite by construction; only floats
+    # need the check.
+    if type(value) is int:
+        return True
+    return type(value) is float and math.isfinite(value)
 
 
-def _verify_receipt(receipt: Mapping, *, receipt_authority) -> str | None:
+def _reported_wall_milli(value) -> int | None:
+    """The report's wall time in whole milliseconds, or ``None``.
+
+    ``round()`` is banker's rounding, so a wall time of exactly
+    ``x.xxx5`` seconds would round to the even millisecond and reject an
+    honest report. Half-up matches how an evaluator writing
+    ``int(seconds * 1000)`` reports the same run.
+    """
+    if type(value) is int:
+        return value * 1000
+    if type(value) is float and math.isfinite(value):
+        scaled = value * 1000
+        if math.isfinite(scaled):
+            return math.floor(scaled + 0.5)
+        # ``1e308`` is finite but its millisecond value is not; it cannot
+        # name any measured duration, and ``math.floor(inf)`` would raise.
+        return -1
+    return None
+
+
+def _verify_receipt(receipt: Mapping, *, receipt_authority,
+                    now: str | None = None,
+                    allow_expired: bool = False) -> str | None:
     """Return a stable reason when a receipt cannot be authenticated."""
     try:
         record = EvaluatorReceiptV2.from_dict(
@@ -404,22 +466,216 @@ def _verify_receipt(receipt: Mapping, *, receipt_authority) -> str | None:
     if receipt_authority is None:
         return None
     try:
-        verifier = getattr(receipt_authority, "receipt", None)
+        verifier = getattr(receipt_authority, "authenticated_receipt", None)
         if callable(verifier):
-            verifier(record)
-        elif callable(receipt_authority):
-            if receipt_authority(record) is False:
-                return "receipt_rejected"
+            verifier(record, now=now, allow_expired=allow_expired)
         else:
-            return "receipt_authority_invalid"
+            verifier = getattr(receipt_authority, "receipt", None)
+            if callable(verifier):
+                verifier(record)
+            elif callable(receipt_authority):
+                # A predicate is only a rejection if it says so. Every
+                # other falsy return (None, 0, "", []) is not evidence of
+                # success, so it must fail closed too.
+                if not receipt_authority(record):
+                    return "receipt_rejected"
+            else:
+                return "receipt_authority_invalid"
     except Exception as exc:  # noqa: BLE001 - fail closed
         return str(getattr(exc, "reason", type(exc).__name__))
     return None
 
 
+def _arm_configuration(plan: CampaignPlan, arm: str) -> ArmConfiguration:
+    return next(config for config in plan.design if config.arm == arm)
+
+
+def _arm_config_digest(plan: CampaignPlan, arm: str) -> str:
+    return canonical_digest("arm_configuration", 1,
+                            _arm_configuration(plan, arm).to_dict())
+
+
+def _verify_experiment_authorization(
+        authorization, *, authority, plan: CampaignPlan,
+        now: str | None, allow_expired: bool,
+) -> tuple[ExperimentAuthorizationV1 | None, list[str]]:
+    """Authenticate the experiment and check it describes this plan.
+
+    The authorization is the only place the assessment learns which arm
+    configuration, model and task content were legitimate, so every one
+    of those comparisons happens here rather than in the report.
+    """
+    if authorization is None:
+        return None, []
+    problems: list[str] = []
+    if not isinstance(authorization, ExperimentAuthorizationV1):
+        try:
+            authorization = ExperimentAuthorizationV1.from_dict(authorization)
+        except (TrialEvidenceError, ContractError, TypeError, ValueError):
+            return None, ["experiment_authorization_malformed"]
+    verifier = getattr(authority, "experiment_authorization", None)
+    if authority is None or not callable(verifier):
+        # No trust root means nothing here is authenticated. That is a
+        # qualification failure, not a malformed report, so it is
+        # reported by ``assess`` rather than as a validation problem.
+        return None, []
+    try:
+        verified = verifier(authorization)
+    except Exception as exc:  # noqa: BLE001 - fail closed
+        return None, ["experiment_authorization_untrusted:"
+                      + str(getattr(exc, "reason", type(exc).__name__))]
+    validity = getattr(authority, "validity", None)
+    if callable(validity):
+        try:
+            reasons = validity(
+                signer_key_id=verified.signer_key_id,
+                digest=verified.digest, issued_at=verified.issued_at,
+                expires_at=verified.expires_at, now=now,
+                allow_expired=allow_expired)
+        except Exception as exc:  # noqa: BLE001 - fail closed
+            reasons = ("validity_error:" + type(exc).__name__,)
+        for reason in reasons:
+            problems.append("experiment_authorization_invalid:" + reason)
+    if verified.protocol_digest != plan.protocol.get("protocol_digest"):
+        problems.append("experiment_protocol_mismatch")
+    for config in plan.design:
+        entry = verified.arm(config.arm)
+        if entry is None:
+            problems.append(f"experiment_arm_missing:{config.arm}")
+            continue
+        if entry["config_digest"] != _arm_config_digest(plan, config.arm):
+            problems.append(f"experiment_arm_config_mismatch:{config.arm}")
+        if tuple(entry["components"]) != config.components:
+            problems.append(
+                f"experiment_arm_components_mismatch:{config.arm}")
+    if set(verified.task_digests) != set(plan.task_ids):
+        problems.append("experiment_task_set_mismatch")
+    return verified, problems
+
+
+def _verify_measurement(
+        measurement, *, plan: CampaignPlan, task: str, arm: str,
+        receipt: EvaluatorReceiptV2 | None,
+        authorization: ExperimentAuthorizationV1 | None,
+        authority, now: str | None, allow_expired: bool,
+) -> tuple[TrialMeasurementV1 | None, list[str]]:
+    """Authenticate one trial record and bind it to the arm it claims.
+
+    Every branch is a rejection. A measurement that cannot be tied to
+    this experiment, this arm configuration, this task digest, this
+    model and this receipt is not evidence for this row.
+    """
+    try:
+        record = (measurement if isinstance(measurement, TrialMeasurementV1)
+                  else TrialMeasurementV1.from_dict(measurement))
+    except (TrialEvidenceError, ContractError, TypeError, ValueError):
+        return None, [f"measurement_malformed:{task}/{arm}"]
+    verifier = getattr(authority, "measurement", None)
+    if authority is None or not callable(verifier):
+        return None, []
+    try:
+        record = verifier(record)
+    except Exception as exc:  # noqa: BLE001 - fail closed
+        return None, [f"measurement_untrusted:{task}/{arm}:"
+                      + str(getattr(exc, "reason", type(exc).__name__))]
+    problems: list[str] = []
+    validity = getattr(authority, "validity", None)
+    if callable(validity):
+        try:
+            reasons = validity(signer_key_id=record.signer_key_id,
+                               digest=record.digest,
+                               issued_at=record.issued_at,
+                               expires_at=None, now=now,
+                               allow_expired=allow_expired)
+        except Exception as exc:  # noqa: BLE001 - fail closed
+            # A malformed ``now`` or an authority that cannot evaluate its
+            # own policy is a rejection, never an exception out of the
+            # validator.
+            reasons = ("validity_error:" + type(exc).__name__,)
+        for reason in reasons:
+            problems.append(f"measurement_invalid:{task}/{arm}:{reason}")
+
+    if record.task_id != task:
+        problems.append(f"measurement_task_mismatch:{task}/{arm}")
+    if record.arm != arm:
+        # The single check that makes an A/E swap visible.
+        problems.append(f"measurement_arm_mismatch:{task}/{arm}")
+    if record.arm_config_digest != _arm_config_digest(plan, arm):
+        problems.append(f"measurement_arm_config_mismatch:{task}/{arm}")
+    if receipt is not None:
+        if record.receipt_digest != receipt.digest:
+            problems.append(f"measurement_receipt_mismatch:{task}/{arm}")
+        if record.receipt_id != receipt.receipt_id:
+            problems.append(f"measurement_receipt_id_mismatch:{task}/{arm}")
+        if record.authorization_id != receipt.authorization_id:
+            problems.append(
+                f"measurement_authorization_id_mismatch:{task}/{arm}")
+        if record.attempt_id != receipt.attempt_id:
+            problems.append(f"measurement_attempt_mismatch:{task}/{arm}")
+        if not _status_matches(record.status, receipt.result):
+            problems.append(f"measurement_status_mismatch:{task}/{arm}")
+        if record.evaluator_identity != receipt.evaluator_identity:
+            problems.append(f"measurement_evaluator_mismatch:{task}/{arm}")
+    if authorization is not None:
+        if record.experiment_id != authorization.experiment_id:
+            problems.append(f"measurement_experiment_mismatch:{task}/{arm}")
+        if record.authorization_digest != authorization.digest:
+            problems.append(
+                f"measurement_authorization_mismatch:{task}/{arm}")
+        expected_task = authorization.task_digests.get(task)
+        if expected_task is None:
+            problems.append(f"measurement_task_unauthorized:{task}/{arm}")
+        elif record.task_digest != expected_task:
+            problems.append(
+                f"measurement_task_digest_mismatch:{task}/{arm}")
+        if record.model_digest != authorization.model_digest:
+            problems.append(f"measurement_model_mismatch:{task}/{arm}")
+        if receipt is not None:
+            # The authorization is the only place the run's environment,
+            # criterion and test suite are frozen. A receipt that attests
+            # different commitments is evidence for a different experiment.
+            if receipt.environment_digest != authorization.environment_digest:
+                problems.append(
+                    f"measurement_environment_mismatch:{task}/{arm}")
+            if receipt.criterion_version != authorization.criterion_version:
+                problems.append(
+                    f"measurement_criterion_mismatch:{task}/{arm}")
+            if (receipt.test_suite_commitment
+                    != authorization.test_suite_commitment):
+                problems.append(
+                    f"measurement_test_suite_mismatch:{task}/{arm}")
+    if not record.metered:
+        # The evaluator declined to meter this run; its cost is unknown,
+        # so it can never support a cost-adjusted claim.
+        problems.append(f"measurement_unmetered:{task}/{arm}")
+    return record, problems
+
+
+def _status_matches(measured: str, receipt_result: str) -> bool:
+    """Whether a measurement status is consistent with the receipt result.
+
+    A receipt records the coarse outcome (``pass``/``fail``); the
+    measurement records what actually happened. ``error`` and ``partial``
+    are non-solves, not contradictions: an infrastructure failure must be
+    expressible without pretending the task was attempted and failed.
+    """
+    if receipt_result == "pass":
+        return measured == "pass"
+    return measured in ("fail", "partial", "error")
+
+
 def _validate_outcome(outcome: Mapping, *, plan: CampaignPlan, task: str,
-                      arm: str, receipt_authority) -> tuple[list[str], bool]:
-    """Check one arm outcome; return (problems, numeric_fields_valid)."""
+                      arm: str, receipt_authority,
+                      authorization: ExperimentAuthorizationV1 | None = None,
+                      now: str | None = None,
+                      allow_expired: bool = False,
+                      ) -> tuple[list[str], bool, TrialMeasurementV1 | None]:
+    """Check one arm outcome; return (problems, numeric_fields_valid, record).
+
+    The measurement is the source of truth for every number. The report's
+    copy of that number is a claim, and a claim that disagrees with the
+    signed record is a failure, not a tie-break.
+    """
     problems: list[str] = []
     numeric_ok = True
     valid = outcome.get("valid_solve")
@@ -449,11 +705,23 @@ def _validate_outcome(outcome: Mapping, *, plan: CampaignPlan, task: str,
     if not _is_int(integrity) or integrity < 0:
         problems.append(f"integrity_failures_invalid:{task}/{arm}")
         numeric_ok = False
+    error = outcome.get("error")
+    if error is not None and not isinstance(error, str):
+        problems.append(f"error_invalid:{task}/{arm}")
+        numeric_ok = False
+    limit_violations = outcome.get("limit_violations", ())
+    if not isinstance(limit_violations, (list, tuple)) or \
+            len(limit_violations) > 32 or not all(
+                isinstance(name, str) and name for name in limit_violations):
+        problems.append(f"limit_violations_invalid:{task}/{arm}")
+        numeric_ok = False
+        limit_violations = ()
 
     exceeded = None
     if numeric_ok:
         exceeded = (tokens > plan.max_tokens_per_task
-                    or wall > plan.max_wall_seconds_per_task)
+                    or wall > plan.max_wall_seconds_per_task
+                    or bool(limit_violations))
     budget_flag = outcome.get("budget_exceeded")
     if type(budget_flag) is not bool:
         problems.append(f"budget_flag_invalid:{task}/{arm}")
@@ -472,11 +740,12 @@ def _validate_outcome(outcome: Mapping, *, plan: CampaignPlan, task: str,
 
     receipt_id = outcome.get("receipt_id")
     receipt = outcome.get("receipt")
+    receipt_record: EvaluatorReceiptV2 | None = None
     if not (isinstance(receipt_id, str) and receipt_id):
         problems.append(f"receipt_missing:{task}/{arm}")
     if not isinstance(receipt, Mapping):
         problems.append(f"receipt_missing:{task}/{arm}")
-        return problems, numeric_ok
+        return problems, numeric_ok, None
     if receipt.get("receipt_id") != receipt_id:
         problems.append(f"receipt_id_mismatch:{task}/{arm}")
     if receipt.get("task_id") != task:
@@ -489,46 +758,187 @@ def _validate_outcome(outcome: Mapping, *, plan: CampaignPlan, task: str,
         if (not valid and receipt.get("result") == "pass"
                 and exceeded is False):
             problems.append(f"receipt_result_conflict:{task}/{arm}")
-    reason = _verify_receipt(receipt, receipt_authority=receipt_authority)
+    reason = _verify_receipt(receipt, receipt_authority=receipt_authority,
+                             now=now, allow_expired=allow_expired)
     if reason is not None:
         problems.append(f"receipt_untrusted:{task}/{arm}:{reason}")
-    return problems, numeric_ok
+    try:
+        receipt_record = EvaluatorReceiptV2.from_dict(
+            {"schema_version": 1, **dict(receipt)})
+    except (ContractError, TypeError, ValueError):
+        receipt_record = None
+    if receipt_record is not None and receipt_record.independence != "independent":
+        # A dependent evaluation is not an independent observation of the
+        # arm. It may exist in the record vocabulary, but it cannot count
+        # toward a verdict of any class, exploratory included.
+        problems.append(f"receipt_not_independent:{task}/{arm}")
+
+    measurement = outcome.get("measurement")
+    if measurement is None:
+        # A legacy row: structurally fine, but nothing here is
+        # authenticated, so the run cannot be promoted.
+        return problems, numeric_ok, None
+    if not isinstance(measurement, Mapping):
+        problems.append(f"measurement_malformed:{task}/{arm}")
+        return problems, numeric_ok, None
+    record, found = _verify_measurement(
+        measurement, plan=plan, task=task, arm=arm,
+        receipt=receipt_record, authorization=authorization,
+        authority=receipt_authority, now=now,
+        allow_expired=allow_expired)
+    problems.extend(found)
+    if record is None:
+        return problems, numeric_ok, None
+
+    # The report's numbers are claims about the signed record.
+    if _is_int(tokens) and tokens != record.tokens_total:
+        problems.append(f"measurement_tokens_mismatch:{task}/{arm}")
+        numeric_ok = False
+    # Compare milliseconds, not floats: an evaluator that records wall
+    # time to three decimals must not fail on a last-bit difference.
+    reported_wall = _reported_wall_milli(wall)
+    if reported_wall is not None and \
+            reported_wall != record.wall_seconds_milli:
+        problems.append(f"measurement_wall_mismatch:{task}/{arm}")
+        numeric_ok = False
+    if _is_int(tools) and tools != record.tool_calls:
+        problems.append(f"measurement_tool_calls_mismatch:{task}/{arm}")
+        numeric_ok = False
+    if tuple(limit_violations) != record.limit_violations:
+        problems.append(f"measurement_limit_violations_mismatch:{task}/{arm}")
+        numeric_ok = False
+    if error and record.status != "error":
+        # A report may not invent an infrastructure failure the signed
+        # record does not describe.
+        problems.append(f"measurement_error_mismatch:{task}/{arm}")
+        numeric_ok = False
+    measured_exceeded = (
+        record.tokens_total > plan.max_tokens_per_task
+        or record.wall_seconds > plan.max_wall_seconds_per_task
+        or bool(record.limit_violations))
+    if type(budget_flag) is bool and budget_flag != measured_exceeded:
+        problems.append(f"measurement_budget_mismatch:{task}/{arm}")
+        numeric_ok = False
+    measured_solved = record.status == "pass" and not measured_exceeded
+    if type(valid) is bool and valid != measured_solved:
+        problems.append(f"measurement_outcome_mismatch:{task}/{arm}")
+        numeric_ok = False
+    return problems, numeric_ok, record
+
+
+def _verified_view(plan: CampaignPlan, records: Mapping,
+                   per_task: Sequence[Mapping],
+                   report: Mapping) -> dict:
+    """Rebuild the run from signed measurements only.
+
+    ``paired_contrast`` and ``resource_overhead`` consume this mapping,
+    never the report, so the statistics cannot be steered by a field the
+    evaluator did not sign. Abstention, negative transfer and integrity
+    counters are telemetry: they are copied from the report because they
+    do not influence the supported verdict, and they are documented as
+    unauthenticated.
+    """
+    rows: list[dict] = []
+    for row in per_task:
+        task = row["task_id"]
+        arms: dict[str, dict] = {}
+        for arm in ARMS:
+            record = records[(task, arm)]
+            exceeded = (
+                record.tokens_total > plan.max_tokens_per_task
+                or record.wall_seconds > plan.max_wall_seconds_per_task
+                or bool(record.limit_violations))
+            solved = record.status == "pass" and not exceeded
+            claimed = row["arms"][arm]
+            arms[arm] = {
+                "outcome": "pass" if solved else "fail",
+                "valid_solve": solved,
+                "budget_exceeded": exceeded,
+                # An ``error`` status is an infrastructure failure, not a
+                # task the model failed. It is recorded separately so the
+                # verdict refuses a confirmatory claim instead of quietly
+                # treating the run as an ordinary loss.
+                "infrastructure_failure": record.status == "error",
+                "error": None,
+                "tokens": record.tokens_total,
+                "wall_seconds": record.wall_seconds,
+                "tool_calls": record.tool_calls,
+                "abstained": bool(claimed.get("abstained")),
+                "negative_transfer": bool(claimed.get("negative_transfer")),
+                "integrity_failures": claimed.get("integrity_failures") or 0,
+                "trial_id": record.trial_id,
+            }
+        rows.append({"task_id": task, "arms": arms,
+                     "arm_order": row.get("arm_order")})
+    return {
+        "per_task": rows,
+        "holdout_disjoint": report.get("holdout_disjoint"),
+        "budget_exceeded": sum(
+            1 for row in rows for arm in ARMS
+            if row["arms"][arm]["budget_exceeded"]),
+        "governed": {"metrics": _recompute_metrics(rows)},
+    }
 
 
 def validate_report(report: Mapping, plan: CampaignPlan, *,
-                    receipt_authority=None) -> ReportValidation:
-    """Check a report against the plan it claims to implement.
+                    receipt_authority=None,
+                    experiment_authorization=None,
+                    now: str | None = None,
+                    allow_expired: bool = False) -> ReportValidation:
+    """Check a report against the plan and the signed trial evidence.
 
     Undeclared, duplicated or missing tasks; missing arms; a reordered
     run; a different arm configuration; a duplicated or absent receipt;
+    a measurement that names another arm, task, model or receipt;
     modified budget flags; malformed or non-finite numbers; conflicting
     outcomes; mismatched budgets and a forged aggregate are all failures.
     An incomplete run is incomplete, not confirmatory.
+
+    Validation is total over the untrusted input domain: every shape a
+    JSON document can take produces a ``ReportValidation``, never an
+    exception.
     """
     if not isinstance(report, Mapping):
         return ReportValidation(False, ("report_invalid",), {})
     problems: list[str] = []
-    if report.get("schema_version") != 1:
+    if type(report.get("schema_version")) is not int or \
+            report.get("schema_version") != 1:
         problems.append("schema_version_invalid")
     if report.get("kind") != "controlled_five_arm_campaign":
         problems.append("report_kind_invalid")
     if report.get("evidence_class") not in (
             EXPLORATORY, "demonstration", CONFIRMATORY):
         problems.append("evidence_class_invalid")
+    if type(report.get("holdout_disjoint")) is not bool:
+        # The flag is a verdict input (``invalid_holdout``); a truthy
+        # non-boolean is not a declaration of holdout disjointness.
+        problems.append("holdout_disjoint_invalid")
     per_task = report.get("per_task")
     if not isinstance(per_task, list):
         return ReportValidation(False, ("per_task_invalid",), {})
+
+    authorization, authorization_problems = _verify_experiment_authorization(
+        experiment_authorization, authority=receipt_authority, plan=plan,
+        now=now, allow_expired=allow_expired)
+    problems.extend(authorization_problems)
+
     task_ids = [row.get("task_id") if isinstance(row, Mapping) else None
                 for row in per_task]
     if any(not isinstance(task, str) or not task for task in task_ids):
         problems.append("task_id_invalid")
-    if len(set(task_ids)) != len(task_ids):
-        problems.append("task_id_duplicated")
-    if set(task_ids) != set(plan.task_ids):
-        problems.append("task_set_mismatch")
+    else:
+        # ``set()`` raises on an unhashable value, so the duplicate and
+        # set comparisons only run once every id is known to be a string.
+        if len(set(task_ids)) != len(task_ids):
+            problems.append("task_id_duplicated")
+        if set(task_ids) != set(plan.task_ids):
+            problems.append("task_set_mismatch")
     if len(task_ids) != len(plan.task_ids):
         problems.append("task_count_mismatch")
     receipts: list[str] = []
+    trials: list[str] = []
+    receipt_digests: list[str] = []
+    records: dict[tuple[str, str], TrialMeasurementV1] = {}
     numeric_ok = True
     for row in per_task:
         if not isinstance(row, Mapping):
@@ -552,22 +962,31 @@ def validate_report(report: Mapping, plan: CampaignPlan, *,
                 problems.append(f"arm_outcome_invalid:{task}/{arm}")
                 numeric_ok = False
                 continue
-            expected = canonical_digest(
-                "arm_configuration", 1,
-                next(config for config in plan.design
-                     if config.arm == arm).to_dict())
+            expected = _arm_config_digest(plan, arm)
             if outcome.get("arm_config_digest") != expected:
                 problems.append(f"arm_config_mismatch:{task}/{arm}")
-            found, outcome_numeric_ok = _validate_outcome(
+            found, outcome_numeric_ok, record = _validate_outcome(
                 outcome, plan=plan, task=task, arm=arm,
-                receipt_authority=receipt_authority)
+                receipt_authority=receipt_authority,
+                authorization=authorization, now=now,
+                allow_expired=allow_expired)
             problems.extend(found)
             numeric_ok = numeric_ok and outcome_numeric_ok
+            if record is not None:
+                records[(task, arm)] = record
+                trials.append(record.trial_id)
+                receipt_digests.append(record.receipt_digest)
             receipt_id = outcome.get("receipt_id")
             if isinstance(receipt_id, str) and receipt_id:
                 receipts.append(receipt_id)
     if len(set(receipts)) != len(receipts):
         problems.append("receipt_duplicated")
+    if len(set(trials)) != len(trials):
+        # A replayed trial is not a second observation.
+        problems.append("measurement_duplicated")
+    if len(set(receipt_digests)) != len(receipt_digests):
+        problems.append("receipt_replayed")
+
     declared = report.get("plan")
     if not isinstance(declared, Mapping):
         problems.append("plan_block_invalid")
@@ -588,10 +1007,12 @@ def validate_report(report: Mapping, plan: CampaignPlan, *,
         problems.append("protocol_digest_mismatch")
 
     metrics = {}
-    if numeric_ok and not any(
-            problem.startswith(("task_id_", "task_set_", "task_count_",
-                                "task_row_", "arm_set_", "arm_outcome_"))
-            for problem in problems):
+    verified = None
+    structural = any(
+        problem.startswith(("task_id_", "task_set_", "task_count_",
+                            "task_row_", "arm_set_", "arm_outcome_"))
+        for problem in problems)
+    if numeric_ok and not structural:
         metrics = _recompute_metrics(per_task)
         governed = report.get("governed")
         if not isinstance(governed, Mapping):
@@ -621,7 +1042,11 @@ def validate_report(report: Mapping, plan: CampaignPlan, *,
             if row["arms"][arm].get("budget_exceeded") is True)
         if report.get("budget_exceeded") != expected_budget:
             problems.append("budget_exceeded_mismatch")
-    return ReportValidation(not problems, tuple(problems), metrics)
+        complete = len(records) == len(plan.task_ids) * len(ARMS)
+        if complete and authorization is not None and not problems:
+            verified = _verified_view(plan, records, per_task, report)
+    return ReportValidation(not problems, tuple(problems), metrics, verified,
+                            authenticated=verified is not None)
 
 
 @dataclass(frozen=True)
@@ -683,52 +1108,206 @@ def sign_analysis_manifest(seed: bytes, *, key_id: str,
     return AnalysisManifest(**fields).sign(seed, key_id)
 
 
+def authorize_experiment(
+        plan: CampaignPlan, *, experiment_id: str, model_identity: str,
+        model_digest: str, task_digests: Mapping[str, str],
+        environment_digest: str, criterion_version: str,
+        test_suite_commitment: str, preregistration_digest: str,
+        issued_at: str, expires_at: str, seed: bytes,
+        key_id: str) -> ExperimentAuthorizationV1:
+    """Sign the frozen description of this campaign.
+
+    The arm configuration digests are derived from ``plan.design``, so an
+    authorization cannot describe an arm mapping the plan does not use.
+    """
+    arms = tuple({
+        "arm": config.arm,
+        "label": config.label,
+        "components": config.components,
+        "config_digest": _arm_config_digest(plan, config.arm),
+    } for config in plan.design)
+    return ExperimentAuthorizationV1(
+        schema_version=1,
+        experiment_id=experiment_id,
+        protocol_digest=plan.protocol.get("protocol_digest"),
+        preregistration_digest=preregistration_digest,
+        model_identity=model_identity,
+        model_digest=model_digest,
+        task_digests=dict(task_digests),
+        environment_digest=environment_digest,
+        criterion_version=criterion_version,
+        test_suite_commitment=test_suite_commitment,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        signer_key_id=key_id,
+        signature="0" * 128,
+        arms=arms,
+    ).sign(seed, key_id)
+
+
+def _holm_adjusted(pvalues: Mapping[str, float]) -> dict[str, float]:
+    """Holm step-down adjustment across the four reported contrasts.
+
+    Four contrasts are tested (E-vs-A plus three component contrasts).
+    Reporting the smallest unadjusted p and calling it supported is the
+    multiple-comparison error the preregistration exists to prevent.
+    """
+    order = sorted(pvalues, key=lambda key: pvalues[key])
+    count = len(order)
+    adjusted: dict[str, float] = {}
+    running = 0.0
+    for rank, key in enumerate(order):
+        value = min(1.0, (count - rank) * pvalues[key])
+        running = max(running, value)
+        adjusted[key] = running
+    return adjusted
+
+
+def _empty_contrast(baseline: str = "A", treatment: str = "E") -> dict:
+    return {
+        "baseline": baseline,
+        "treatment": treatment,
+        "tasks": 0,
+        "baseline_solved": 0,
+        "treatment_solved": 0,
+        "delta": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "ties": 0,
+        "mcnemar_exact_p": 1.0,
+        "difference_interval_95": [0.0, 0.0],
+        "significant": False,
+    }
+
+
 def assess(report: Mapping, *, plan: CampaignPlan,
            analysis: AnalysisManifest | None = None,
            receipt_authority=None,
            trusted_analysis_keys: Mapping[str, str] | None = None,
-           trusted_timestamp_keys: Mapping[str, str] | None = None) -> dict:
+           trusted_timestamp_keys: Mapping[str, str] | None = None,
+           experiment_authorization=None,
+           now: str | None = None,
+           allow_expired: bool = False) -> dict:
     """The E-vs-A verdict, including the after-cost comparison.
 
-    A report that does not validate against its plan is ``invalid_report``.
-    ``supported`` additionally requires every arm outcome to carry an
-    evaluator receipt authenticated by ``receipt_authority``, and a
-    signed analysis manifest whose signature and preregistration both
-    verify against configured trust roots. A self-declared
-    ``confirmatory`` label in the report is never sufficient.
+    ``supported`` requires the whole chain, not just a signature: every
+    arm outcome must carry an evaluator receipt *and* a trial measurement
+    authenticated by ``receipt_authority``; the measurement must name
+    this experiment, this arm configuration, this task digest, this model
+    and this receipt; the experiment must be authorized by a pinned
+    experiment key; and the analysis manifest and preregistration must
+    verify against their own trust roots.
+
+    Statistics are computed from the authenticated measurements, never
+    from the report's numbers. A report that fails validation returns
+    ``invalid_report`` without touching its contents, so malformed input
+    can never raise.
     """
-    validation = validate_report(report, plan,
-                                 receipt_authority=receipt_authority)
+    validation = validate_report(
+        report, plan, receipt_authority=receipt_authority,
+        experiment_authorization=experiment_authorization,
+        now=now, allow_expired=allow_expired)
     problems = list(validation.problems)
-    decisive = paired_contrast(report, baseline="A", treatment="E")
-    overhead = resource_overhead(report)
-    metrics = validation.metrics or report.get("governed", {}).get(
-        "metrics", {})
+    observed_claim = 0
+    if isinstance(report, Mapping) and isinstance(
+            report.get("per_task"), list):
+        observed_claim = len(report["per_task"])
+    if not validation.ok:
+        return {
+            "schema_version": 1,
+            "verdict": "invalid_report",
+            "decisive_contrast": _empty_contrast(),
+            "component_contrasts": {arm: _empty_contrast(arm, "E")
+                                    for arm in ("B", "C", "D")},
+            "solve_rate": {"A": 0.0, "E": 0.0},
+            "mean_tokens": {"A": None, "E": None},
+            "token_ratio": None,
+            "required_sample_size": plan.required_sample_size,
+            "observed_sample_size": observed_claim,
+            "underpowered": True,
+            "budget_exceeded": (report.get("budget_exceeded", 0)
+                                if isinstance(report, Mapping) else 0),
+            "evidence_class": "invalid",
+            "receipts_verified": False,
+            "measurements_verified": False,
+            "analysis_verified": False,
+            "preregistration_verified": False,
+            "holm_adjusted_p": {},
+            "infrastructure_failures": 0,
+            "equivalence_established": False,
+            "problems": problems,
+            "validation": {"ok": False,
+                           "problems": list(validation.problems)},
+            "classification": None,
+            "overhead": {},
+        }
+
+    verified = validation.verified
+    measured = verified is not None
+    if not measured:
+        problems.append("measurement_unverified" if receipt_authority is None
+                        else "measurement_missing")
+    source = verified if measured else {"per_task": []}
+
+    decisive = paired_contrast(source, baseline="A", treatment="E")
+    component_arms = {arm: paired_contrast(source, baseline=arm,
+                                           treatment="E")
+                      for arm in ("B", "C", "D")}
+    overhead = resource_overhead(source)
+    metrics = (verified or {}).get("governed", {}).get("metrics", {}) \
+        if measured else {}
     a_solved = metrics.get("A", {}).get("solved_task_rate", 0.0)
     e_solved = metrics.get("E", {}).get("solved_task_rate", 0.0)
     a_tokens = overhead.get("A", {}).get("mean_tokens_per_task")
     e_tokens = overhead.get("E", {}).get("mean_tokens_per_task")
     token_ratio = (e_tokens / a_tokens
                    if a_tokens and e_tokens is not None else None)
-    # A component arm beating E would mean the integrated system adds
-    # complexity without adding capability.
-    component_arms = {}
-    for arm in ("B", "C", "D"):
-        component_arms[arm] = paired_contrast(
-            report, baseline=arm, treatment="E")
-    observed = len(report.get("per_task", []))
+    observed = len(source["per_task"])
     underpowered = observed < plan.required_sample_size
+    infrastructure_failures = sum(
+        1 for row in source["per_task"] for arm in ARMS
+        if row["arms"][arm].get("infrastructure_failure"))
+    if infrastructure_failures:
+        # An infrastructure failure is not an unsuccessful attempt. It
+        # also cannot be silently dropped: the paired design and the
+        # preregistered sample size were computed over all tasks.
+        problems.append("infrastructure_failure_present")
+
+    adjusted = _holm_adjusted({
+        "E_vs_A": decisive["mcnemar_exact_p"],
+        **{f"{arm}_vs_E": component_arms[arm]["mcnemar_exact_p"]
+           for arm in ("B", "C", "D")},
+    })
+    decisive_holm = adjusted["E_vs_A"]
+
     evidence_class = EXPLORATORY
     classification = None
     analysis_verified = False
     preregistration_verified = False
     if receipt_authority is None:
         problems.append("receipt_authority_missing")
+    if experiment_authorization is None:
+        problems.append("experiment_authorization_missing")
+    elif receipt_authority is None:
+        problems.append("experiment_authorization_unverified")
+    authorization = experiment_authorization
+    if isinstance(authorization, Mapping):
+        try:
+            authorization = ExperimentAuthorizationV1.from_dict(authorization)
+        except (TrialEvidenceError, ContractError, TypeError, ValueError):
+            authorization = None
     if analysis is None:
         problems.append("analysis_manifest_missing")
     else:
         if analysis.protocol_digest != plan.protocol.get("protocol_digest"):
             problems.append("analysis_protocol_mismatch")
+        if (isinstance(authorization, ExperimentAuthorizationV1)
+                and analysis.preregistration is not None
+                and authorization.preregistration_digest
+                != analysis.preregistration.digest):
+            # The experiment must have been authorized for the very
+            # preregistration the analysis is bound to.
+            problems.append("analysis_preregistration_mismatch")
         if analysis.signature is None:
             problems.append("analysis_manifest_unsigned")
         elif not trusted_analysis_keys:
@@ -744,6 +1323,12 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         preregistration = analysis.preregistration
         if preregistration is None:
             problems.append("preregistration_missing")
+        elif preregistration.protocol_digest != plan.protocol.get(
+                "protocol_digest"):
+            # The preregistration is signed, but it must be a
+            # preregistration for *this* protocol, not merely a signed
+            # record whose digest the other keys agreed to name.
+            problems.append("preregistration_protocol_mismatch")
         elif not trusted_timestamp_keys:
             problems.append("timestamp_trust_root_missing")
         else:
@@ -774,15 +1359,19 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         evidence_class = EXPLORATORY
         problems.append("input_evidence_not_confirmatory")
     receipts_verified = (receipt_authority is not None
-                         and validation.ok
                          and not any(problem.startswith("receipt_")
                                      for problem in problems))
-    if not validation.ok:
-        verdict = "invalid_report"
-        evidence_class = "invalid"
-    elif not report.get("holdout_disjoint", True):
+    measurements_verified = (measured
+                             and not any(problem.startswith("measurement_")
+                                         for problem in problems))
+    if not report.get("holdout_disjoint", True):
         verdict = "invalid_holdout"
         evidence_class = "invalid"
+    elif infrastructure_failures:
+        # An infrastructure failure is not a task outcome. The paired
+        # design cannot be read as a win, a loss or a regression when a
+        # cell failed for a reason the model does not control.
+        verdict = "no_evidence"
     elif decisive["delta"] < 0:
         verdict = "regressed"
     elif decisive["delta"] == 0 or not decisive["significant"]:
@@ -791,9 +1380,14 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         verdict = "underpowered"
     elif token_ratio is not None and token_ratio > 2.0:
         verdict = "no_advantage_after_cost"
-    elif evidence_class != CONFIRMATORY or not receipts_verified:
-        # A significant contrast without verified receipts, a signed
-        # analysis and a valid preregistration is not a claim.
+    elif decisive_holm > 0.05:
+        # The decisive contrast does not survive the family-wise
+        # correction that the preregistration implies.
+        verdict = "no_evidence"
+    elif evidence_class != CONFIRMATORY or not receipts_verified \
+            or not measurements_verified:
+        # A significant contrast without the full authenticated chain is
+        # not a claim.
         verdict = "no_evidence"
     else:
         verdict = "supported"
@@ -808,11 +1402,17 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         "required_sample_size": plan.required_sample_size,
         "observed_sample_size": observed,
         "underpowered": underpowered,
-        "budget_exceeded": report.get("budget_exceeded", 0),
+        "budget_exceeded": (verified or {}).get("budget_exceeded", 0),
         "evidence_class": evidence_class,
         "receipts_verified": receipts_verified,
+        "measurements_verified": measurements_verified,
         "analysis_verified": analysis_verified,
         "preregistration_verified": preregistration_verified,
+        "holm_adjusted_p": adjusted,
+        "infrastructure_failures": infrastructure_failures,
+        # A non-significant result is not evidence of equivalence: the
+        # interval may still contain a difference worth acting on.
+        "equivalence_established": False,
         "problems": problems,
         "validation": {"ok": validation.ok,
                        "problems": list(validation.problems)},
@@ -829,11 +1429,15 @@ __all__ = [
     "CampaignError",
     "AnalysisManifest",
     "CampaignPlan",
+    "ExperimentAuthorizationV1",
     "FIVE_ARM_DESIGN",
     "ReportValidation",
     "assess",
+    "authorize_experiment",
     "build_report",
     "sign_analysis_manifest",
     "validate_design",
     "validate_report",
 ]
+
+

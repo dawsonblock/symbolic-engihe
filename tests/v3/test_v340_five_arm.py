@@ -112,6 +112,14 @@ class PlanTests(unittest.TestCase):
 
 def outcomes(tasks, *, e_solves=(), b_solves=(), e_tokens=1000,
              a_tokens=1000):
+    """A fully signed run: every arm carries a receipt and a measurement.
+
+    The measurement is bound to an experiment authorization for this
+    plan, so the fixture is what a real evaluator would produce — not a
+    report-shaped claim.
+    """
+    campaign = plan(tasks=tasks)
+    authorization = kit.experiment_authorization(campaign)
     rows = []
     for index in range(tasks):
         task = f"t{index}"
@@ -122,15 +130,21 @@ def outcomes(tasks, *, e_solves=(), b_solves=(), e_tokens=1000,
             "D": False,
             "E": task in e_solves,
         }
-        rows.append((task, {
-            arm: ArmOutcome(
+        arms = {}
+        for arm in ARMS:
+            tokens = e_tokens if arm == "E" else a_tokens
+            receipt = kit.receipt_for(
+                task, arm, "pass" if solved[arm] else "fail")
+            arms[arm] = ArmOutcome(
                 arm=arm, valid_solve=solved[arm],
-                tokens=e_tokens if arm == "E" else a_tokens,
-                wall_seconds=10.0, tool_calls=5,
-                receipt=kit.receipt_for(
-                    task, arm, "pass" if solved[arm] else "fail"))
-            for arm in ARMS
-        }))
+                tokens=tokens, wall_seconds=10.0, tool_calls=5,
+                receipt=receipt,
+                measurement=kit.measurement_for(
+                    task, arm, "pass" if solved[arm] else "fail",
+                    campaign=campaign, authorization=authorization,
+                    receipt=receipt,
+                    tokens_in=tokens // 2, tokens_out=tokens - tokens // 2))
+        rows.append((task, arms))
     return rows
 
 
@@ -155,11 +169,26 @@ def trusted_timestamp():
     return kit.trusted_timestamp_keys()
 
 
+def signed_outcome(task, arm, solved, *, campaign, authorization,
+                   tokens=1000):
+    """One arm outcome carrying a receipt and a matching measurement."""
+    receipt = kit.receipt_for(task, arm, "pass" if solved else "fail")
+    return ArmOutcome(
+        arm=arm, valid_solve=solved, tokens=tokens, wall_seconds=10.0,
+        tool_calls=5, receipt=receipt,
+        measurement=kit.measurement_for(
+            task, arm, "pass" if solved else "fail", campaign=campaign,
+            authorization=authorization, receipt=receipt,
+            tokens_in=tokens // 2, tokens_out=tokens - tokens // 2))
+
+
 def verdict_for(report, campaign, analysis=None):
     return assess(report, plan=campaign, analysis=analysis,
                   receipt_authority=authority(),
                   trusted_analysis_keys=trusted_analysis(),
-                  trusted_timestamp_keys=trusted_timestamp())
+                  trusted_timestamp_keys=trusted_timestamp(),
+                  experiment_authorization=kit.experiment_authorization(
+                      campaign))
 
 
 class AssessmentTests(unittest.TestCase):
@@ -198,18 +227,16 @@ class AssessmentTests(unittest.TestCase):
                 f"t{i}" for i in range(10)}))
         # E solves nothing while A also solves nothing: no delta. Force a
         # real regression by giving A solves instead.
+        campaign = plan(tasks=tasks)
+        authorization = kit.experiment_authorization(campaign)
         rows = []
         for task, arms in outcomes(tasks):
             rows.append((task, {
                 **arms,
-                "A": ArmOutcome(
-                    arm="A", valid_solve=True, tokens=1000,
-                    wall_seconds=10.0, tool_calls=5,
-                    receipt=kit.receipt_for(task, "A", "pass")),
-                "E": ArmOutcome(
-                    arm="E", valid_solve=False, tokens=1000,
-                    wall_seconds=10.0, tool_calls=5,
-                    receipt=kit.receipt_for(task, "E", "fail")),
+                "A": signed_outcome(task, "A", True, campaign=campaign,
+                                    authorization=authorization),
+                "E": signed_outcome(task, "E", False, campaign=campaign,
+                                    authorization=authorization),
             }))
         report = build_report(plan(tasks=tasks), rows)
         verdict = verdict_for(report, plan(tasks=tasks))

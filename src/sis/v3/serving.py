@@ -193,7 +193,7 @@ class ProductionRequirements:
 
 
 def _signer_separation_problems(binding_authority, ledger) -> list[str]:
-    """One role per key: evaluator, harness, authorization, ledger."""
+    """One role per key: evaluator, harness, authorization, experiment, ledger."""
     if binding_authority is None or ledger is None:
         return []
     groups = {
@@ -203,6 +203,8 @@ def _signer_separation_problems(binding_authority, ledger) -> list[str]:
                                "harness_key_ids", lambda: ())()),
         "authorization": set(getattr(binding_authority,
                                      "authorization_key_ids", lambda: ())()),
+        "experiment": set(getattr(binding_authority,
+                                  "experiment_key_ids", lambda: ())()),
         "ledger": {getattr(ledger, "key_id", None)},
     }
     problems: list[str] = []
@@ -308,6 +310,11 @@ class GovernedServingGateway:
         # for compatibility, but only as an assertion: every component in
         # it must be the identical object the gateway holds. A green
         # profile describing components that were never wired is refused.
+        #
+        # ``_production_requirements`` records what the constructor
+        # accepted, for introspection. It is deliberately *not* consulted
+        # by ``health()`` or ``serve()``: gating on a mutable attribute
+        # let a caller clear it and make a degraded gateway look ready.
         self._production_requirements = None
         if self._production:
             actual = ProductionRequirements.from_components(
@@ -465,7 +472,7 @@ class GovernedServingGateway:
                         identity_result.identity.session_nonce)
                 served_map["execution_identity"] = \
                     identity_result.identity.digest
-            if self._production_requirements is not None:
+            if self._production:
                 problems = self._current_production_requirements().problems()
                 if problems:
                     # The constructor rejected an incomplete profile; this
@@ -688,7 +695,10 @@ class GovernedServingGateway:
                 "failed_gates": list(self._rollout.failed_gates),
                 "may_serve": self._rollout.may_serve(),
             }
-        if self._production_requirements is not None:
+        if self._production:
+            # Readiness is derived from the components wired right now.
+            # Gating on the stored profile would let a caller clear one
+            # attribute and make a degraded gateway look ready.
             profile = self._current_production_requirements().to_dict()
             checks["production_profile"] = {"ok": profile["complete"],
                                             **profile}

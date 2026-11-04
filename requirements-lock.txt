@@ -1,8 +1,9 @@
-# Pinned test and production-profile dependencies for SIS v3.5.0.
+# Pinned test and production-profile dependencies for SIS v3.5.1.
 # The core package has no runtime dependencies; psycopg is required only
 # for the PostgreSQL control-plane profile. cryptography is the only
 # vetted Ed25519 backend: production refuses the vendored fallback.
 pytest==8.4.2
+hypothesis==6.151.4
 psycopg[binary]==3.3.4
 cryptography==48.0.1
 setuptools==82.0.1

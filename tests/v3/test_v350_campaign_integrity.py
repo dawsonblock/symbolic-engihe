@@ -111,7 +111,9 @@ class VerdictTests(unittest.TestCase):
             report_for(), plan=plan(tasks=29), analysis=manifest(),
             receipt_authority=kit.receipt_authority(),
             trusted_analysis_keys=kit.trusted_analysis_keys(),
-            trusted_timestamp_keys=kit.trusted_timestamp_keys())
+            trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+            experiment_authorization=kit.experiment_authorization(
+                plan(tasks=29)))
         self.assertEqual(verdict["verdict"], "supported")
         self.assertEqual(verdict["evidence_class"], "confirmatory")
         self.assertEqual(verdict["problems"], [])
@@ -164,7 +166,13 @@ class VerdictTests(unittest.TestCase):
                         b_solves={f"t{i}" for i in range(20)})
         report = build_report(plan(tasks=29), rows,
                               evidence_class="confirmatory")
-        verdict = assess(report, plan=plan(tasks=29), analysis=manifest())
+        verdict = assess(
+            report, plan=plan(tasks=29), analysis=manifest(),
+            receipt_authority=kit.receipt_authority(),
+            trusted_analysis_keys=kit.trusted_analysis_keys(),
+            trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+            experiment_authorization=kit.experiment_authorization(
+                plan(tasks=29)))
         # The contrast is E minus B; a negative delta means B solved more.
         self.assertLess(
             verdict["component_contrasts"]["B"]["delta"], 0)

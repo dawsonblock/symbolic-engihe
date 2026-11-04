@@ -15,8 +15,8 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {"__pycache__", ".git", ".venv", "dist", "build",
-             ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-             "htmlcov"}
+             ".pytest_cache", ".hypothesis", ".mypy_cache", ".ruff_cache",
+             ".tox", ".nox", "htmlcov"}
 SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log",
              ".sqlite3-wal", ".sqlite3-shm", ".sqlite3-journal",
              ".db-wal", ".db-shm", ".db-journal"}
@@ -24,7 +24,7 @@ SKIP_EXTS = {".pyc", ".pyo", ".sqlite3", ".db", ".log",
 # manifest that describes the archive. It must never be inventoried *into* the
 # archive, or every rebuild would embed the previous release (and its stale
 # checksum) inside the next one.
-OUT_OF_BAND_DIRS = {"release"}
+OUT_OF_BAND_DIRS = {"release", "qualification"}
 # The build record describes the build, not the source. It is rewritten by
 # every packaging run, so it cannot be part of the archive it describes.
 OUT_OF_BAND_FILES = {"evidence/release/build_record.json",

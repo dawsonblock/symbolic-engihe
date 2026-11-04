@@ -1,33 +1,67 @@
 {
-  "archive": "SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
+  "archive": "SIS_v3.5.1_FULL_UPGRADED.zip",
   "fresh_extraction": {
     "compileall_src": true,
     "extracted_test_smoke": {
       "command": "pytest -q tests/v3/test_candidates.py",
       "returncode": 0,
-      "tail": "39 passed in 0.48s"
+      "tail": "39 passed in 0.93s"
     },
     "verify_tree": {
-      "files": 375
+      "files": 423
     }
   },
   "kind": "release_verification",
   "schema_version": 1,
   "source": {
-    "commit": "17f6360fcb2bf9e47ee68ee5060e3df3a0470a66",
-    "dirty": false,
-    "dirty_paths": []
+    "commit": "949104736c5951bfaeb92ca93e89f84a3564c639",
+    "dirty": true,
+    "dirty_paths": [
+      ".github/workflows/ci.yml",
+      ".gitignore",
+      "CHANGELOG.md",
+      "pyproject.toml",
+      "requirements-lock.txt",
+      "src/sis/__init__.py",
+      "src/sis/v3/evidence_binding.py",
+      "src/sis/v3/five_arm.py",
+      "src/sis/v3/serving.py",
+      "tests/v3/five_arm_testkit.py",
+      "tests/v3/test_v340_five_arm.py",
+      "tests/v3/test_v350_campaign_integrity.py",
+      "tests/v3/test_v350_production_profile.py",
+      "tools/build_canonical_zip.py",
+      "tools/check_source_manifest.py",
+      "tools/package_release.py",
+      "tools/provenance.py",
+      "SIS_v3.5.1_DEFECT_MATRIX.md",
+      "SIS_v3.5.1_ENGINEERING_AUDIT.md",
+      "SIS_v3.5.1_REPRODUCTION.md",
+      "SIS_v3.5.1_SECURITY_ARCHITECTURE.md",
+      "evidence/v351/PHASE0_BASELINE.md",
+      "qualification/qualification.json",
+      "src/sis/v3/container_isolation.py",
+      "src/sis/v3/trial_evidence.py",
+      "tests/v3/test_v351_container_isolation.py",
+      "tests/v3/test_v351_evidence_chain.py",
+      "tests/v3/test_v351_learning_preservation.py",
+      "tests/v3/test_v351_postgres_qualification.py",
+      "tests/v3/test_v351_qualification_harness.py",
+      "tests/v3/test_v351_report_totality.py",
+      "tools/build_evidence_bundle.py",
+      "tools/v351_qualify.py"
+    ]
   },
   "source_binding": {
-    "files": 375,
-    "project": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
+    "files": 423,
+    "project": "SIS_v3.5.1_FULL_UPGRADED",
     "source_bound": true
   },
   "zip_verify": {
     "manifest": "RELEASE_SHA256.json",
-    "project": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
-    "source_files": 375,
+    "project": "SIS_v3.5.1_FULL_UPGRADED",
+    "source_files": 423,
     "valid": true,
-    "zip_sha256": "ecb8486c3036fb20868618dbcc9e5615183ec8ed6c6dcf7f84fd3a86d7cd5fac"
+    "zip_sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec"
   }
 }

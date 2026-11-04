@@ -45,7 +45,7 @@ def source_binding(root: Path) -> dict:
         if not path or path.startswith("release/") or path in GENERATED_PATHS:
             continue
         dirty.append(path)
-    return {"commit": commit, "dirty": bool(dirty), "dirty_paths": dirty[:20]}
+    return {"commit": commit, "dirty": bool(dirty), "dirty_paths": dirty}
 
 
 def build(root: Path, target: Path, require_clean: bool = True,

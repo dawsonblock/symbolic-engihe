@@ -1,11 +1,11 @@
 {
   "archive": {
-    "inner_project_dir": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
-    "path": "release/SIS-v3.3.2-AUTHORITY-CONSISTENCY.zip",
-    "sha256": "ecb8486c3036fb20868618dbcc9e5615183ec8ed6c6dcf7f84fd3a86d7cd5fac",
-    "source_files": 375
+    "inner_project_dir": "SIS_v3.5.1_FULL_UPGRADED",
+    "path": "release/SIS_v3.5.1_FULL_UPGRADED.zip",
+    "sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec",
+    "source_files": 423
   },
-  "branch": "codex/sis-v3.3.1-authority-closure",
+  "branch": "sis/v3.4.0-engineering-upgrade",
   "docs": [
     "docs/v3/ARCHITECTURE_V3_3.md",
     "docs/v3/CODEX_ADAPTER.md",
@@ -33,6 +33,11 @@
     "docs/v3/V2_BASELINE.md",
     "docs/v3/V32_GAP_MAP.md",
     "docs/v3/V33_LIMITATIONS.md",
+    "docs/v3/V340_BASELINE.md",
+    "docs/v3/V340_IMPLEMENTATION.md",
+    "docs/v3/V340_RUNBOOK.md",
+    "docs/v3/V350_BASELINE.md",
+    "docs/v3/V350_IMPLEMENTATION.md",
     "docs/audits/BASELINE_INTEGRITY.md"
   ],
   "evidence": [
@@ -48,27 +53,26 @@
     "evidence/sandbox/",
     "evidence/security/",
     "evidence/skills/",
-    "evidence/v332/"
+    "evidence/v332/",
+    "evidence/v351/"
   ],
   "notes": "release/ artifacts are out-of-band provenance and are intentionally absent from the archive manifest",
   "provenance": {
-    "key_id": "review-release-key-1",
-    "path": "release/provenance.dsse.json",
-    "public_key_path": "release/provenance_public_key.hex",
-    "signed": true,
-    "statement_sha256": "ab15965b83a5df094c0e2896d6eb268da855fa8365932a3af4da7324d8d9d214",
-    "subject_sha256": "ecb8486c3036fb20868618dbcc9e5615183ec8ed6c6dcf7f84fd3a86d7cd5fac",
+    "path": "release/provenance.intoto.json",
+    "signed": false,
+    "statement_sha256": "7ee81ed7f40a1be2ddb99d09b217e98445cc0e502f5557cdd6105b294c7e2da1",
+    "subject_sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec",
     "trust_root": "qualification-only"
   },
-  "release": "SIS-v3.3.2-AUTHORITY-CONSISTENCY",
+  "release": "SIS_v3.5.1_FULL_UPGRADED",
   "schema_version": 1,
-  "source_commit": "17f6360fcb2bf9e47ee68ee5060e3df3a0470a66",
-  "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
-  "status": "IMPLEMENTED_NOT_EFFICACY_QUALIFIED",
+  "source_commit": "949104736c5951bfaeb92ca93e89f84a3564c639",
+  "source_commit_note": "UNCOMMITTED SOURCE: this archive was built from a working tree with uncommitted changes relative to 949104736c5951bfaeb92ca93e89f84a3564c639 (.github/workflows/ci.yml, .gitignore, CHANGELOG.md, pyproject.toml, requirements-lock.txt, src/sis/__init__.py, src/sis/v3/evidence_binding.py, src/sis/v3/five_arm.py, src/sis/v3/serving.py, tests/v3/five_arm_testkit.py, tests/v3/test_v340_five_arm.py, tests/v3/test_v350_campaign_integrity.py, tests/v3/test_v350_production_profile.py, tools/build_canonical_zip.py, tools/check_source_manifest.py, tools/package_release.py, tools/provenance.py, SIS_v3.5.1_DEFECT_MATRIX.md, SIS_v3.5.1_ENGINEERING_AUDIT.md, SIS_v3.5.1_REPRODUCTION.md, and 13 more). It is bound to its own RELEASE_SHA256.json, not to that commit.",
+  "status": "CONDITIONAL_GO",
   "test_result": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 986,
-    "skipped": 8
+    "passed": 1489,
+    "skipped": 3
   }
 }

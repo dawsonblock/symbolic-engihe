@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "symbolic-induction-engine"
-version = "3.5.0"
+version = "3.5.1"
 description = "Model-independent, bounded symbolic rule induction with evidence-gated persistence"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ dependencies = []
 
 [project.optional-dependencies]
 z3 = ["z3-solver>=4.12,<5"]
-dev = ["pytest==8.4.2"]
+dev = ["pytest==8.4.2", "hypothesis==6.151.4"]
 crypto = ["cryptography==48.0.1"]
 evaluator = ["pytest==8.4.2"]
 postgres = ["psycopg[binary]>=3.2,<4"]

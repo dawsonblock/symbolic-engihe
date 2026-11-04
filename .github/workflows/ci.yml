@@ -79,5 +79,8 @@ jobs:
       - run: python -m pytest tests/ -q
         env:
           SIS_POSTGRES_DSN: postgresql://sis_test:sis_test@127.0.0.1:5432/sis_control
+          # The qualification fixture drops the control-plane tables; the
+          # service database above is disposable.
+          SIS_POSTGRES_ALLOW_DESTRUCTIVE: "1"
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           PYTHONNOUSERSITE: "1"

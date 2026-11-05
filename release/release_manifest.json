@@ -2,8 +2,8 @@
   "archive": {
     "inner_project_dir": "SIS_v3.5.1_FULL_UPGRADED",
     "path": "release/SIS_v3.5.1_FULL_UPGRADED.zip",
-    "sha256": "d027293a6eb4658b5e551e454d3bc3e574afd4bab645f53facbea4793540939f",
-    "source_files": 423
+    "sha256": "c9bb28c0b7d48e75c46f662f154f93f525b92e5ece81e94855caf331fae8514f",
+    "source_files": 426
   },
   "branch": "sis/v3.4.0-engineering-upgrade",
   "docs": [
@@ -60,19 +60,19 @@
   "provenance": {
     "path": "release/provenance.intoto.json",
     "signed": false,
-    "statement_sha256": "8e4849ad94deaed52932ec59ec61d51975a9c3ca37d9fe5e76b9678eb0836d62",
-    "subject_sha256": "d027293a6eb4658b5e551e454d3bc3e574afd4bab645f53facbea4793540939f",
+    "statement_sha256": "b0d362ee27b68016d6a41d28fb711e67350e6ab9b48207f7c1e4017e94ae8c5f",
+    "subject_sha256": "c9bb28c0b7d48e75c46f662f154f93f525b92e5ece81e94855caf331fae8514f",
     "trust_root": "qualification-only"
   },
   "release": "SIS_v3.5.1_FULL_UPGRADED",
   "schema_version": 1,
-  "source_commit": "896ee910ff26f75321e0cad8d71f51fda7979f23",
-  "source_commit_note": "UNCOMMITTED SOURCE: this archive was built from a working tree with uncommitted changes relative to 896ee910ff26f75321e0cad8d71f51fda7979f23 (.github/workflows/ci.yml, CHANGELOG.md, SIS_v3.5.1_DEFECT_MATRIX.md, SIS_v3.5.1_ENGINEERING_AUDIT.md, SIS_v3.5.1_REPRODUCTION.md, SIS_v3.5.1_SECURITY_ARCHITECTURE.md, qualification/qualification.json, src/sis/v3/container_isolation.py, src/sis/v3/evaluator_isolation.py, src/sis/v3/evidence_binding.py, src/sis/v3/five_arm.py, src/sis/v3/serving.py, src/sis/v3/statistical_power.py, src/sis/v3/trial_evidence.py, tests/v3/five_arm_testkit.py, tests/v3/test_control_plane_postgres.py, tests/v3/test_v340_evaluator_custody.py, tests/v3/test_v340_five_arm.py, tests/v3/test_v340_review_fixes.py, tests/v3/test_v340_statistics.py, and 6 more). It is bound to its own RELEASE_SHA256.json, not to that commit.",
+  "source_commit": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47",
+  "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "CONDITIONAL_GO",
   "test_result": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 1498,
+    "passed": 1504,
     "skipped": 3
   }
 }

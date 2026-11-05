@@ -24,7 +24,14 @@ from build_release import write_manifest
 
 GENERATED_PATHS = {"RELEASE_SHA256.json",
                    "evidence/release/build_record.json",
-                   "evidence/release/release_verification.json"}
+                   "evidence/release/release_verification.json",
+                   # A campaign run record is evidence, not source: the
+                   # demo re-runs it with fresh wall-clock values.
+                   "evidence/evaluation/authenticated.json"}
+
+#: Run records the build writes. They are out-of-band in the inventory,
+#: so they must not count as source drift either.
+GENERATED_PREFIXES = ("release/", "qualification/")
 
 
 def source_binding(root: Path) -> dict:
@@ -42,7 +49,8 @@ def source_binding(root: Path) -> dict:
     dirty = []
     for line in status.splitlines():
         path = line[3:].strip()
-        if not path or path.startswith("release/") or path in GENERATED_PATHS:
+        if (not path or path.startswith(GENERATED_PREFIXES)
+                or path in GENERATED_PATHS):
             continue
         dirty.append(path)
     return {"commit": commit, "dirty": bool(dirty), "dirty_paths": dirty}

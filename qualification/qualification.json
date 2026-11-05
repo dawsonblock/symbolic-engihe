@@ -11,8 +11,7 @@
       "local-image-pin: image integrity is a re-checked local image id, not a registry attestation chain",
       "manifest-not-publisher-signed: RELEASE_SHA256.json is locally generated and detects drift, not authorship; the v3.5.1 provenance statement is unsigned, a downgrade from the signed DSSE envelope shipped in v3.3.2",
       "no-capability-evaluation: no model-weight or task-success benchmark was run; no reasoning-capability improvement is claimed",
-      "audit-baseline-unexplained: the prior audit's 45 baseline failures did not reproduce in the pinned environment and remain unattributed",
-      "uncommitted-source: the archive was built from a working tree with uncommitted changes; it is bound to its own manifest, not to a commit"
+      "audit-baseline-unexplained: the prior audit's 45 baseline failures did not reproduce in the pinned environment and remain unattributed"
     ]
   },
   "environment": {
@@ -36,7 +35,7 @@
       "expected": "exit 0",
       "gate": "evidence_and_report_integrity",
       "invariant": "A valid signature must be valid for the exact trial, arm, task, outcome and measurement claimed.",
-      "seconds": 66.8,
+      "seconds": 64.2,
       "status": "pass"
     },
     {
@@ -52,7 +51,7 @@
       "expected": "exit 0",
       "gate": "evaluator_isolation",
       "invariant": "The workload cannot reach the network, the host filesystem, or the signing key.",
-      "seconds": 12.7,
+      "seconds": 12.1,
       "status": "pass"
     },
     {
@@ -68,7 +67,7 @@
       "expected": "exit 0",
       "gate": "postgres_cross_process",
       "invariant": "Two processes cannot both commit the same authorization.",
-      "seconds": 2.4,
+      "seconds": 2.2,
       "status": "pass"
     },
     {
@@ -78,13 +77,13 @@
       "counts": {
         "error": 0,
         "failed": 0,
-        "passed": 1498,
+        "passed": 1504,
         "skipped": 3
       },
       "expected": "exit 0",
       "gate": "full_regression",
       "invariant": "No unexplained regression against the v3.5.0 baseline (1362 passed).",
-      "seconds": 159.2,
+      "seconds": 167.0,
       "status": "pass"
     },
     {
@@ -120,7 +119,7 @@
       "status": "pass"
     }
   ],
-  "generated_at": "2026-11-05T01:35:00Z",
+  "generated_at": "2026-11-05T01:54:35Z",
   "release": "3.5.1",
   "schema_version": 1
 }

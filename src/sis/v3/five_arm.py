@@ -44,7 +44,7 @@ from .statistical_power import (
     verify_preregistration,
 )
 from .trial_evidence import (
-    ExperimentAuthorizationV1,
+    ExperimentAuthorizationV2,
     TrialEvidenceError,
     TrialMeasurementV1,
 )
@@ -498,7 +498,7 @@ def _arm_config_digest(plan: CampaignPlan, arm: str) -> str:
 def _verify_experiment_authorization(
         authorization, *, authority, plan: CampaignPlan,
         now: str | None, allow_expired: bool,
-) -> tuple[ExperimentAuthorizationV1 | None, list[str]]:
+) -> tuple[ExperimentAuthorizationV2 | None, list[str]]:
     """Authenticate the experiment and check it describes this plan.
 
     The authorization is the only place the assessment learns which arm
@@ -508,9 +508,9 @@ def _verify_experiment_authorization(
     if authorization is None:
         return None, []
     problems: list[str] = []
-    if not isinstance(authorization, ExperimentAuthorizationV1):
+    if not isinstance(authorization, ExperimentAuthorizationV2):
         try:
-            authorization = ExperimentAuthorizationV1.from_dict(authorization)
+            authorization = ExperimentAuthorizationV2.from_dict(authorization)
         except (TrialEvidenceError, ContractError, TypeError, ValueError):
             return None, ["experiment_authorization_malformed"]
     verifier = getattr(authority, "experiment_authorization", None)
@@ -538,6 +538,13 @@ def _verify_experiment_authorization(
             problems.append("experiment_authorization_invalid:" + reason)
     if verified.protocol_digest != plan.protocol.get("protocol_digest"):
         problems.append("experiment_protocol_mismatch")
+    if verified.plan_digest != canonical_digest(
+            "campaign_plan", 1, plan.to_dict()):
+        # Budgets, seed, arm order, task mapping and the power
+        # requirement live in the plan. An authorization for a different
+        # plan is a different experiment, even when every signed
+        # measurement still names this one.
+        problems.append("experiment_plan_mismatch")
     for config in plan.design:
         entry = verified.arm(config.arm)
         if entry is None:
@@ -556,7 +563,7 @@ def _verify_experiment_authorization(
 def _verify_measurement(
         measurement, *, plan: CampaignPlan, task: str, arm: str,
         receipt: EvaluatorReceiptV2 | None,
-        authorization: ExperimentAuthorizationV1 | None,
+        authorization: ExperimentAuthorizationV2 | None,
         authority, now: str | None, allow_expired: bool,
 ) -> tuple[TrialMeasurementV1 | None, list[str]]:
     """Authenticate one trial record and bind it to the arm it claims.
@@ -666,7 +673,7 @@ def _status_matches(measured: str, receipt_result: str) -> bool:
 
 def _validate_outcome(outcome: Mapping, *, plan: CampaignPlan, task: str,
                       arm: str, receipt_authority,
-                      authorization: ExperimentAuthorizationV1 | None = None,
+                      authorization: ExperimentAuthorizationV2 | None = None,
                       now: str | None = None,
                       allow_expired: bool = False,
                       ) -> tuple[list[str], bool, TrialMeasurementV1 | None]:
@@ -954,7 +961,15 @@ def validate_report(report: Mapping, plan: CampaignPlan, *,
         if not isinstance(task, str):
             numeric_ok = False
             continue
-        if list(row.get("arm_order") or ()) != list(plan.arm_order(task)):
+        arm_order = row.get("arm_order")
+        if not isinstance(arm_order, (list, tuple)) or any(
+                not isinstance(entry, str) for entry in arm_order):
+            # ``list()`` raises on a non-iterable and a string would be
+            # read as its characters, so the type is checked first: the
+            # validator must not raise on any JSON-shaped report.
+            problems.append(f"arm_order_invalid:{task}")
+            numeric_ok = False
+        elif list(arm_order) != list(plan.arm_order(task)):
             problems.append(f"arm_order_mismatch:{task}")
         for arm in ARMS:
             outcome = arms[arm]
@@ -1113,12 +1128,19 @@ def authorize_experiment(
         model_digest: str, task_digests: Mapping[str, str],
         environment_digest: str, criterion_version: str,
         test_suite_commitment: str, preregistration_digest: str,
-        issued_at: str, expires_at: str, seed: bytes,
-        key_id: str) -> ExperimentAuthorizationV1:
+        issued_at: str, expires_at: str, seed: bytes, key_id: str,
+        alpha_milli: int | None = None,
+        multiplicity: str = "holm",
+        token_ratio_milli: int = 2000) -> ExperimentAuthorizationV2:
     """Sign the frozen description of this campaign.
 
     The arm configuration digests are derived from ``plan.design``, so an
     authorization cannot describe an arm mapping the plan does not use.
+    The plan digest covers the budgets, seed, arm order, task mapping and
+    power requirement, so the same signed measurements cannot be
+    reinterpreted under a different campaign budget. ``alpha_milli``
+    defaults to the plan's own power requirement: the threshold the study
+    was powered for is the threshold the verdict must apply.
     """
     arms = tuple({
         "arm": config.arm,
@@ -1126,17 +1148,22 @@ def authorize_experiment(
         "components": config.components,
         "config_digest": _arm_config_digest(plan, config.arm),
     } for config in plan.design)
-    return ExperimentAuthorizationV1(
-        schema_version=1,
+    return ExperimentAuthorizationV2(
+        schema_version=2,
         experiment_id=experiment_id,
         protocol_digest=plan.protocol.get("protocol_digest"),
         preregistration_digest=preregistration_digest,
+        plan_digest=canonical_digest("campaign_plan", 1, plan.to_dict()),
         model_identity=model_identity,
         model_digest=model_digest,
         task_digests=dict(task_digests),
         environment_digest=environment_digest,
         criterion_version=criterion_version,
         test_suite_commitment=test_suite_commitment,
+        alpha_milli=(plan.power_requirement.alpha_milli
+                     if alpha_milli is None else alpha_milli),
+        multiplicity=multiplicity,
+        token_ratio_milli=token_ratio_milli,
         issued_at=issued_at,
         expires_at=expires_at,
         signer_key_id=key_id,
@@ -1221,7 +1248,9 @@ def assess(report: Mapping, *, plan: CampaignPlan,
                                     for arm in ("B", "C", "D")},
             "solve_rate": {"A": 0.0, "E": 0.0},
             "mean_tokens": {"A": None, "E": None},
+            "mean_wall_seconds": {"A": None, "E": None},
             "token_ratio": None,
+            "decision_policy": {},
             "required_sample_size": plan.required_sample_size,
             "observed_sample_size": observed_claim,
             "underpowered": True,
@@ -1249,9 +1278,24 @@ def assess(report: Mapping, *, plan: CampaignPlan,
                         else "measurement_missing")
     source = verified if measured else {"per_task": []}
 
-    decisive = paired_contrast(source, baseline="A", treatment="E")
+    authorization = experiment_authorization
+    if isinstance(authorization, Mapping):
+        try:
+            authorization = ExperimentAuthorizationV2.from_dict(authorization)
+        except (TrialEvidenceError, ContractError, TypeError, ValueError):
+            authorization = None
+    authorized = isinstance(authorization, ExperimentAuthorizationV2)
+    # The decision rule is the one the experiment was authorized for: a
+    # signed preregistration protects nothing if the verdict applies its
+    # own threshold.
+    alpha = authorization.alpha_milli / 1000 if authorized else 0.05
+    cost_ratio = (authorization.token_ratio_milli / 1000 if authorized
+                  else 2.0)
+
+    decisive = paired_contrast(source, baseline="A", treatment="E",
+                               alpha=alpha)
     component_arms = {arm: paired_contrast(source, baseline=arm,
-                                           treatment="E")
+                                           treatment="E", alpha=alpha)
                       for arm in ("B", "C", "D")}
     overhead = resource_overhead(source)
     metrics = (verified or {}).get("governed", {}).get("metrics", {}) \
@@ -1290,24 +1334,24 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         problems.append("experiment_authorization_missing")
     elif receipt_authority is None:
         problems.append("experiment_authorization_unverified")
-    authorization = experiment_authorization
-    if isinstance(authorization, Mapping):
-        try:
-            authorization = ExperimentAuthorizationV1.from_dict(authorization)
-        except (TrialEvidenceError, ContractError, TypeError, ValueError):
-            authorization = None
     if analysis is None:
         problems.append("analysis_manifest_missing")
     else:
         if analysis.protocol_digest != plan.protocol.get("protocol_digest"):
             problems.append("analysis_protocol_mismatch")
-        if (isinstance(authorization, ExperimentAuthorizationV1)
-                and analysis.preregistration is not None
+        if (authorized and analysis.preregistration is not None
                 and authorization.preregistration_digest
                 != analysis.preregistration.digest):
             # The experiment must have been authorized for the very
             # preregistration the analysis is bound to.
             problems.append("analysis_preregistration_mismatch")
+        if (authorized and analysis.preregistration is not None
+                and authorization.alpha_milli
+                != analysis.preregistration.power.alpha_milli):
+            # Two signed records disagree about the threshold: the
+            # preregistration the study was powered for and the
+            # authorization the verdict is told to apply.
+            problems.append("analysis_alpha_mismatch")
         if analysis.signature is None:
             problems.append("analysis_manifest_unsigned")
         elif not trusted_analysis_keys:
@@ -1364,6 +1408,8 @@ def assess(report: Mapping, *, plan: CampaignPlan,
     measurements_verified = (measured
                              and not any(problem.startswith("measurement_")
                                          for problem in problems))
+    analysis_consistent = not any(problem.startswith("analysis_")
+                                  for problem in problems)
     if not report.get("holdout_disjoint", True):
         verdict = "invalid_holdout"
         evidence_class = "invalid"
@@ -1378,16 +1424,17 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         verdict = "no_evidence"
     elif underpowered:
         verdict = "underpowered"
-    elif token_ratio is not None and token_ratio > 2.0:
+    elif token_ratio is not None and token_ratio > cost_ratio:
         verdict = "no_advantage_after_cost"
-    elif decisive_holm > 0.05:
+    elif decisive_holm > alpha:
         # The decisive contrast does not survive the family-wise
-        # correction that the preregistration implies.
+        # correction at the authorized threshold.
         verdict = "no_evidence"
-    elif evidence_class != CONFIRMATORY or not receipts_verified \
-            or not measurements_verified:
+    elif (evidence_class != CONFIRMATORY or not receipts_verified
+            or not measurements_verified or not analysis_consistent):
         # A significant contrast without the full authenticated chain is
-        # not a claim.
+        # not a claim. ``analysis_consistent`` covers a preregistration,
+        # protocol or threshold the signed records disagree about.
         verdict = "no_evidence"
     else:
         verdict = "supported"
@@ -1398,7 +1445,20 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         "component_contrasts": component_arms,
         "solve_rate": {"A": a_solved, "E": e_solved},
         "mean_tokens": {"A": a_tokens, "E": e_tokens},
+        "mean_wall_seconds": {
+            "A": overhead.get("A", {}).get("mean_wall_seconds_per_task"),
+            "E": overhead.get("E", {}).get("mean_wall_seconds_per_task")},
         "token_ratio": token_ratio,
+        # The rule the verdict actually applied. Latency is reported but
+        # is not part of the cost decision; a claim of superiority after
+        # latency cost needs a policy that says so.
+        "decision_policy": {
+            "alpha": alpha,
+            "multiplicity": (authorization.multiplicity if authorized
+                             else "holm"),
+            "token_ratio_threshold": cost_ratio,
+            "latency": "reported, not thresholded",
+        },
         "required_sample_size": plan.required_sample_size,
         "observed_sample_size": observed,
         "underpowered": underpowered,
@@ -1429,7 +1489,7 @@ __all__ = [
     "CampaignError",
     "AnalysisManifest",
     "CampaignPlan",
-    "ExperimentAuthorizationV1",
+    "ExperimentAuthorizationV2",
     "FIVE_ARM_DESIGN",
     "ReportValidation",
     "assess",

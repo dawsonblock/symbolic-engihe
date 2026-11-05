@@ -29,16 +29,24 @@ satisfied fails closed rather than silently degrading.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .contracts import canonical_digest
 
 RUNTIME_ENV = "SIS_CONTAINER_RUNTIME"
+
+#: The output mount is writable by the workload, so the parent reads at
+#: most this much of any one stream or record.
+MAX_MEASUREMENT_BYTES = 64 * 1024
+MAX_CAPTURE_BYTES = 64 * 1024
 
 
 class ContainerIsolationError(RuntimeError):
@@ -192,7 +200,6 @@ class ContainerResult:
 
 def runtime_name() -> str | None:
     """The container runtime binary this host provides, if any."""
-    import os
     preferred = os.environ.get(RUNTIME_ENV)
     if preferred:
         return preferred if shutil.which(preferred) else None
@@ -304,6 +311,43 @@ def _force_remove(binary: str, name: str) -> None:
         pass
 
 
+def _tail(handle, limit: int = MAX_CAPTURE_BYTES) -> str:
+    """The last ``limit`` bytes of a captured stream."""
+    handle.seek(0, os.SEEK_END)
+    size = handle.tell()
+    handle.seek(max(0, size - limit))
+    return handle.read().decode("utf-8", "replace")
+
+
+def _read_measurement(path: Path) -> dict | None:
+    """Read the workload's measurement without following a symlink.
+
+    The output mount is writable by the workload, so ``measurement.json``
+    may be a link to a file the parent can read but the workload cannot:
+    only a regular file reached without following a link is evidence, and
+    only up to a bounded size.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_size > MAX_MEASUREMENT_BYTES):
+            return None
+        raw = os.read(descriptor, MAX_MEASUREMENT_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(raw) > MAX_MEASUREMENT_BYTES:
+        return None
+    try:
+        candidate = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return candidate if isinstance(candidate, dict) else None
+
+
 def run_workload(
     profile: ContainerProfile,
     command: list[str],
@@ -328,39 +372,39 @@ def run_workload(
         raise ContainerIsolationError("input_dir_missing", str(source))
     sink.mkdir(parents=True, exist_ok=True)
     target = sink / measurement_name
-    if target.is_file():
-        # A measurement from an earlier run is not this run's evidence.
-        # The sink is never trusted to be empty.
-        target.unlink()
+    if os.path.lexists(target):
+        # A measurement from an earlier run — or a link planted by one —
+        # is not this run's evidence. The sink is never trusted to be
+        # empty.
+        try:
+            target.unlink()
+        except OSError as exc:
+            raise ContainerIsolationError(
+                "measurement_path_occupied", str(target)) from exc
     _verify_image(profile, binary)
     name = f"sis-eval-{secrets.token_hex(8)}"
     argv = build_argv(profile, command=command, input_dir=source,
                       output_dir=sink, runtime=binary, name=name)
-    try:
-        completed = subprocess.run(argv, capture_output=True,
-                                   timeout=profile.wall_seconds)
-        timed_out = False
-        status = completed.returncode
-        stdout = completed.stdout.decode("utf-8", "replace")
-        stderr = completed.stderr.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired as expired:
-        timed_out = True
-        status = None
-        stdout = (expired.stdout or b"").decode("utf-8", "replace")
-        stderr = (expired.stderr or b"").decode("utf-8", "replace")
-        _force_remove(binary, name)
-    except OSError:
-        _force_remove(binary, name)
-        raise
-    _verify_image(profile, binary)
-    measurement = None
-    if target.is_file() and not timed_out and status == 0:
+    with tempfile.TemporaryFile() as out_handle, \
+            tempfile.TemporaryFile() as err_handle:
         try:
-            candidate = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            candidate = None
-        if isinstance(candidate, dict):
-            measurement = candidate
+            completed = subprocess.run(argv, stdout=out_handle,
+                                       stderr=err_handle,
+                                       timeout=profile.wall_seconds)
+            timed_out = False
+            status = completed.returncode
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            status = None
+            _force_remove(binary, name)
+        except OSError:
+            _force_remove(binary, name)
+            raise
+        stdout = _tail(out_handle)
+        stderr = _tail(err_handle)
+    _verify_image(profile, binary)
+    measurement = (_read_measurement(target)
+                   if not timed_out and status == 0 else None)
     return ContainerResult(exit_status=status, timed_out=timed_out,
                            stdout=stdout, stderr=stderr,
                            measurement=measurement, profile=profile)

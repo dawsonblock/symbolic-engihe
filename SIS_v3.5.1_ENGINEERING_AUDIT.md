@@ -45,7 +45,7 @@ reproduce**. Recorded as *not reproduced*, not as *fixed*.
 
 | File | Lines | Purpose |
 |---|---|---|
-| `src/sis/v3/trial_evidence.py` | 478 | `ExperimentAuthorizationV1`, `TrialMeasurementV1`, domain-separated signing, canonical serialization |
+| `src/sis/v3/trial_evidence.py` | 478 | `ExperimentAuthorizationV2`, `TrialMeasurementV1`, domain-separated signing, canonical serialization |
 | `src/sis/v3/container_isolation.py` | 392 | Enforced container boundary; parent-side signing bound to a completed run |
 
 ### 3.2 Modified modules
@@ -233,6 +233,30 @@ A `GO` requires §7.1, §7.7 and §7.9 to be addressed; the qualification
 harness treats those three as blocking limitations and computes
 `CONDITIONAL_GO` while any remains. It computes `GO` only when every
 gate passes and no blocking limitation is declared.
+
+## 8.1 Independent audit follow-up
+
+A second, independent audit of the v3.5.1 archive reproduced ten further
+defects that this audit did not find. All ten are repaired; the rows are
+D-27..D-36 in `SIS_v3.5.1_DEFECT_MATRIX.md`. The two that mattered most:
+
+* **The campaign plan was not part of the signed experiment.** A
+  genuine `no_evidence` run became `supported` when only the
+  caller-supplied token budget changed, with every signed record
+  untouched. `ExperimentAuthorizationV2` now carries `plan_digest`, and
+  the assessment refuses `experiment_plan_mismatch`.
+* **The production evaluator was a host subprocess.** `run_isolated`
+  checked a declarative profile and then executed on the host with the
+  signing seed reachable. It now refuses `production=True` with
+  `production_boundary_not_enforced` until `container_isolation` is
+  wired into that path.
+
+This audit's own review pass (D-14..D-20) and the first code review
+(D-21..D-26) were both incomplete in the same direction: they checked
+that each component behaved as documented, not that the components
+agreed with each other. The cross-component invariants — plan to
+authorization, key label to key material, profile declaration to the
+executor actually used — are where the remaining risk lives.
 
 ## 9. Artifacts
 

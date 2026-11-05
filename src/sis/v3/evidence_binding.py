@@ -37,7 +37,7 @@ from .contracts import (
     canonical_json,
 )
 from .trial_evidence import (
-    ExperimentAuthorizationV1,
+    ExperimentAuthorizationV2,
     TrialEvidenceError,
     TrialMeasurementV1,
 )
@@ -475,6 +475,20 @@ class EvidenceBindingAuthority:
     def experiment_key_ids(self) -> frozenset[str]:
         return frozenset(self._experiment)
 
+    def role_public_keys(self) -> dict[str, frozenset[str]]:
+        """The pinned public key material per role.
+
+        Role separation is a property of key material, not of the labels
+        an operator chooses: the same public key registered under four
+        different ids is one signer, not four.
+        """
+        return {
+            "evaluator": frozenset(self._evaluator.values()),
+            "harness": frozenset(self._harness.values()),
+            "authorization": frozenset(self._authorization.values()),
+            "experiment": frozenset(self._experiment.values()),
+        }
+
     def revocation_state(self) -> tuple[frozenset[str], frozenset[str]]:
         if self._revocations is None:
             return frozenset(), frozenset()
@@ -534,16 +548,16 @@ class EvidenceBindingAuthority:
         return record
 
     # -- trial evidence (v3.5.1) ---------------------------------------- #
-    def experiment_authorization(self, record) -> ExperimentAuthorizationV1:
+    def experiment_authorization(self, record) -> ExperimentAuthorizationV2:
         """Authenticate the signed experiment the trial claims to serve.
 
         The experiment authority is a distinct key role from the
         evaluator: the party that authorizes an experiment must not be
         the party that measures it.
         """
-        if not isinstance(record, ExperimentAuthorizationV1):
+        if not isinstance(record, ExperimentAuthorizationV2):
             try:
-                record = ExperimentAuthorizationV1.from_dict(record)
+                record = ExperimentAuthorizationV2.from_dict(record)
             except (TrialEvidenceError, ContractError, TypeError,
                     ValueError) as exc:
                 raise BindingError("authorization_malformed") from exc
@@ -680,7 +694,7 @@ __all__ = [
     "BindingError",
     "ChainMatch",
     "EvidenceBindingAuthority",
-    "ExperimentAuthorizationV1",
+    "ExperimentAuthorizationV2",
     "SigningKey",
     "TrialMeasurementV1",
     "attempt_id_for_identity",

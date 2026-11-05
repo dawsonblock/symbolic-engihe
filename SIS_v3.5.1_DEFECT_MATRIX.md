@@ -60,6 +60,25 @@ v3.5.1 tree before being repaired.
 | **D-25** | `round()` rejected an honest half-millisecond wall time. | A report whose `wall_seconds` is `10.0005` against a measurement of `10001` ms is `measurement_wall_mismatch`, because banker's rounding picks the even millisecond. | `_reported_wall_milli` rounds half-up for floats and multiplies exactly for integers. | `test_v351_evidence_chain.py::MeasurementTests::test_a_half_millisecond_wall_time_is_not_a_mismatch` | **Resolved** |
 | **D-26** | A hung qualification gate crashed the harness before it wrote its record. | `_run` did not catch `subprocess.TimeoutExpired`, so a gate that exceeded its 1800 s budget aborted `tools/v351_qualify.py` without `qualification/qualification.json`. | A timeout is returned as `returncode -1` with a `timed out after Ns` note, so the gate is recorded as `fail`. | `test_v351_qualification_harness.py::TimeoutTests` | **Resolved** |
 
+## Independent audit follow-up
+
+An independent audit of the v3.5.1 archive reproduced ten further
+defects. Every row was reproduced on this tree before being repaired;
+the reproductions below are the observed behaviour, not a restatement.
+
+| ID | Defect | Reproduction | Repair | Regression test | Status |
+|---|---|---|---|---|---|
+| **D-27** | The signed experiment did not bind the campaign plan, so an unsigned budget change reinterpreted genuine evidence. | A fully signed 29-task run (A 20/29 at 2 000 tokens, E 20/29 at 1 000) returns `no_evidence` at a 100 000-token cap and `supported` at 1 500, with `problems: []` and `measurements_verified: True`. | `ExperimentAuthorizationV2` carries `plan_digest` (budgets, seed, arm order, task mapping and power requirement all live in the plan); `_verify_experiment_authorization` refuses `experiment_plan_mismatch`. | `test_v351_evidence_chain.py::DecisionPolicyTests::test_a_changed_budget_cannot_reinterpret_signed_evidence` | **Resolved** |
+| **D-28** | A production evaluator run was a host subprocess with the signing seed in reach. | `run_isolated(production=True)` passes `verify_profile`, then spawns `python -m sis.v3.evaluator_worker`; the worker reads `seed_path` and builds `LocalSubprocessExecutor`. `container_isolation` is never called. | `run_isolated` refuses `production_boundary_not_enforced` until the container boundary is wired into that path. | `test_v340_evaluator_custody.py::test_a_production_run_refuses_the_unenforced_host_boundary` | **Resolved (refuses)** |
+| **D-29** | The container parent followed a workload-planted symlink out of the output mount. | A runtime that creates `measurement.json` as a link to `/tmp/host_secret.json` makes `run_workload` return `ok=True` with the host file as the measurement. | `_read_measurement` opens with `O_NOFOLLOW`, requires a regular file and caps the record at 64 KiB; stdout/stderr are captured through bounded temporary files. | `test_v351_container_isolation.py::BoundaryTests::test_a_symlinked_measurement_is_not_this_runs_evidence` | **Resolved** |
+| **D-30** | Role separation compared key ids, not key material. | One public key pinned as `eval`/`harness`/`authority`/`experiment` yields `_signer_separation_problems(...) == []`. | `EvidenceBindingAuthority.role_public_keys()` and a material comparison in `_signer_separation_problems`, alongside the id check. | `test_v350_production_profile.py::RequirementTests::test_a_shared_key_under_distinct_ids_is_not_separated` | **Resolved** |
+| **D-31** | Report validation still raised on a nested `arm_order`. | `per_task[0]["arm_order"] = 1` (also `True`, `3.5`) raises `TypeError: 'int' object is not iterable` at the `list(...)` call. | The type is checked before iterating; a non-list is `arm_order_invalid`. | `test_v351_report_totality.py::TotalityTests::test_a_non_list_arm_order_is_invalid_not_raised` | **Resolved** |
+| **D-32** | The older PostgreSQL fixture dropped tables on a DSN alone, and the harness supplied the consent flag itself. | `test_control_plane_postgres.py` skips only on `DSN` and then issues four `DROP TABLE IF EXISTS`; `v351_qualify.py` sets `SIS_POSTGRES_ALLOW_DESTRUCTIVE=1` for its own gates. | Both fixtures require `SIS_POSTGRES_ALLOW_DESTRUCTIVE=1`; the harness passes the operator's environment through unchanged and reports the gate blocked without it. | `test_v351_postgres_qualification.py` skip guard, `test_v351_qualification_harness.py` | **Resolved** |
+| **D-33** | The power model accepted impossible paired designs. | `effect=400, discordant=300` → 15 required tasks with an implied `p_loss = -0.05`; `effect=1000, discordant=1` → 1 task. | `PowerRequirement` refuses `effect_exceeds_discordance` (|delta| <= q for paired binary outcomes). The fixtures move to 400/500. | `test_v340_statistics.py::PowerTests::test_an_effect_larger_than_the_discordance_is_refused` | **Resolved** |
+| **D-34** | A signed alpha was ignored by the verdict. | alpha = 0.001, 54 required, 80 observed, 10 wins and no losses: raw p 0.00195, Holm 0.0078, both above 0.001, yet `supported`. | `alpha_milli`, `multiplicity` and `token_ratio_milli` are signed in the authorization; `assess` applies them and refuses `analysis_alpha_mismatch` against the preregistration. | `DecisionPolicyTests::test_the_preregistered_alpha_is_the_threshold_applied`, `test_an_alpha_that_disagrees_with_the_preregistration_is_refused` | **Resolved** |
+| **D-35** | CI treated a stale release manifest as success. | `if build_release.py --check; then verify; else echo "development tree…"; fi` — the else branch exits 0, so drift never fails the build. | The main job always checks the manifest and the tree; a tag-only `release` job builds the canonical archive and the evidence bundle and verifies both. | CI workflow | **Resolved** |
+| **D-36** | The verdict's cost rule was narrower than its description. | A run at 500 s per task against 1 s is still `supported`, and the assessment never reports latency. | The decision policy (alpha, multiplicity, token-ratio threshold) is signed and returned; latency is reported separately and the policy states it is not thresholded. | `DecisionPolicyTests::test_latency_is_reported_but_not_thresholded` | **Resolved (scope made explicit)** |
+
 ## Remaining limitations
 
 See `SIS_v3.5.1_ENGINEERING_AUDIT.md` §7. In summary: the trial
@@ -68,3 +87,15 @@ model internally did; `abstained` / `negative_transfer` /
 `integrity_failures` remain unsigned telemetry; the container boundary is
 Docker-only on this host; and the release manifest is locally generated,
 not publisher-signed.
+
+Two further limitations follow from the independent audit:
+
+* **The enforced container boundary is not yet the evaluator's
+  boundary.** `container_isolation` is qualified, but
+  `evaluator_isolation.run_isolated` does not use it, so
+  `production=True` refuses (`production_boundary_not_enforced`). A
+  production evaluation is unavailable until that integration lands.
+* **The cost rule is token-based.** Latency is reported and the policy
+  says it is not thresholded, so a `supported` verdict is not a claim of
+  superiority after latency cost.
+

@@ -242,6 +242,18 @@ class TotalityTests(unittest.TestCase):
                             verdict["verdict"], "supported",
                             f"{path} = {bad!r} still supported")
 
+    def test_a_non_list_arm_order_is_invalid_not_raised(self):
+        # ``list(row.get("arm_order") or ())`` raises on a non-iterable
+        # and reads a string as its characters; the type is checked
+        # first so the validator stays total.
+        for value in (1, True, 3.5, "ABCDE", {"a": 1}):
+            with self.subTest(value=repr(value)):
+                report = _signed_report()
+                report["per_task"][0]["arm_order"] = value
+                validation = validate_report(report, CAMPAIGN)
+                self.assertFalse(validation.ok)
+                self.assertIn("arm_order_invalid:t0", validation.problems)
+
     def test_holdout_disjoint_must_be_a_boolean(self):
         for value in (None, -1, "yes", [], 1.0):
             report = _signed_report()

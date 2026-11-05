@@ -284,10 +284,19 @@ class IsolatedRunTests(unittest.TestCase):
             key_dir=self.key_dir, registry_dir=self.registry_dir,
             profile=production_profile(IMAGE), receipt_nonce="nonce-1",
             measurement_nonce="measure-1",
-            issued_at=ts(1), expires_at=ts(120), production=True,
+            issued_at=ts(1), expires_at=ts(120), production=False,
         )
         kwargs.update(overrides)
         return run_isolated(**kwargs)
+
+    def test_a_production_run_refuses_the_unenforced_host_boundary(self):
+        # ``run_isolated`` is a host subprocess; the profile is a
+        # declaration. Until the container boundary is wired in, a
+        # production evaluation must not start at all.
+        with self.assertRaises(IsolationError) as caught:
+            self.run_once(production=True)
+        self.assertEqual(caught.exception.reason,
+                         "production_boundary_not_enforced")
 
     def test_child_measures_and_signs_a_receipt_the_parent_can_verify(self):
         outcome = self.run_once()
@@ -338,7 +347,7 @@ class IsolatedRunTests(unittest.TestCase):
     def test_production_requires_an_isolated_profile(self):
         with self.assertRaisesRegex(IsolationError,
                                     "production_requires_network_isolation"):
-            self.run_once(profile=development_profile())
+            self.run_once(profile=development_profile(), production=True)
 
     def test_an_unregistered_task_signs_nothing(self):
         bad = TaskEnvelopeV1.from_dict({

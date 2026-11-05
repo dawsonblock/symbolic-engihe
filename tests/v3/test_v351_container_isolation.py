@@ -291,6 +291,38 @@ class ProfileValidationTests(unittest.TestCase):
             ContainerProfile(image="--privileged")
         self.assertEqual(caught.exception.reason, "image_invalid")
 
+    def test_a_symlinked_measurement_is_not_this_runs_evidence(self):
+        # The output mount is writable by the workload, so
+        # ``measurement.json`` may be a link to a host file the workload
+        # cannot read itself. The parent must not follow it.
+        with tempfile.TemporaryDirectory() as work:
+            root = Path(work)
+            source = root / "in"
+            source.mkdir()
+            sink = root / "out"
+            sink.mkdir()
+            host_only = root / "host.json"
+            host_only.write_text('{"host_only": true}', encoding="utf-8")
+            fake = root / "fake-runtime"
+            fake.write_text(
+                "#!/bin/sh\n"
+                'case "$1" in\n'
+                '  image) echo "sha256:deadbeef"; exit 0 ;;\n'
+                "  run)\n"
+                f'    ln -sf "{host_only}" "{sink / "measurement.json"}"\n'
+                "    exit 0 ;;\n"
+                "esac\n"
+                "exit 1\n",
+                encoding="utf-8")
+            fake.chmod(0o755)
+            profile = ContainerProfile(image="fake",
+                                       image_digest="sha256:deadbeef")
+            result = run_workload(profile, ["true"], input_dir=source,
+                                  output_dir=sink, runtime=str(fake))
+        self.assertEqual(result.exit_status, 0)
+        self.assertIsNone(result.measurement)
+        self.assertFalse(result.ok)
+
     def test_a_comma_in_a_mount_path_is_refused(self):
         with tempfile.TemporaryDirectory() as source:
             comma = Path(str(source) + ",readonly=false")

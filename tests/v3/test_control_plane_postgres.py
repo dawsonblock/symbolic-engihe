@@ -4,6 +4,12 @@ Set ``SIS_POSTGRES_DSN`` to a disposable database to run these tests.
 The default suite uses SQLite; a multi-host deployment must run this
 file against its production PostgreSQL profile before claiming
 cross-replica replay protection.
+
+``setUp`` drops the control-plane tables. That is only acceptable on a
+database the operator has explicitly declared disposable, so a DSN alone
+is not consent: ``SIS_POSTGRES_ALLOW_DESTRUCTIVE=1`` is also required.
+A persistent DSN inherited from the environment must not be enough to
+destroy a schema.
 """
 from __future__ import annotations
 
@@ -19,9 +25,15 @@ from tests.v3.test_authority_checkpoints import _request
 from tests.v3.test_execution_identity_custody import ProductionFixture
 
 DSN = os.getenv("SIS_POSTGRES_DSN")
+ALLOW_DESTRUCTIVE = os.getenv("SIS_POSTGRES_ALLOW_DESTRUCTIVE") == "1"
+SKIP_REASON = (
+    "SIS_POSTGRES_DSN not configured"
+    if not DSN else
+    "SIS_POSTGRES_ALLOW_DESTRUCTIVE=1 not set; refusing to drop tables "
+    "in a database that was not declared disposable")
 
 
-@unittest.skipUnless(DSN, "SIS_POSTGRES_DSN not configured")
+@unittest.skipUnless(DSN and ALLOW_DESTRUCTIVE, SKIP_REASON)
 class PostgresControlPlaneTests(unittest.TestCase):
     def setUp(self):
         self.plane = PostgresControlPlane(DSN)

@@ -25,7 +25,7 @@ from tests.v3 import five_arm_testkit as kit
 from tests.v3.test_evaluation_certificates import PROTOCOL_DIGEST
 
 
-def power(effect=400, discordant=300):
+def power(effect=400, discordant=500):
     return PowerRequirement(design="paired_mcnemar", effect_milli=effect,
                             discordant_milli=discordant)
 

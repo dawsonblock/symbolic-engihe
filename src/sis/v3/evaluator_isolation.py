@@ -260,6 +260,18 @@ def run_isolated(
     receipt with the evaluator seed. If the child dies, nothing is signed.
     """
     verify_profile(profile, production=production)
+    if production:
+        # The worker is an ordinary host process: the profile above is a
+        # declaration, not a boundary, and the submission can read
+        # whatever the worker can read — including the evaluator seed it
+        # is handed to sign with. ``sis.v3.container_isolation`` is the
+        # enforced boundary, and this path does not use it yet, so a
+        # production evaluation refuses to start rather than claim an
+        # isolation it does not provide.
+        raise IsolationError(
+            "production_boundary_not_enforced",
+            "run_isolated executes on the host; "
+            "sis.v3.container_isolation is not wired into this path")
     if not isinstance(authorization, AuthorizationV2):
         raise IsolationError("authorization_required")
     if attempt is not None and not isinstance(attempt, ExecutionAttemptV2):

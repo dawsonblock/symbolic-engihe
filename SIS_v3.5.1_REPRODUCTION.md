@@ -40,9 +40,9 @@ claim.
 
 ```bash
 PYTHONPATH=src:. python -m pytest tests -q
-# expected: 1482 passed, 3 skipped (with SIS_POSTGRES_DSN and
+# expected: 1498 passed, 3 skipped (with SIS_POSTGRES_DSN and
 #           SIS_POSTGRES_ALLOW_DESTRUCTIVE=1 set)
-#           or 1468 passed, 17 skipped (without)
+#           or 1484 passed, 17 skipped (without)
 ```
 
 The 14-test difference is the PostgreSQL profile. A skip is **not** a
@@ -73,7 +73,7 @@ must produce exactly one commit.
 ```bash
 docker pull python:3.12-slim          # or set SIS_CONTAINER_IMAGE
 PYTHONPATH=src:. python -m pytest tests/v3/test_v351_container_isolation.py -q
-# expected: 19 passed
+# expected: 23 passed
 ```
 
 Each test attempts an escape: network connect, host file read, signing
@@ -85,7 +85,7 @@ qualification harness reports the gate as **blocked**.
 
 ```bash
 PYTHONPATH=src:. python -m pytest tests/v3/test_v351_evidence_chain.py -q
-# expected: 52 passed
+# expected: 57 passed
 ```
 
 The v3.5.0 baseline is not reproducible by checking out one file: the
@@ -134,12 +134,20 @@ It detects drift; it does not establish authorship.
 python tools/build_release.py             # regenerate the inventory
 python tools/package_release.py \
     --release SIS_v3.5.1_FULL_UPGRADED \
-    --status CONDITIONAL_GO --passed 1482 --skipped 3 --allow-dirty
+    --status CONDITIONAL_GO --passed 1498 --skipped 3 --allow-dirty
 ```
 
 `--allow-dirty` is required while the tree is uncommitted; the release
 manifest and provenance statement record that state. A committed rebuild
 omits it.
+
+The evidence bundle is rebuilt from the qualification record:
+
+```bash
+python tools/build_evidence_bundle.py
+python tools/build_evidence_bundle.py --verify \
+    release/SIS_v3.5.1_VALIDATION_EVIDENCE.zip
+```
 
 ## 10. Verifying a fresh extraction
 

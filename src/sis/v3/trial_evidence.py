@@ -16,13 +16,13 @@ This module closes both by adding two signed records that sit above the
 receipt and below the report::
 
     Preregistration
-      -> ExperimentAuthorizationV1   (experiment authority)
+      -> ExperimentAuthorizationV2   (experiment authority)
       -> TrialMeasurementV1          (evaluator)
       -> EvaluatorReceiptV2          (evaluator, referenced by digest)
       -> controlled five-arm report
       -> assessment
 
-``ExperimentAuthorizationV1`` freezes the experiment: the protocol and
+``ExperimentAuthorizationV2`` freezes the experiment: the protocol and
 preregistration it implements, the five arm configurations, the model
 identity and digest, the immutable digest of every authorized task, and
 the environment/criterion/test-suite commitments the run must hold
@@ -50,7 +50,7 @@ from typing import Mapping
 from . import signatures
 from .contracts import ContractError, canonical_digest, canonical_json
 
-AUTHORIZATION_DOMAIN = b"sis-v3:experiment-authorization:1\0"
+AUTHORIZATION_DOMAIN = b"sis-v3:experiment-authorization:2\0"
 MEASUREMENT_DOMAIN = b"sis-v3:trial-measurement:1\0"
 
 AUTHORIZATION_RECORD = "experiment_authorization"
@@ -58,6 +58,9 @@ MEASUREMENT_RECORD = "trial_measurement"
 
 #: The evaluator's own result vocabulary, matching ``EvaluatorReceiptV2``.
 STATUSES = frozenset({"pass", "fail", "partial", "error"})
+
+#: Family-wise correction the verdict must apply across its contrasts.
+MULTIPLICITY_POLICIES = frozenset({"holm"})
 
 #: A single authorization carries at most this many task digests. The
 #: limit is the canonical-JSON array/object bound in ``contracts``.
@@ -122,7 +125,7 @@ def _body(domain: bytes, payload: Mapping) -> bytes:
 
 
 @dataclass(frozen=True)
-class ExperimentAuthorizationV1:
+class ExperimentAuthorizationV2:
     """The signed, frozen description of one authorized experiment.
 
     ``arms`` is the only place the assessment learns which arm
@@ -130,18 +133,31 @@ class ExperimentAuthorizationV1:
     configuration is refused. ``task_digests`` is the only place it
     learns which task content was authorized, so a task whose content
     changed after preregistration cannot be counted.
+
+    ``plan_digest`` is the only place it learns the *policy* the run was
+    powered and budgeted for: budgets, seed, arm order, task mapping and
+    the power requirement are all inside the campaign plan. Without it a
+    caller could keep every signed measurement and reinterpret them
+    under a different budget. ``alpha_milli``, ``multiplicity`` and
+    ``token_ratio_milli`` freeze the decision rule for the same reason:
+    a signed preregistration has no protective value if the verdict
+    applies a different threshold.
     """
 
     schema_version: int
     experiment_id: str
     protocol_digest: str
     preregistration_digest: str
+    plan_digest: str
     model_identity: str
     model_digest: str
     task_digests: Mapping[str, str]
     environment_digest: str
     criterion_version: str
     test_suite_commitment: str
+    alpha_milli: int
+    multiplicity: str
+    token_ratio_milli: int
     issued_at: str
     expires_at: str
     signer_key_id: str
@@ -149,16 +165,24 @@ class ExperimentAuthorizationV1:
     arms: tuple[Mapping, ...]
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != 1:
+        if type(self.schema_version) is not int or self.schema_version != 2:
             raise TrialEvidenceError("schema_version_invalid")
         _identifier(self.experiment_id, "experiment_id")
         _digest(self.protocol_digest, "protocol_digest")
         _digest(self.preregistration_digest, "preregistration_digest")
+        _digest(self.plan_digest, "plan_digest")
         _identifier(self.model_identity, "model_identity")
         _digest(self.model_digest, "model_digest")
         _digest(self.environment_digest, "environment_digest")
         _identifier(self.criterion_version, "criterion_version")
         _digest(self.test_suite_commitment, "test_suite_commitment")
+        if type(self.alpha_milli) is not int or not 1 <= self.alpha_milli <= 500:
+            raise TrialEvidenceError("alpha_milli_invalid")
+        if self.multiplicity not in MULTIPLICITY_POLICIES:
+            raise TrialEvidenceError("multiplicity_invalid", str(self.multiplicity))
+        if (type(self.token_ratio_milli) is not int
+                or not 1 <= self.token_ratio_milli <= 1_000_000):
+            raise TrialEvidenceError("token_ratio_milli_invalid")
         _instant(self.issued_at, "issued_at")
         _instant(self.expires_at, "expires_at")
         if _instant(self.expires_at, "expires_at") <= _instant(
@@ -209,6 +233,7 @@ class ExperimentAuthorizationV1:
             "experiment_id": self.experiment_id,
             "protocol_digest": self.protocol_digest,
             "preregistration_digest": self.preregistration_digest,
+            "plan_digest": self.plan_digest,
             "arms": [{"arm": entry["arm"], "label": entry["label"],
                       "components": list(entry["components"]),
                       "config_digest": entry["config_digest"]}
@@ -219,6 +244,9 @@ class ExperimentAuthorizationV1:
             "environment_digest": self.environment_digest,
             "criterion_version": self.criterion_version,
             "test_suite_commitment": self.test_suite_commitment,
+            "alpha_milli": self.alpha_milli,
+            "multiplicity": self.multiplicity,
+            "token_ratio_milli": self.token_ratio_milli,
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
             "signer_key_id": self.signer_key_id,
@@ -226,15 +254,17 @@ class ExperimentAuthorizationV1:
         }
 
     @classmethod
-    def from_dict(cls, value: Mapping) -> "ExperimentAuthorizationV1":
+    def from_dict(cls, value: Mapping) -> "ExperimentAuthorizationV2":
         if not isinstance(value, Mapping):
             raise TrialEvidenceError("authorization_malformed")
         expected = {
             "schema_version", "experiment_id", "protocol_digest",
-            "preregistration_digest", "arms", "model_identity",
-            "model_digest", "task_digests", "environment_digest",
-            "criterion_version", "test_suite_commitment", "issued_at",
-            "expires_at", "signer_key_id", "signature",
+            "preregistration_digest", "plan_digest", "arms",
+            "model_identity", "model_digest", "task_digests",
+            "environment_digest", "criterion_version",
+            "test_suite_commitment", "alpha_milli", "multiplicity",
+            "token_ratio_milli", "issued_at", "expires_at",
+            "signer_key_id", "signature",
         }
         if set(value) != expected:
             raise TrialEvidenceError("authorization_malformed")
@@ -250,9 +280,9 @@ class ExperimentAuthorizationV1:
 
     @property
     def digest(self) -> str:
-        return canonical_digest(AUTHORIZATION_RECORD, 1, self.to_dict())
+        return canonical_digest(AUTHORIZATION_RECORD, 2, self.to_dict())
 
-    def sign(self, seed: bytes, key_id: str) -> "ExperimentAuthorizationV1":
+    def sign(self, seed: bytes, key_id: str) -> "ExperimentAuthorizationV2":
         if not isinstance(seed, bytes) or len(seed) != 32:
             raise TrialEvidenceError("authorization_seed_invalid")
         _identifier(key_id, "signer_key_id")
@@ -471,7 +501,8 @@ __all__ = [
     "MEASUREMENT_RECORD",
     "MAX_AUTHORIZED_TASKS",
     "STATUSES",
-    "ExperimentAuthorizationV1",
+    "ExperimentAuthorizationV2",
+    "MULTIPLICITY_POLICIES",
     "TrialEvidenceError",
     "TrialMeasurementV1",
     "task_digest",

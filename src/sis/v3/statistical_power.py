@@ -85,6 +85,14 @@ class PowerRequirement:
                 raise StatisticsError("discordant_milli_required")
             if not 1 <= self.discordant_milli <= 1000:
                 raise StatisticsError("discordant_milli_invalid")
+            if self.effect_milli > self.discordant_milli:
+                # delta = p_win - p_loss and q = p_win + p_loss, so
+                # |delta| <= q necessarily. A larger effect implies
+                # p_loss < 0, which is not a probability, and the
+                # sample-size formula would happily accept it.
+                raise StatisticsError(
+                    "effect_exceeds_discordance",
+                    f"{self.effect_milli}>{self.discordant_milli}")
         else:
             if self.baseline_milli is None:
                 raise StatisticsError("baseline_milli_required")

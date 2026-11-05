@@ -98,10 +98,35 @@ def build(root: Path = ROOT) -> tuple[Path, Path]:
     return bundle, sums
 
 
+def verify(path: Path) -> dict:
+    """Check a bundle against the manifest it carries."""
+    path = Path(path)
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if EVIDENCE_MANIFEST not in names:
+            raise ValueError(f"{path.name} carries no {EVIDENCE_MANIFEST}")
+        document = json.loads(archive.read(EVIDENCE_MANIFEST))
+        listed = document.get("files")
+        if not isinstance(listed, dict) or not listed:
+            raise ValueError(f"{path.name} has an empty evidence manifest")
+        if set(listed) | {EVIDENCE_MANIFEST} != names:
+            raise ValueError(f"{path.name} carries members the manifest omits")
+        for name, expected in listed.items():
+            actual = hashlib.sha256(archive.read(name)).hexdigest()
+            if actual != expected:
+                raise ValueError(f"{path.name}: {name} does not match")
+    return {"bundle": path.name, "files": len(listed), "verified": True}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--verify", type=Path, default=None,
+                        help="check an existing bundle instead of building one")
     args = parser.parse_args(argv)
+    if args.verify is not None:
+        print(json.dumps(verify(args.verify), indent=2))
+        return 0
     bundle, sums = build(args.root)
     print(json.dumps({
         "bundle": str(bundle.relative_to(Path(args.root).resolve())),

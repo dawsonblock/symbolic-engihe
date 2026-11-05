@@ -45,13 +45,15 @@ incomplete record proves only that some key holder said something.
 ```
 
 Five key roles, deliberately disjoint. `serving._signer_separation_problems`
-checks evaluator, harness, authorization and experiment keys for
-overlap whenever they are pinned; the timestamp and analysis keys are
-separate trust roots passed to `assess`.
+checks evaluator, harness, authorization, experiment and ledger roles
+for overlap whenever they are pinned, and it compares **public key
+material**, not key ids: the same key enrolled under four different
+labels is one signer. The timestamp and analysis keys are separate trust
+roots passed to `assess`.
 
 | Role | Signs | Compromise consequence |
 |---|---|---|
-| experiment authority | `ExperimentAuthorizationV1` | can authorize a different arm mapping, model or task set |
+| experiment authority | `ExperimentAuthorizationV2` | can authorize a different arm mapping, model or task set |
 | evaluator | `EvaluatorReceiptV2`, `TrialMeasurementV1` | can claim a pass and a cost that did not happen |
 | timestamp authority | `PreregistrationRecord` | can back-date a preregistration |
 | analysis | `AnalysisManifest` | can bind the analysis to a different holdout/timing |
@@ -65,13 +67,15 @@ No single key can produce a `supported` verdict.
 PreregistrationRecord  ──signed by timestamp authority──┐
         │ digest                                        │
         ▼                                               │
-ExperimentAuthorizationV1 ──signed by experiment key────┤
+ExperimentAuthorizationV2 ──signed by experiment key────┤
   experiment_id, protocol_digest, preregistration_digest │
+  plan_digest  (budgets, seed, arm order, tasks, power)  │
   arms[A..E] = (label, components, config_digest)        │
   model_identity, model_digest                          │
   task_digests{task_id → sha256}                        │
   environment_digest, criterion_version,                │
   test_suite_commitment, validity window                │
+  alpha_milli, multiplicity, token_ratio_milli          │
         │ digest                                        │
         ▼                                               │
 TrialMeasurementV1 ──signed by evaluator────────────────┤
@@ -169,15 +173,25 @@ boundary. `container_isolation` (v3.5.1) provides the boundary:
 | pinned image | `image_digest` re-checked before and after | `test_a_moved_image_is_refused` |
 | wall-clock bound | parent removes the named container on timeout | `test_a_hung_workload_is_actually_stopped` |
 | **no signing key** | key dir is not a mount | `test_the_signing_key_is_not_present` |
+| **no symlink escape** | `O_NOFOLLOW` + regular-file check + 64 KiB cap | `test_a_symlinked_measurement_is_not_this_runs_evidence` |
+| **bounded ingestion** | stdout/stderr read from capped temporary files | `test_a_symlinked_measurement_is_not_this_runs_evidence` |
 | no stale measurement | sink measurement removed before the run; read only on exit 0 | `test_a_stale_measurement_is_not_this_runs_evidence` |
 
-The last two rows are the architectural point: the workload produces a
-measurement, and the **trusted parent** signs it after the container has
-exited (`container_isolation.sign_measurement`). `sign_measurement`
+The **no signing key** and **no stale measurement** rows are the
+architectural point: the workload produces a measurement, and the
+**trusted parent** signs it after the container has exited
+(`container_isolation.sign_measurement`). `sign_measurement`
 takes the completed `ContainerResult` and refuses a run that did not
 succeed or whose profile is not `production_ready`; a compromised
 workload has nothing to steal and nothing to forge with, and a stale or
 failed run cannot be signed as if it were evidence.
+
+**This boundary is not yet the one the evaluator uses.**
+`evaluator_isolation.run_isolated` still spawns a host subprocess, so it
+refuses `production=True` with `production_boundary_not_enforced` rather
+than accept a profile it cannot enforce. The container module is the
+enforced boundary and the integration is the next engineering step; until
+it lands, a production evaluation does not start.
 
 ## 7. Storage guarantees
 
@@ -200,15 +214,18 @@ A confirmatory verdict requires **all** of:
 3. `receipts_verified` and `measurements_verified`, with every receipt
    `independent` and its environment, criterion and test suite equal to
    the authorization's;
-4. a verified `ExperimentAuthorizationV1` whose arm mapping, task set
-   and protocol match the plan;
+4. a verified `ExperimentAuthorizationV2` whose arm mapping, task set,
+   protocol **and plan digest** match the plan — a budget, seed or
+   ordering change is a different experiment, not a reinterpretation;
 5. a verified `AnalysisManifest` and `PreregistrationRecord`, with the
    preregistration bound to the plan's protocol;
 6. `classify(...).ok` — sample size, timing, lineage-disjoint holdout;
-7. `decisive["significant"]` **and** Holm-adjusted p ≤ 0.05;
+7. `decisive["significant"]` **and** Holm-adjusted p ≤ the authorized
+   `alpha_milli`, which must equal the preregistered alpha;
 8. no infrastructure failures (`status == "error"`), which return
    `no_evidence` before the contrast is read;
-9. token ratio ≤ 2.0;
+9. token ratio ≤ the authorized `token_ratio_milli` (latency is
+   reported but is not part of the cost rule);
 10. input `evidence_class` not exploratory/demonstration.
 
 Failure of any one yields a non-supporting verdict, never a weaker

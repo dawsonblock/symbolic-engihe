@@ -106,6 +106,19 @@ class RequirementTests(_Fixture):
         self.assertIn("evaluator_and_harness_share_a_key", problems)
         self.assertIn("evaluator_and_authorization_share_a_key", problems)
 
+    def test_a_shared_key_under_distinct_ids_is_not_separated(self):
+        # Role separation is about key material. The same public key
+        # pinned under four different ids is one signer, not four.
+        public = self.fixture.cert.stack.eval_public_hex
+        shared = EvidenceBindingAuthority(
+            trusted_evaluator_keys={"evaluator-role": public},
+            trusted_harness_keys={"harness-role": public},
+            trusted_authorization_keys={"authorization-role": public},
+            trusted_experiment_keys={"experiment-role": public})
+        problems = self.requirements(binding_authority=shared).problems()
+        self.assertIn("evaluator_and_harness_share_a_key", problems)
+        self.assertIn("evaluator_and_experiment_share_a_key", problems)
+
     def test_a_missing_key_role_is_refused(self):
         no_harness = EvidenceBindingAuthority(
             trusted_evaluator_keys={

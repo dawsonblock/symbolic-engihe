@@ -120,19 +120,22 @@ def receipt_for(task: str, arm: str, result: str = "pass", *,
     ).to_dict()
 
 
-def power(effect: int = 400, discordant: int = 300) -> PowerRequirement:
+def power(effect: int = 400, discordant: int = 500,
+          alpha_milli: int = 50) -> PowerRequirement:
     return PowerRequirement(design="paired_mcnemar", effect_milli=effect,
-                            discordant_milli=discordant)
+                            discordant_milli=discordant,
+                            alpha_milli=alpha_milli)
 
 
 def preregistration(*, protocol_digest: str = PROTOCOL_DIGEST,
                     training=("lin-t",), holdout=("lin-h",),
-                    registered_at: str = "2026-01-01T00:00:00Z"):
+                    registered_at: str = "2026-01-01T00:00:00Z",
+                    alpha_milli: int = 50):
     return sign_preregistration(
         TIMESTAMP_SEED,
         preregistration_id="pre-1", protocol_digest=protocol_digest,
         primary_metric="paired solved_delta E vs A",
-        power=power().to_dict(),
+        power=power(alpha_milli=alpha_milli).to_dict(),
         holdout_lineages=holdout, training_lineages=training,
         registered_at=registered_at, timestamp_authority="tsa",
         signer_key_id=TIMESTAMP_KEY_ID)
@@ -142,10 +145,12 @@ def manifest(*, protocol_digest: str = PROTOCOL_DIGEST,
              training=("lin-t",), holdout=("lin-h",),
              registered_at: str = "2026-01-01T00:00:00Z",
              first_evaluation: str = "2026-02-01T00:00:00Z",
-             signed: bool = True) -> AnalysisManifest:
+             signed: bool = True,
+             alpha_milli: int = 50) -> AnalysisManifest:
     prereg = preregistration(protocol_digest=protocol_digest,
                              training=training, holdout=holdout,
-                             registered_at=registered_at)
+                             registered_at=registered_at,
+                             alpha_milli=alpha_milli)
     lineages = LineageRegistry()
     lineages.add(RepositoryLineage(
         registry_id="repo-1", lineage_id=holdout[0], family_id="fam"))
@@ -171,6 +176,8 @@ def experiment_authorization(campaign, *, task_digests=None,
                              experiment_id: str = EXPERIMENT_ID,
                              issued_at: str = ISSUED_AT,
                              expires_at: str = EXPIRES_AT,
+                             alpha_milli: int | None = None,
+                             token_ratio_milli: int = 2000,
                              seed: bytes = EXPERIMENT_SEED,
                              key_id: str = EXPERIMENT_KEY_ID):
     prereg = preregistration(protocol_digest=protocol_digest)
@@ -187,6 +194,8 @@ def experiment_authorization(campaign, *, task_digests=None,
         preregistration_digest=prereg.digest,
         issued_at=issued_at,
         expires_at=expires_at,
+        alpha_milli=alpha_milli,
+        token_ratio_milli=token_ratio_milli,
         seed=seed,
         key_id=key_id,
     )

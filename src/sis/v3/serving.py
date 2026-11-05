@@ -193,10 +193,16 @@ class ProductionRequirements:
 
 
 def _signer_separation_problems(binding_authority, ledger) -> list[str]:
-    """One role per key: evaluator, harness, authorization, experiment, ledger."""
+    """One role per key: evaluator, harness, authorization, experiment, ledger.
+
+    Two deployments can share a signer without sharing an id, so the
+    check runs twice: once over the configured key ids and once over the
+    pinned public keys. Only the second catches the same key material
+    enrolled under different labels.
+    """
     if binding_authority is None or ledger is None:
         return []
-    groups = {
+    ids = {
         "evaluator": set(getattr(binding_authority,
                                  "evaluator_key_ids", lambda: ())()),
         "harness": set(getattr(binding_authority,
@@ -205,16 +211,26 @@ def _signer_separation_problems(binding_authority, ledger) -> list[str]:
                                      "authorization_key_ids", lambda: ())()),
         "experiment": set(getattr(binding_authority,
                                   "experiment_key_ids", lambda: ())()),
-        "ledger": {getattr(ledger, "key_id", None)},
     }
+    ledger_id = getattr(ledger, "key_id", None)
+    ids["ledger"] = {ledger_id} if ledger_id else set()
+    ledger_public = getattr(ledger, "public_key", None)
+    accessor = getattr(binding_authority, "role_public_keys", None)
+    if callable(accessor):
+        material = {role: {value.lower() for value in values}
+                    for role, values in accessor().items()}
+    else:
+        material = {role: set(values) for role, values in ids.items()}
+    material["ledger"] = ({ledger_public.lower()}
+                          if isinstance(ledger_public, str) else set())
     problems: list[str] = []
     for name in ("evaluator", "harness", "authorization"):
-        if not groups[name]:
+        if not ids[name]:
             problems.append(f"{name}_keys_missing")
-    names = list(groups)
+    names = list(ids)
     for index, left in enumerate(names):
         for right in names[index + 1:]:
-            if groups[left] & groups[right]:
+            if (ids[left] & ids[right]) or (material[left] & material[right]):
                 problems.append(f"{left}_and_{right}_share_a_key")
     return problems
 

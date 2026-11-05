@@ -568,7 +568,7 @@ class PowerValidationTests(unittest.TestCase):
             primary_metric="paired solved_delta E vs A",
             power=PowerRequirement(design="paired_mcnemar",
                                    effect_milli=400,
-                                   discordant_milli=300),
+                                   discordant_milli=500),
             holdout_lineages=(),
             training_lineages=(),
             registered_at="not-a-timestamp",

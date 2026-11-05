@@ -173,22 +173,21 @@ def main(argv=None) -> int:
         isolation["stdout"] + isolation["stderr"])
 
     dsn = os.environ.get("SIS_POSTGRES_DSN")
+    destructive = os.environ.get("SIS_POSTGRES_ALLOW_DESTRUCTIVE") == "1"
     postgres = _run([python, "-m", "pytest", "-q",
                      "tests/v3/test_control_plane_postgres.py",
-                     "tests/v3/test_v351_postgres_qualification.py"],
-                    env_extra={"SIS_POSTGRES_ALLOW_DESTRUCTIVE": "1"})
+                     "tests/v3/test_v351_postgres_qualification.py"])
     gates.append(_gate(
         "postgres_cross_process",
         "Two processes cannot both commit the same authorization.",
         postgres,
-        blocked_reason=None if dsn else
-        "SIS_POSTGRES_DSN not configured; cross-replica claims unqualified"))
+        blocked_reason=None if (dsn and destructive) else
+        "SIS_POSTGRES_DSN and SIS_POSTGRES_ALLOW_DESTRUCTIVE=1 not both "
+        "configured; cross-replica claims unqualified"))
     (EVIDENCE / "postgres.log").write_text(
         postgres["stdout"] + postgres["stderr"])
 
-    full = _run([python, "-m", "pytest", "tests", "-q"],
-                env_extra=({"SIS_POSTGRES_ALLOW_DESTRUCTIVE": "1"}
-                           if dsn else None))
+    full = _run([python, "-m", "pytest", "tests", "-q"])
     gates.append(_gate(
         "full_regression",
         "No unexplained regression against the v3.5.0 baseline (1362 passed).",

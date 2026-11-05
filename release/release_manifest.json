@@ -2,7 +2,7 @@
   "archive": {
     "inner_project_dir": "SIS_v3.5.1_FULL_UPGRADED",
     "path": "release/SIS_v3.5.1_FULL_UPGRADED.zip",
-    "sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec",
+    "sha256": "d027293a6eb4658b5e551e454d3bc3e574afd4bab645f53facbea4793540939f",
     "source_files": 423
   },
   "branch": "sis/v3.4.0-engineering-upgrade",
@@ -60,19 +60,19 @@
   "provenance": {
     "path": "release/provenance.intoto.json",
     "signed": false,
-    "statement_sha256": "7ee81ed7f40a1be2ddb99d09b217e98445cc0e502f5557cdd6105b294c7e2da1",
-    "subject_sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec",
+    "statement_sha256": "8e4849ad94deaed52932ec59ec61d51975a9c3ca37d9fe5e76b9678eb0836d62",
+    "subject_sha256": "d027293a6eb4658b5e551e454d3bc3e574afd4bab645f53facbea4793540939f",
     "trust_root": "qualification-only"
   },
   "release": "SIS_v3.5.1_FULL_UPGRADED",
   "schema_version": 1,
-  "source_commit": "949104736c5951bfaeb92ca93e89f84a3564c639",
-  "source_commit_note": "UNCOMMITTED SOURCE: this archive was built from a working tree with uncommitted changes relative to 949104736c5951bfaeb92ca93e89f84a3564c639 (.github/workflows/ci.yml, .gitignore, CHANGELOG.md, pyproject.toml, requirements-lock.txt, src/sis/__init__.py, src/sis/v3/evidence_binding.py, src/sis/v3/five_arm.py, src/sis/v3/serving.py, tests/v3/five_arm_testkit.py, tests/v3/test_v340_five_arm.py, tests/v3/test_v350_campaign_integrity.py, tests/v3/test_v350_production_profile.py, tools/build_canonical_zip.py, tools/check_source_manifest.py, tools/package_release.py, tools/provenance.py, SIS_v3.5.1_DEFECT_MATRIX.md, SIS_v3.5.1_ENGINEERING_AUDIT.md, SIS_v3.5.1_REPRODUCTION.md, and 13 more). It is bound to its own RELEASE_SHA256.json, not to that commit.",
+  "source_commit": "896ee910ff26f75321e0cad8d71f51fda7979f23",
+  "source_commit_note": "UNCOMMITTED SOURCE: this archive was built from a working tree with uncommitted changes relative to 896ee910ff26f75321e0cad8d71f51fda7979f23 (.github/workflows/ci.yml, CHANGELOG.md, SIS_v3.5.1_DEFECT_MATRIX.md, SIS_v3.5.1_ENGINEERING_AUDIT.md, SIS_v3.5.1_REPRODUCTION.md, SIS_v3.5.1_SECURITY_ARCHITECTURE.md, qualification/qualification.json, src/sis/v3/container_isolation.py, src/sis/v3/evaluator_isolation.py, src/sis/v3/evidence_binding.py, src/sis/v3/five_arm.py, src/sis/v3/serving.py, src/sis/v3/statistical_power.py, src/sis/v3/trial_evidence.py, tests/v3/five_arm_testkit.py, tests/v3/test_control_plane_postgres.py, tests/v3/test_v340_evaluator_custody.py, tests/v3/test_v340_five_arm.py, tests/v3/test_v340_review_fixes.py, tests/v3/test_v340_statistics.py, and 6 more). It is bound to its own RELEASE_SHA256.json, not to that commit.",
   "status": "CONDITIONAL_GO",
   "test_result": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONNOUSERSITE=1 PYTHONPATH=src python3 -m pytest -q",
     "failed": 0,
-    "passed": 1489,
+    "passed": 1498,
     "skipped": 3
   }
 }

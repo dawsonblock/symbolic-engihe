@@ -30,13 +30,13 @@
       "counts": {
         "error": 0,
         "failed": 0,
-        "passed": 142,
+        "passed": 148,
         "skipped": 0
       },
       "expected": "exit 0",
       "gate": "evidence_and_report_integrity",
       "invariant": "A valid signature must be valid for the exact trial, arm, task, outcome and measurement claimed.",
-      "seconds": 71.7,
+      "seconds": 66.8,
       "status": "pass"
     },
     {
@@ -46,13 +46,13 @@
       "counts": {
         "error": 0,
         "failed": 0,
-        "passed": 23,
+        "passed": 24,
         "skipped": 0
       },
       "expected": "exit 0",
       "gate": "evaluator_isolation",
       "invariant": "The workload cannot reach the network, the host filesystem, or the signing key.",
-      "seconds": 16.1,
+      "seconds": 12.7,
       "status": "pass"
     },
     {
@@ -68,7 +68,7 @@
       "expected": "exit 0",
       "gate": "postgres_cross_process",
       "invariant": "Two processes cannot both commit the same authorization.",
-      "seconds": 2.6,
+      "seconds": 2.4,
       "status": "pass"
     },
     {
@@ -78,13 +78,13 @@
       "counts": {
         "error": 0,
         "failed": 0,
-        "passed": 1489,
+        "passed": 1498,
         "skipped": 3
       },
       "expected": "exit 0",
       "gate": "full_regression",
       "invariant": "No unexplained regression against the v3.5.0 baseline (1362 passed).",
-      "seconds": 167.3,
+      "seconds": 159.2,
       "status": "pass"
     },
     {
@@ -120,7 +120,7 @@
       "status": "pass"
     }
   ],
-  "generated_at": "2026-11-04T09:25:22Z",
+  "generated_at": "2026-11-05T01:35:00Z",
   "release": "3.5.1",
   "schema_version": 1
 }

@@ -7,41 +7,34 @@
         "branch": "sis/v3.4.0-engineering-upgrade",
         "dirty_paths": [
           ".github/workflows/ci.yml",
-          ".gitignore",
           "CHANGELOG.md",
-          "pyproject.toml",
-          "requirements-lock.txt",
-          "src/sis/__init__.py",
-          "src/sis/v3/evidence_binding.py",
-          "src/sis/v3/five_arm.py",
-          "src/sis/v3/serving.py",
-          "tests/v3/five_arm_testkit.py",
-          "tests/v3/test_v340_five_arm.py",
-          "tests/v3/test_v350_campaign_integrity.py",
-          "tests/v3/test_v350_production_profile.py",
-          "tools/build_canonical_zip.py",
-          "tools/check_source_manifest.py",
-          "tools/package_release.py",
-          "tools/provenance.py",
           "SIS_v3.5.1_DEFECT_MATRIX.md",
           "SIS_v3.5.1_ENGINEERING_AUDIT.md",
           "SIS_v3.5.1_REPRODUCTION.md",
           "SIS_v3.5.1_SECURITY_ARCHITECTURE.md",
-          "evidence/v351/PHASE0_BASELINE.md",
           "qualification/qualification.json",
           "src/sis/v3/container_isolation.py",
+          "src/sis/v3/evaluator_isolation.py",
+          "src/sis/v3/evidence_binding.py",
+          "src/sis/v3/five_arm.py",
+          "src/sis/v3/serving.py",
+          "src/sis/v3/statistical_power.py",
           "src/sis/v3/trial_evidence.py",
+          "tests/v3/five_arm_testkit.py",
+          "tests/v3/test_control_plane_postgres.py",
+          "tests/v3/test_v340_evaluator_custody.py",
+          "tests/v3/test_v340_five_arm.py",
+          "tests/v3/test_v340_review_fixes.py",
+          "tests/v3/test_v340_statistics.py",
+          "tests/v3/test_v350_production_profile.py",
           "tests/v3/test_v351_container_isolation.py",
           "tests/v3/test_v351_evidence_chain.py",
-          "tests/v3/test_v351_learning_preservation.py",
-          "tests/v3/test_v351_postgres_qualification.py",
-          "tests/v3/test_v351_qualification_harness.py",
           "tests/v3/test_v351_report_totality.py",
           "tools/build_evidence_bundle.py",
           "tools/v351_qualify.py"
         ],
         "release": "SIS_v3.5.1_FULL_UPGRADED",
-        "source_commit": "949104736c5951bfaeb92ca93e89f84a3564c639",
+        "source_commit": "896ee910ff26f75321e0cad8d71f51fda7979f23",
         "source_dirty": true
       },
       "internalParameters": {
@@ -50,7 +43,7 @@
       "resolvedDependencies": [
         {
           "digest": {
-            "sha1": "949104736c5951bfaeb92ca93e89f84a3564c639"
+            "sha1": "896ee910ff26f75321e0cad8d71f51fda7979f23"
           },
           "uri": "git+https://sis.local/sis/v3.4.0-engineering-upgrade"
         }
@@ -61,9 +54,9 @@
         "id": "tools/package_release.py"
       },
       "metadata": {
-        "finishedOn": "2026-11-04T09:21:00Z",
-        "invocationId": "release-d71cd0e9d62376f7",
-        "startedOn": "2026-11-04T09:21:00Z"
+        "finishedOn": "2026-11-05T01:30:55Z",
+        "invocationId": "release-d027293a6eb4658b",
+        "startedOn": "2026-11-05T01:30:55Z"
       }
     }
   },
@@ -71,7 +64,7 @@
   "subject": [
     {
       "digest": {
-        "sha256": "d71cd0e9d62376f7a355b7c69e3498cd1af8df936c97c60544864b4b93eee7ec"
+        "sha256": "d027293a6eb4658b5e551e454d3bc3e574afd4bab645f53facbea4793540939f"
       },
       "name": "SIS_v3.5.1_FULL_UPGRADED.zip"
     }

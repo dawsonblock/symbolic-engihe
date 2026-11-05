@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import unittest
+from dataclasses import replace
 
 from sis.v3.contracts import EvaluatorReceiptV2
 from sis.v3.evidence_binding import sign_receipt
@@ -712,6 +713,153 @@ class StatisticalTests(SupportedChainFixture):
             verdict["decisive_contrast"]["mcnemar_exact_p"], 0.05)
         self.assertGreater(verdict["holm_adjusted_p"]["E_vs_A"], 0.05)
         self.assertEqual(verdict["verdict"], "no_evidence")
+
+
+class DecisionPolicyTests(unittest.TestCase):
+    """The signed policy decides, not a constant in the verdict code."""
+
+    def _run(self, *, tasks, alpha_milli, wins, budget=None):
+        campaign = plan(tasks=tasks)
+        if alpha_milli is not None:
+            campaign = replace(
+                campaign, power_requirement=kit.power(alpha_milli=alpha_milli))
+        authorization = kit.experiment_authorization(
+            campaign, alpha_milli=alpha_milli)
+        rows = []
+        for index, task in enumerate(campaign.task_ids):
+            arms = {}
+            for arm in ARMS:
+                solved = arm == "E" and index < wins
+                result = "pass" if solved else "fail"
+                receipt = kit.receipt_for(task, arm, result)
+                arms[arm] = ArmOutcome(
+                    arm=arm, valid_solve=solved, tokens=1000,
+                    wall_seconds=10.0, tool_calls=5, receipt=receipt,
+                    measurement=kit.measurement_for(
+                        task, arm, result, campaign=campaign,
+                        authorization=authorization, receipt=receipt))
+            rows.append((task, arms))
+        report = build_report(campaign, rows, evidence_class="confirmatory")
+        return campaign, authorization, assess(
+            report, plan=campaign,
+            analysis=kit.manifest(alpha_milli=alpha_milli),
+            receipt_authority=kit.receipt_authority(),
+            trusted_analysis_keys=kit.trusted_analysis_keys(),
+            trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+            experiment_authorization=authorization)
+
+    def test_a_changed_budget_cannot_reinterpret_signed_evidence(self):
+        # Every signed record is unchanged; only the caller-supplied
+        # campaign budget moves. That is a different experiment, so the
+        # authorization no longer describes the plan.
+        campaign = plan(tasks=29)
+        authorization = kit.experiment_authorization(campaign)
+        rows = []
+        for index, task in enumerate(campaign.task_ids):
+            arms = {}
+            for arm in ARMS:
+                solved = arm in ("A", "E") and index < 20
+                tokens = 2000 if arm == "A" else 1000
+                result = "pass" if solved else "fail"
+                receipt = kit.receipt_for(task, arm, result)
+                arms[arm] = ArmOutcome(
+                    arm=arm, valid_solve=solved, tokens=tokens,
+                    wall_seconds=10.0, tool_calls=5, receipt=receipt,
+                    measurement=kit.measurement_for(
+                        task, arm, result, campaign=campaign,
+                        authorization=authorization, receipt=receipt,
+                        tokens_in=tokens // 2,
+                        tokens_out=tokens - tokens // 2))
+            rows.append((task, arms))
+
+        def verdict_for(max_tokens):
+            budgeted = replace(campaign, max_tokens_per_task=max_tokens)
+            report = build_report(budgeted, rows,
+                                  evidence_class="confirmatory")
+            return assess(report, plan=budgeted, analysis=kit.manifest(),
+                          receipt_authority=kit.receipt_authority(),
+                          trusted_analysis_keys=kit.trusted_analysis_keys(),
+                          trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+                          experiment_authorization=authorization)
+
+        honest = verdict_for(100_000)
+        self.assertEqual(honest["verdict"], "no_evidence")
+        squeezed = verdict_for(1_500)
+        self.assertEqual(squeezed["verdict"], "invalid_report")
+        self.assertIn("experiment_plan_mismatch", squeezed["problems"])
+        self.assertNotEqual(squeezed["evidence_class"], "confirmatory")
+
+    def test_the_preregistered_alpha_is_the_threshold_applied(self):
+        # alpha=0.001, 54 tasks required, 80 observed, 10 wins and no
+        # losses. Unadjusted p is about 0.00195 and Holm is about
+        # 0.0078; both exceed the preregistered threshold, so this is
+        # not a confirmatory win even though it would clear 0.05.
+        campaign, authorization, verdict = self._run(
+            tasks=80, alpha_milli=1, wins=10)
+        self.assertEqual(campaign.required_sample_size, 54)
+        self.assertGreater(
+            verdict["decisive_contrast"]["mcnemar_exact_p"], 0.001)
+        self.assertGreater(verdict["holm_adjusted_p"]["E_vs_A"], 0.001)
+        self.assertEqual(verdict["decision_policy"]["alpha"], 0.001)
+        self.assertEqual(verdict["verdict"], "no_evidence")
+
+    def test_an_alpha_that_disagrees_with_the_preregistration_is_refused(self):
+        campaign = plan(tasks=29)
+        authorization = kit.experiment_authorization(
+            campaign, alpha_milli=10)
+        rows = []
+        for index, task in enumerate(campaign.task_ids):
+            arms = {}
+            for arm in ARMS:
+                solved = arm == "E" and index < 20
+                result = "pass" if solved else "fail"
+                receipt = kit.receipt_for(task, arm, result)
+                arms[arm] = ArmOutcome(
+                    arm=arm, valid_solve=solved, tokens=1000,
+                    wall_seconds=10.0, tool_calls=5, receipt=receipt,
+                    measurement=kit.measurement_for(
+                        task, arm, result, campaign=campaign,
+                        authorization=authorization, receipt=receipt))
+            rows.append((task, arms))
+        report = build_report(campaign, rows, evidence_class="confirmatory")
+        verdict = assess(report, plan=campaign, analysis=kit.manifest(),
+                         receipt_authority=kit.receipt_authority(),
+                         trusted_analysis_keys=kit.trusted_analysis_keys(),
+                         trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+                         experiment_authorization=authorization)
+        self.assertIn("analysis_alpha_mismatch", verdict["problems"])
+        self.assertEqual(verdict["verdict"], "no_evidence")
+
+    def test_latency_is_reported_but_not_thresholded(self):
+        # 500s per task against 1s is not part of the cost rule; the
+        # assessment says so instead of implying a general superiority.
+        campaign = plan(tasks=29)
+        authorization = kit.experiment_authorization(campaign)
+        rows = []
+        for index, task in enumerate(campaign.task_ids):
+            arms = {}
+            for arm in ARMS:
+                solved = arm == "E" and index < 20
+                result = "pass" if solved else "fail"
+                receipt = kit.receipt_for(task, arm, result)
+                seconds = 500.0 if arm == "E" else 1.0
+                arms[arm] = ArmOutcome(
+                    arm=arm, valid_solve=solved, tokens=1000,
+                    wall_seconds=seconds, tool_calls=5, receipt=receipt,
+                    measurement=kit.measurement_for(
+                        task, arm, result, campaign=campaign,
+                        authorization=authorization, receipt=receipt,
+                        wall_seconds_milli=int(seconds * 1000)))
+            rows.append((task, arms))
+        report = build_report(campaign, rows, evidence_class="confirmatory")
+        verdict = assess(report, plan=campaign, analysis=kit.manifest(),
+                         receipt_authority=kit.receipt_authority(),
+                         trusted_analysis_keys=kit.trusted_analysis_keys(),
+                         trusted_timestamp_keys=kit.trusted_timestamp_keys(),
+                         experiment_authorization=authorization)
+        self.assertEqual(verdict["mean_wall_seconds"]["E"], 500.0)
+        self.assertEqual(verdict["decision_policy"]["latency"],
+                         "reported, not thresholded")
 
 
 class HistoricalEvidenceTests(SupportedChainFixture):

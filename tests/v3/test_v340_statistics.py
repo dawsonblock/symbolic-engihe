@@ -31,7 +31,7 @@ REGISTERED_AT = "2026-10-01T00:00:00Z"
 EVALUATED_AT = "2026-10-26T00:00:00Z"
 
 
-def power(effect=400, discordant=300, **overrides):
+def power(effect=400, discordant=500, **overrides):
     fields = dict(design="paired_mcnemar", effect_milli=effect,
                   discordant_milli=discordant, alpha_milli=50,
                   power_milli=800)
@@ -41,7 +41,7 @@ def power(effect=400, discordant=300, **overrides):
 
 class PowerTests(unittest.TestCase):
     def test_required_sample_size_is_monotone_in_the_effect(self):
-        strong = power(effect=500).required_sample_size()
+        strong = power(effect=300).required_sample_size()
         weak = power(effect=100).required_sample_size()
         self.assertLess(strong, weak)
 
@@ -51,9 +51,21 @@ class PowerTests(unittest.TestCase):
         self.assertLess(low, high)
 
     def test_required_sample_size_is_monotone_in_the_discordant_rate(self):
-        low = power(discordant=100).required_sample_size()
-        high = power(discordant=500).required_sample_size()
+        low = power(effect=100, discordant=100).required_sample_size()
+        high = power(effect=100, discordant=500).required_sample_size()
         self.assertLess(low, high)
+
+    def test_an_effect_larger_than_the_discordance_is_refused(self):
+        # |delta| <= q for paired binary outcomes; a larger effect
+        # implies a negative p_loss.
+        with self.assertRaisesRegex(StatisticsError,
+                                    "effect_exceeds_discordance"):
+            PowerRequirement(design="paired_mcnemar", effect_milli=400,
+                             discordant_milli=300)
+        with self.assertRaisesRegex(StatisticsError,
+                                    "effect_exceeds_discordance"):
+            PowerRequirement(design="paired_mcnemar", effect_milli=1000,
+                             discordant_milli=1)
 
     def test_a_declared_effect_reproduces_a_defensible_size(self):
         # A 10-point paired effect with 30% discordance needs far more
@@ -118,7 +130,7 @@ class PreregistrationTests(unittest.TestCase):
             preregistration_id=record.preregistration_id,
             protocol_digest=record.protocol_digest,
             primary_metric=record.primary_metric,
-            power=power(effect=900),
+            power=power(effect=450),
             holdout_lineages=record.holdout_lineages,
             training_lineages=record.training_lineages,
             registered_at=record.registered_at,

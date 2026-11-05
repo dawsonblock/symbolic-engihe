@@ -4,7 +4,7 @@ Closes the v3.5.0 evidence-integrity gap that let a valid signature
 support an invalid claim. Baseline: `9491047` (v3.5.0). Every item below
 has a reproducing regression test; see `SIS_v3.5.1_DEFECT_MATRIX.md`.
 
-- **PR-01 trial attribution.** New signed `ExperimentAuthorizationV1`
+- **PR-01 trial attribution.** New signed `ExperimentAuthorizationV2`
   (experiment authority) and `TrialMeasurementV1` (evaluator) in
   `sis.v3.trial_evidence`. A measurement binds the experiment, the
   authorization digest, the trial id, the arm and arm-configuration
@@ -91,6 +91,48 @@ has a reproducing regression test; see `SIS_v3.5.1_DEFECT_MATRIX.md`.
   provenance artifacts it did not produce, so `release/` describes
   exactly one statement: the v3.5.1 one is unsigned, and the stale
   v3.3.2 DSSE envelope that sat beside it is gone.
+
+### Independent audit follow-up (F01-F10)
+
+An independent audit of the v3.5.1 archive reproduced ten further
+defects. Each is now repaired with an acceptance test derived from the
+reproduction; see `SIS_v3.5.1_DEFECT_MATRIX.md` rows D-27..D-36.
+
+- **The plan is part of the signed experiment.** `ExperimentAuthorizationV2`
+  carries `plan_digest`, so budgets, seed, arm order, task mapping and
+  the power requirement cannot be changed after the run. A genuine
+  `no_evidence` run can no longer become `supported` by lowering the
+  caller's token cap: the assessment returns `invalid_report` with
+  `experiment_plan_mismatch`.
+- **The decision rule is signed.** `alpha_milli`, `multiplicity` and
+  `token_ratio_milli` live in the authorization; `assess` applies them
+  and refuses `analysis_alpha_mismatch` when the preregistration and the
+  authorization disagree. A preregistered alpha of 0.001 is now the
+  threshold, not 0.05.
+- **The production evaluator refuses an unenforced boundary.**
+  `run_isolated(production=True)` raises `production_boundary_not_enforced`
+  because the worker is a host subprocess; `container_isolation` is not
+  wired into that path yet.
+- **The container parent does not follow links.** The measurement is
+  opened with `O_NOFOLLOW`, must be a regular file inside the output
+  mount, and is capped at 64 KiB; stdout/stderr are read from bounded
+  temporary files instead of unbounded pipes.
+- **Role separation compares key material.** `role_public_keys()` and
+  the separation check compare public keys, not the labels an operator
+  chooses; the ledger's public key joins the same check.
+- **Validation is total for nested rows too.** A non-list `arm_order`
+  is `arm_order_invalid`, not a `TypeError`.
+- **The power model refuses impossible designs.** `effect > discordance`
+  implies a negative `p_loss`; it is now `effect_exceeds_discordance`.
+- **Destructive PostgreSQL tests need explicit consent.** The older
+  fixture requires `SIS_POSTGRES_ALLOW_DESTRUCTIVE=1`, and the harness no
+  longer supplies that acknowledgement itself.
+- **CI fails on release drift.** The main job always checks the manifest
+  and the tree; a tag-only job builds the canonical archive and the
+  evidence bundle and verifies both.
+- **Latency is reported, not thresholded.** The assessment returns the
+  cost policy it applied and says so, instead of implying a general
+  superiority after latency cost.
 
 ## Unreleased — SIS v3.5.0 engineering remediation (PR-00, PR-01, PR-03, PR-04)
 

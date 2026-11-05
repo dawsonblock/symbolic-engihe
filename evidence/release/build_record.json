@@ -1,9 +1,9 @@
 {
-  "base_commit": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47",
+  "base_commit": "e514ea5c10dd7d7246275a7865c19d922ad223a5",
   "branch": "sis/v3.4.0-engineering-upgrade",
   "builder": "tools/package_release.py -> tools/build_canonical_zip.py",
   "commit_binding": "every archive member is re-hashed against the working tree at build time (verify_against_tree); the source commit and dirty state are recorded in release/verification.json",
-  "generated_at": "2026-11-05T01:55:17Z",
+  "generated_at": "2026-11-05T01:55:38Z",
   "kind": "release_build_record",
   "manifest_scope": "all _included() source/evidence files; release/ and evidence/release/build_record.json are out-of-band and never inventoried into the archive",
   "post_build_verification": "release/verification.json \u2014 outside the archive by construction",

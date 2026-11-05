@@ -452,6 +452,10 @@
       "bytes": 11425,
       "sha256": "d34a64d59bce25e23c7d03f872a69539965fc09ab4359904cb24ff962c79454e"
     },
+    "evidence/evaluation/authenticated.json": {
+      "bytes": 89219,
+      "sha256": "6a071bd90957bc44385f4730e9006abd0fbb1491fdf1d748bd2a5bff16dad659"
+    },
     "evidence/evaluation/five_arm_demo.json": {
       "bytes": 20069,
       "sha256": "f28d9938124e583cd36b8812a917c629ca1e1db71fc6a050f33144d5cf7d9c3f"
@@ -1569,8 +1573,8 @@
       "sha256": "c45d5b95d49a251c934c829180a70823d786503b4f28bae07b493215c996d59e"
     },
     "tools/build_canonical_zip.py": {
-      "bytes": 4456,
-      "sha256": "97eca29e2daff39ca8988aa15a5b2502af5b55fc048898b589ed40e542dffc99"
+      "bytes": 4857,
+      "sha256": "80da15dc0acb7fceb479e39b945c417d46a52a00c2debbbb254ea6cdbd8e5c99"
     },
     "tools/build_evidence_bundle.py": {
       "bytes": 5198,
@@ -1707,5 +1711,5 @@
   },
   "release": "SIS_v3.5.1_FULL_UPGRADED",
   "schema_version": 1,
-  "source_commit": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47"
+  "source_commit": "e514ea5c10dd7d7246275a7865c19d922ad223a5"
 }

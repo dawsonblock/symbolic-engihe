@@ -7,7 +7,7 @@
         "branch": "sis/v3.4.0-engineering-upgrade",
         "dirty_paths": [],
         "release": "SIS_v3.5.1_FULL_UPGRADED",
-        "source_commit": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47",
+        "source_commit": "e514ea5c10dd7d7246275a7865c19d922ad223a5",
         "source_dirty": false
       },
       "internalParameters": {
@@ -16,7 +16,7 @@
       "resolvedDependencies": [
         {
           "digest": {
-            "sha1": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47"
+            "sha1": "e514ea5c10dd7d7246275a7865c19d922ad223a5"
           },
           "uri": "git+https://sis.local/sis/v3.4.0-engineering-upgrade"
         }
@@ -27,9 +27,9 @@
         "id": "tools/package_release.py"
       },
       "metadata": {
-        "finishedOn": "2026-11-05T01:50:23Z",
-        "invocationId": "release-c9bb28c0b7d48e75",
-        "startedOn": "2026-11-05T01:50:23Z"
+        "finishedOn": "2026-11-05T01:55:38Z",
+        "invocationId": "release-382b017ec8e225f8",
+        "startedOn": "2026-11-05T01:55:38Z"
       }
     }
   },
@@ -37,7 +37,7 @@
   "subject": [
     {
       "digest": {
-        "sha256": "c9bb28c0b7d48e75c46f662f154f93f525b92e5ece81e94855caf331fae8514f"
+        "sha256": "382b017ec8e225f812d8cc026e75f04ee3f5c458513a52d7b5f916ffdd62f240"
       },
       "name": "SIS_v3.5.1_FULL_UPGRADED.zip"
     }

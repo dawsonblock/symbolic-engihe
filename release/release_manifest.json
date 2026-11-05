@@ -2,8 +2,8 @@
   "archive": {
     "inner_project_dir": "SIS_v3.5.1_FULL_UPGRADED",
     "path": "release/SIS_v3.5.1_FULL_UPGRADED.zip",
-    "sha256": "c9bb28c0b7d48e75c46f662f154f93f525b92e5ece81e94855caf331fae8514f",
-    "source_files": 426
+    "sha256": "382b017ec8e225f812d8cc026e75f04ee3f5c458513a52d7b5f916ffdd62f240",
+    "source_files": 427
   },
   "branch": "sis/v3.4.0-engineering-upgrade",
   "docs": [
@@ -60,13 +60,13 @@
   "provenance": {
     "path": "release/provenance.intoto.json",
     "signed": false,
-    "statement_sha256": "b0d362ee27b68016d6a41d28fb711e67350e6ab9b48207f7c1e4017e94ae8c5f",
-    "subject_sha256": "c9bb28c0b7d48e75c46f662f154f93f525b92e5ece81e94855caf331fae8514f",
+    "statement_sha256": "f6807a63166460829ad5b8fb29c89ee1d816f995d9a645211a2c4b7fbcf9d0c1",
+    "subject_sha256": "382b017ec8e225f812d8cc026e75f04ee3f5c458513a52d7b5f916ffdd62f240",
     "trust_root": "qualification-only"
   },
   "release": "SIS_v3.5.1_FULL_UPGRADED",
   "schema_version": 1,
-  "source_commit": "4739d0b56e69a24adac3ef75b5ae0b782c8b6e47",
+  "source_commit": "e514ea5c10dd7d7246275a7865c19d922ad223a5",
   "source_commit_note": "archive members are byte-identical to this commit for every manifest-covered file; the release commit itself touches only out-of-band release/ provenance",
   "status": "CONDITIONAL_GO",
   "test_result": {

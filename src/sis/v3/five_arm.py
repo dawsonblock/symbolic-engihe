@@ -1131,7 +1131,8 @@ def authorize_experiment(
         issued_at: str, expires_at: str, seed: bytes, key_id: str,
         alpha_milli: int | None = None,
         multiplicity: str = "holm",
-        token_ratio_milli: int = 2000) -> ExperimentAuthorizationV2:
+        token_ratio_milli: int = 2000,
+        latency_ratio_milli: int = 0) -> ExperimentAuthorizationV2:
     """Sign the frozen description of this campaign.
 
     The arm configuration digests are derived from ``plan.design``, so an
@@ -1164,6 +1165,7 @@ def authorize_experiment(
                      if alpha_milli is None else alpha_milli),
         multiplicity=multiplicity,
         token_ratio_milli=token_ratio_milli,
+        latency_ratio_milli=latency_ratio_milli,
         issued_at=issued_at,
         expires_at=expires_at,
         signer_key_id=key_id,
@@ -1249,6 +1251,7 @@ def assess(report: Mapping, *, plan: CampaignPlan,
             "solve_rate": {"A": 0.0, "E": 0.0},
             "mean_tokens": {"A": None, "E": None},
             "mean_wall_seconds": {"A": None, "E": None},
+            "latency_ratio": None,
             "token_ratio": None,
             "decision_policy": {},
             "required_sample_size": plan.required_sample_size,
@@ -1291,6 +1294,8 @@ def assess(report: Mapping, *, plan: CampaignPlan,
     alpha = authorization.alpha_milli / 1000 if authorized else 0.05
     cost_ratio = (authorization.token_ratio_milli / 1000 if authorized
                   else 2.0)
+    latency_limit = (authorization.latency_ratio_milli / 1000
+                     if authorized else 0.0)
 
     decisive = paired_contrast(source, baseline="A", treatment="E",
                                alpha=alpha)
@@ -1306,6 +1311,10 @@ def assess(report: Mapping, *, plan: CampaignPlan,
     e_tokens = overhead.get("E", {}).get("mean_tokens_per_task")
     token_ratio = (e_tokens / a_tokens
                    if a_tokens and e_tokens is not None else None)
+    a_wall = overhead.get("A", {}).get("mean_wall_seconds_per_task")
+    e_wall = overhead.get("E", {}).get("mean_wall_seconds_per_task")
+    latency_ratio = (e_wall / a_wall
+                     if a_wall and e_wall is not None else None)
     observed = len(source["per_task"])
     underpowered = observed < plan.required_sample_size
     infrastructure_failures = sum(
@@ -1426,6 +1435,12 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         verdict = "underpowered"
     elif token_ratio is not None and token_ratio > cost_ratio:
         verdict = "no_advantage_after_cost"
+    elif (latency_limit and latency_ratio is not None
+            and latency_ratio > latency_limit):
+        # Only when the operator froze a latency bound in the signed
+        # policy. Zero means the cost rule is token-only, and the
+        # assessment says so in ``decision_policy``.
+        verdict = "no_advantage_after_cost"
     elif decisive_holm > alpha:
         # The decisive contrast does not survive the family-wise
         # correction at the authorized threshold.
@@ -1445,9 +1460,8 @@ def assess(report: Mapping, *, plan: CampaignPlan,
         "component_contrasts": component_arms,
         "solve_rate": {"A": a_solved, "E": e_solved},
         "mean_tokens": {"A": a_tokens, "E": e_tokens},
-        "mean_wall_seconds": {
-            "A": overhead.get("A", {}).get("mean_wall_seconds_per_task"),
-            "E": overhead.get("E", {}).get("mean_wall_seconds_per_task")},
+        "mean_wall_seconds": {"A": a_wall, "E": e_wall},
+        "latency_ratio": latency_ratio,
         "token_ratio": token_ratio,
         # The rule the verdict actually applied. Latency is reported but
         # is not part of the cost decision; a claim of superiority after
@@ -1457,7 +1471,9 @@ def assess(report: Mapping, *, plan: CampaignPlan,
             "multiplicity": (authorization.multiplicity if authorized
                              else "holm"),
             "token_ratio_threshold": cost_ratio,
-            "latency": "reported, not thresholded",
+            "latency_ratio_threshold": latency_limit,
+            "latency": ("thresholded" if latency_limit
+                        else "reported, not thresholded"),
         },
         "required_sample_size": plan.required_sample_size,
         "observed_sample_size": observed,

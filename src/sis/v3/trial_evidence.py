@@ -158,6 +158,7 @@ class ExperimentAuthorizationV2:
     alpha_milli: int
     multiplicity: str
     token_ratio_milli: int
+    latency_ratio_milli: int
     issued_at: str
     expires_at: str
     signer_key_id: str
@@ -183,6 +184,11 @@ class ExperimentAuthorizationV2:
         if (type(self.token_ratio_milli) is not int
                 or not 1 <= self.token_ratio_milli <= 1_000_000):
             raise TrialEvidenceError("token_ratio_milli_invalid")
+        # 0 disables the latency bound; a positive value is a ratio in
+        # thousandths, like the token policy.
+        if (type(self.latency_ratio_milli) is not int
+                or not 0 <= self.latency_ratio_milli <= 1_000_000):
+            raise TrialEvidenceError("latency_ratio_milli_invalid")
         _instant(self.issued_at, "issued_at")
         _instant(self.expires_at, "expires_at")
         if _instant(self.expires_at, "expires_at") <= _instant(
@@ -247,6 +253,7 @@ class ExperimentAuthorizationV2:
             "alpha_milli": self.alpha_milli,
             "multiplicity": self.multiplicity,
             "token_ratio_milli": self.token_ratio_milli,
+            "latency_ratio_milli": self.latency_ratio_milli,
             "issued_at": self.issued_at,
             "expires_at": self.expires_at,
             "signer_key_id": self.signer_key_id,
@@ -263,7 +270,8 @@ class ExperimentAuthorizationV2:
             "model_identity", "model_digest", "task_digests",
             "environment_digest", "criterion_version",
             "test_suite_commitment", "alpha_milli", "multiplicity",
-            "token_ratio_milli", "issued_at", "expires_at",
+            "token_ratio_milli", "latency_ratio_milli", "issued_at",
+            "expires_at",
             "signer_key_id", "signature",
         }
         if set(value) != expected:

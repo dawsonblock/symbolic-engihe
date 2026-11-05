@@ -178,6 +178,7 @@ def experiment_authorization(campaign, *, task_digests=None,
                              expires_at: str = EXPIRES_AT,
                              alpha_milli: int | None = None,
                              token_ratio_milli: int = 2000,
+                             latency_ratio_milli: int = 0,
                              seed: bytes = EXPERIMENT_SEED,
                              key_id: str = EXPERIMENT_KEY_ID):
     prereg = preregistration(protocol_digest=protocol_digest)
@@ -196,6 +197,7 @@ def experiment_authorization(campaign, *, task_digests=None,
         expires_at=expires_at,
         alpha_milli=alpha_milli,
         token_ratio_milli=token_ratio_milli,
+        latency_ratio_milli=latency_ratio_milli,
         seed=seed,
         key_id=key_id,
     )

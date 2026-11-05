@@ -271,6 +271,7 @@ class BenchmarkHarness:
                 entry["arms"][arm] = {
                     "outcome": res.outcome,
                     "receipt_digest": res.receipt_digest,
+                    "submission_digest": res.submission_digest,
                     "wall_seconds": res.wall_seconds,
                     "budget_exceeded": res.budget_exceeded,
                     "tokens_used": res.tokens_used, "tools_used": res.tools_used,

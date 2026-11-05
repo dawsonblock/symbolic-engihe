@@ -148,6 +148,30 @@ class ContainerProfile:
     def digest(self) -> str:
         return canonical_digest("container_profile", 1, self.to_dict())
 
+    @classmethod
+    def from_dict(cls, value) -> "ContainerProfile":
+        """Rebuild the profile from its canonical form.
+
+        ``to_dict`` carries two derived fields (``production_ready`` and
+        ``verified_controls``); they are recomputed here rather than
+        trusted, so a record cannot declare itself ready.
+        """
+        if not isinstance(value, dict):
+            raise ContainerIsolationError("profile_invalid")
+        expected = {"schema_version", "image", "image_digest", "network",
+                    "read_only_root", "cap_drop", "no_new_privileges",
+                    "memory_bytes", "cpu_milli", "pids_limit",
+                    "wall_seconds", "tmpfs_bytes", "user"}
+        supplied = {key: value[key] for key in expected if key in value}
+        missing = expected - set(supplied)
+        if missing - {"schema_version"}:
+            raise ContainerIsolationError(
+                "profile_invalid", ",".join(sorted(missing)))
+        if value.get("schema_version") != 1:
+            raise ContainerIsolationError("profile_invalid")
+        supplied.pop("schema_version", None)
+        return cls(**supplied)
+
     def to_dict(self) -> dict:
         return {
             "schema_version": 1,
@@ -255,7 +279,8 @@ def _verify_image(profile: ContainerProfile, runtime: str | None) -> None:
 def build_argv(profile: ContainerProfile, *, command: list[str],
                input_dir: Path, output_dir: Path,
                runtime: str | None = None,
-               name: str | None = None) -> list[str]:
+               name: str | None = None,
+               read_only_input: bool = True) -> list[str]:
     """The exact runtime invocation, including every boundary flag."""
     binary = runtime or runtime_name()
     if binary is None:
@@ -287,9 +312,12 @@ def build_argv(profile: ContainerProfile, *, command: list[str],
              "--cpus", f"{profile.cpu_milli / 1000:.3f}",
              "--pids-limit", str(profile.pids_limit),
              "--user", profile.user]
-    # Only two mounts exist, and neither is the key directory.
+    # Only two mounts exist, and neither is the key directory. The input
+    # tree is read-only unless the caller owns a private copy it needs
+    # the command to write into (an acceptance run needs its caches).
     argv += ["--mount",
-             f"type=bind,source={input_dir},target=/work/input,readonly"]
+             "type=bind,source={},target=/work/input{}".format(
+                 input_dir, ",readonly" if read_only_input else "")]
     argv += ["--mount",
              f"type=bind,source={output_dir},target=/work/output"]
     argv += ["--workdir", "/work/input", profile.image]
@@ -356,6 +384,7 @@ def run_workload(
     output_dir: str | Path,
     runtime: str | None = None,
     measurement_name: str = "measurement.json",
+    read_only_input: bool = True,
 ) -> ContainerResult:
     """Run ``command`` inside the boundary and read its measurement.
 
@@ -384,7 +413,8 @@ def run_workload(
     _verify_image(profile, binary)
     name = f"sis-eval-{secrets.token_hex(8)}"
     argv = build_argv(profile, command=command, input_dir=source,
-                      output_dir=sink, runtime=binary, name=name)
+                      output_dir=sink, runtime=binary, name=name,
+                      read_only_input=read_only_input)
     with tempfile.TemporaryFile() as out_handle, \
             tempfile.TemporaryFile() as err_handle:
         try:

@@ -40,9 +40,9 @@ claim.
 
 ```bash
 PYTHONPATH=src:. python -m pytest tests -q
-# expected: 1498 passed, 3 skipped (with SIS_POSTGRES_DSN and
+# expected: 1504 passed, 3 skipped (with SIS_POSTGRES_DSN and
 #           SIS_POSTGRES_ALLOW_DESTRUCTIVE=1 set)
-#           or 1484 passed, 17 skipped (without)
+#           or 1490 passed, 17 skipped (without)
 ```
 
 The 14-test difference is the PostgreSQL profile. A skip is **not** a
@@ -134,12 +134,27 @@ It detects drift; it does not establish authorship.
 python tools/build_release.py             # regenerate the inventory
 python tools/package_release.py \
     --release SIS_v3.5.1_FULL_UPGRADED \
-    --status CONDITIONAL_GO --passed 1498 --skipped 3 --allow-dirty
+    --status CONDITIONAL_GO --passed 1504 --skipped 3 --allow-dirty
 ```
 
 `--allow-dirty` is required while the tree is uncommitted; the release
 manifest and provenance statement record that state. A committed rebuild
 omits it.
+
+## 10. End-to-end authenticated campaign
+
+```bash
+PYTHONPATH=src:. python tools/authenticated_campaign.py --demo \
+    -o evidence/evaluation/authenticated.json
+# expected: verdict no_evidence (4 tasks cannot reach significance),
+#           measurements_verified / receipts_verified / analysis_verified
+#           / preregistration_verified all true
+```
+
+This is the producer the assessment needs: the arms run for real, and a
+receipt plus a trial measurement is signed for every (task, arm) cell
+before the report is built. The artifact records the authorization, the
+report and the verdict together.
 
 The evidence bundle is rebuilt from the qualification record:
 

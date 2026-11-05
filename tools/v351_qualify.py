@@ -49,9 +49,32 @@ LIMITATIONS = (
     "run; no reasoning-capability improvement is claimed",
     "audit-baseline-unexplained: the prior audit's 45 baseline failures did "
     "not reproduce in the pinned environment and remain unattributed",
+)
+
+#: Declared only when the tree the archive was built from is dirty.
+UNCOMMITTED = (
     "uncommitted-source: the archive was built from a working tree with "
     "uncommitted changes; it is bound to its own manifest, not to a commit",
 )
+
+
+def _limitations(root: Path = ROOT) -> tuple[str, ...]:
+    """The declared limitations, including the dirty-tree one when true."""
+    import subprocess
+    try:
+        status = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain",
+             "--untracked-files=all"],
+            capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return LIMITATIONS
+    dirty = [line for line in status.splitlines()
+             if line[3:].strip() and not line[3:].strip().startswith(
+                 ("release/", "qualification/"))
+             and line[3:].strip() not in {
+                 "RELEASE_SHA256.json",
+                 "evidence/release/build_record.json"}]
+    return (*LIMITATIONS, UNCOMMITTED) if dirty else LIMITATIONS
 
 
 def _run(argv, *, env_extra=None, timeout=1800):
@@ -207,7 +230,8 @@ def main(argv=None) -> int:
         verify))
 
     statuses = {gate["status"] for gate in gates}
-    decision = _decide(statuses, LIMITATIONS)
+    limitations = _limitations()
+    decision = _decide(statuses, limitations)
     if args.with_postgres and not dsn:
         decision = "NO_GO"
 
@@ -228,7 +252,7 @@ def main(argv=None) -> int:
             "fail": sorted(g["gate"] for g in gates if g["status"] == "fail"),
             "blocked": sorted(g["gate"] for g in gates
                               if g["status"] == "blocked"),
-            "limitations": list(LIMITATIONS),
+            "limitations": list(limitations),
         },
     }
     (EVIDENCE / "qualification.json").write_text(
@@ -240,9 +264,9 @@ def main(argv=None) -> int:
               + (f"  [{gate['blocked_reason']}]"
                  if gate["blocked_reason"] else ""))
     print(f"\nrelease decision: {decision}")
-    if LIMITATIONS:
+    if limitations:
         print("declared limitations (restrict the deployment scope):")
-        for item in LIMITATIONS:
+        for item in limitations:
             print(f"  - {item}")
     return 0 if decision in ("GO", "CONDITIONAL_GO") else 1
 

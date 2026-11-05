@@ -265,9 +265,11 @@ def run_isolated(
         # declaration, not a boundary, and the submission can read
         # whatever the worker can read — including the evaluator seed it
         # is handed to sign with. ``sis.v3.container_isolation`` is the
-        # enforced boundary, and this path does not use it yet, so a
-        # production evaluation refuses to start rather than claim an
-        # isolation it does not provide.
+        # enforced boundary, but the verifier's bootstrap probe runs the
+        # host interpreter with a host-relative argv and writes under the
+        # registry root, so wiring it in is a change to that contract and
+        # not a flag. Until then a production evaluation refuses to start
+        # rather than claim an isolation it does not provide.
         raise IsolationError(
             "production_boundary_not_enforced",
             "run_isolated executes on the host; "

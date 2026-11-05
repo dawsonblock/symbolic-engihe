@@ -79,6 +79,17 @@ the reproductions below are the observed behaviour, not a restatement.
 | **D-35** | CI treated a stale release manifest as success. | `if build_release.py --check; then verify; else echo "development tree…"; fi` — the else branch exits 0, so drift never fails the build. | The main job always checks the manifest and the tree; a tag-only `release` job builds the canonical archive and the evidence bundle and verifies both. | CI workflow | **Resolved** |
 | **D-36** | The verdict's cost rule was narrower than its description. | A run at 500 s per task against 1 s is still `supported`, and the assessment never reports latency. | The decision policy (alpha, multiplicity, token-ratio threshold) is signed and returned; latency is reported separately and the policy states it is not thresholded. | `DecisionPolicyTests::test_latency_is_reported_but_not_thresholded` | **Resolved (scope made explicit)** |
 
+## End-to-end integration
+
+The authenticated chain had no producer: `five_arm.assess` required
+signed measurements and only the fixtures made them. These rows close
+that gap.
+
+| ID | Defect | Reproduction | Repair | Regression test | Status |
+|---|---|---|---|---|---|
+| **D-37** | No production code path emitted the authenticated chain. | `grep 'ArmOutcome('` over `src/` and `tools/` returns nothing; `tools/five_arm_campaign.py` writes a report whose token and wall numbers nobody signed. | `sis.v3.authenticated_campaign.run_authenticated_campaign` drives the real harness and signs a receipt and a measurement per (task, arm), then builds the report and returns the verdict. `tools/authenticated_campaign.py --demo` runs it end to end. | `test_v351_authenticated_campaign.py` (6) | **Resolved** |
+| **D-38** | The cost objective was neither signed nor applied. | A run at 500 s per task against 1 s is still `supported`, and nothing in the signed records says what the cost rule is. | `latency_ratio_milli` joins the signed policy; `assess` applies it when non-zero and reports the rule it applied. `0` means token-only, stated explicitly. | `DecisionPolicyTests::test_latency_is_reported_but_not_thresholded` | **Resolved** |
+
 ## Remaining limitations
 
 See `SIS_v3.5.1_ENGINEERING_AUDIT.md` §7. In summary: the trial
@@ -93,8 +104,11 @@ Two further limitations follow from the independent audit:
 * **The enforced container boundary is not yet the evaluator's
   boundary.** `container_isolation` is qualified, but
   `evaluator_isolation.run_isolated` does not use it, so
-  `production=True` refuses (`production_boundary_not_enforced`). A
-  production evaluation is unavailable until that integration lands.
+  `production=True` refuses (`production_boundary_not_enforced`). The
+  integration is not a flag: the verifier's bootstrap probe runs
+  `sys.executable` with a host-relative argv and writes under the
+  registry root, so a container executor needs that contract changed
+  first. Refusing is the chosen behaviour until then.
 * **The cost rule is token-based.** Latency is reported and the policy
   says it is not thresholded, so a `supported` verdict is not a claim of
   superiority after latency cost.

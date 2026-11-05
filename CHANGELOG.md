@@ -92,6 +92,23 @@ has a reproducing regression test; see `SIS_v3.5.1_DEFECT_MATRIX.md`.
   exactly one statement: the v3.5.1 one is unsigned, and the stale
   v3.3.2 DSSE envelope that sat beside it is gone.
 
+### End to end: a producer for the authenticated chain
+
+`five_arm.assess` required signed measurements and only the fixtures made
+them, so no real campaign could reach a verdict. `sis.v3.authenticated_campaign`
+now drives the benchmark harness and signs a receipt and a trial
+measurement per (task, arm) cell before building the report and returning
+the assessment. `tools/authenticated_campaign.py --demo` runs the whole
+path and writes the authorization, report and verdict.
+
+The cost objective is signed too: `latency_ratio_milli` joins the
+authorization, `assess` applies it when non-zero, and `decision_policy`
+reports the rule that was actually applied.
+
+The qualification harness now declares `uncommitted-source` only when the
+tree really is dirty, so a clean rebuild can report `GO` when no other
+blocking limitation remains.
+
 ### Independent audit follow-up (F01-F10)
 
 An independent audit of the v3.5.1 archive reproduced ten further
